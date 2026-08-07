@@ -1,8 +1,8 @@
-# Crescent Compiler — Lexer/Parser Scaffold (v0.1)
+# Crescent Compiler — Lexer/Parser/Codegen Scaffold (v0.1)
 
 A hand-written recursive-descent lexer and parser for Crescent, implementing the grammar in
-`Crescent_Grammar_v0.1.md`. This produces an AST from `.crs` source; it does not yet emit
-JavaScript (no codegen pass exists yet).
+`Crescent_Grammar_v0.1.md`, plus a first codegen pass that emits plain, runnable JavaScript for a
+supported subset of the language. There is no semantic/type checker yet.
 
 ## Structure
 
@@ -10,7 +10,13 @@ JavaScript (no codegen pass exists yet).
 - `src/lexer.ts` — character-level lexer, plus raw-scan helpers used only by style-block parsing
 - `src/ast.ts` — AST node type definitions
 - `src/parser.ts` — the recursive-descent parser
-- `src/index.ts` — demo entry point: parses every `.crs` file in `examples/` and prints the AST
+- `src/codegen.ts` — AST → JavaScript codegen (see "Codegen" below for what's supported)
+- `src/runtime.ts` — the small reactive runtime (`state`, `effect`, `h`, `text`, `ifBlock`) that
+  generated components import at run time
+- `src/index.ts` — demo entry point: parses every `.crs` file in `examples/`, prints the AST, and
+  attempts codegen, writing output to `dist/gen/*.js`
+- `scripts/test-counter.js` — headless-DOM smoke test (via `jsdom`) that mounts the generated
+  `counter.js`, simulates clicks, and asserts the DOM updates correctly
 - `examples/*.crs` — sample source files exercising the language's tricky corners
 
 ## Running
@@ -20,14 +26,40 @@ npm install
 npm start
 ```
 
-This parses all files in `examples/` and prints their ASTs as JSON, or reports a parse error with
-line number.
+This parses all files in `examples/`, prints their ASTs as JSON, and writes generated JS for any
+component whose members are fully supported by codegen (see below). Files using unsupported
+features print a clear "Codegen skipped: ..." message rather than emitting incorrect output.
 
 To type-check without running:
 
 ```
 npx tsc --noEmit
 ```
+
+To build and run the end-to-end codegen smoke test:
+
+```
+npm test
+```
+
+## Codegen
+
+Generated output is CommonJS (`require`/`module.exports`), matching the project's existing
+`module: commonjs` TypeScript config, and imports its reactive primitives from `runtime.ts`.
+Reactivity is signal-based: `state<T>` declarations become `state()` calls whose reads/writes are
+tracked by `effect()`, so text interpolations and `if`/`else` template branches re-render
+automatically when the state they read changes.
+
+**Currently supported:** `state<T>`, `const`, plain functions (including `async`), arithmetic/
+comparison/ternary expressions, `view` blocks containing a single root element, text literals and
+`{expr}` interpolation, `if`/`else` template branches, static and expression-valued attributes, and
+event-handler attributes (`onclick={fn}`).
+
+**Not yet supported by codegen** (the parser still accepts these; codegen throws a
+`CodegenError` naming the feature): `derived<T>`, `provide<T>`/`inject<T>`, `on_mount`/`on_change`,
+`style` blocks, `for` loops in view blocks, component-as-element usage (`<UserCard .../>`),
+assignment to non-identifier targets (e.g. struct field or array-index mutation), and view blocks
+with more than one root node.
 
 ## Key implementation decisions
 

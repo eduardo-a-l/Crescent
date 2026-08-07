@@ -5,11 +5,13 @@
   "type": "commonjs",
   "scripts": {
     "build": "tsc",
-    "start": "ts-node src/index.ts"
+    "start": "ts-node src/index.ts",
+    "test": "npm run build && npm start && node scripts/test-counter.js"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
+    "@types/node": "^20.14.10",
+    "jsdom": "^25.0.1",
     "ts-node": "^10.9.2",
-    "@types/node": "^20.14.10"
+    "typescript": "^5.5.4"
   }
 }
