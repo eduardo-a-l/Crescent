@@ -1,0 +1,26 @@
+component Counter {
+    state<int> count = 0;
+
+    void increment() {
+        count++;
+    }
+
+    void reset() {
+        count = 0;
+    }
+
+    view {
+        <div class="counter-card">
+            <h1>"Current Count: " {count}</h1>
+
+            if (count > 10) {
+                <p class="warning">"Count is getting high!"</p>
+            } else {
+                <p>"Count is normal."</p>
+            }
+
+            <button onclick={increment}>"Add"</button>
+            <button onclick={reset}>"Reset"</button>
+        </div>
+    }
+}

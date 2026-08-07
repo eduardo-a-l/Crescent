@@ -1,0 +1,48 @@
+struct User {
+    string name;
+    int age;
+}
+
+component UserCard(User user) {
+    view {
+        <div class="user-card">
+            <p>{user.name}</p>
+        </div>
+    }
+}
+
+component UserList {
+    state<User[]> users = [];
+    state<string[]?> tags = null;
+    state<string?[]> nicknames = [];
+
+    void update_first_user() {
+        Response<User> pending_response = fetch_pending();
+        users[0] = User { name: "Sam", age: 30 };
+    }
+
+    view {
+        <ul>
+            for (User user in users key user.name) {
+                <UserCard user={user}/>
+            }
+        </ul>
+    }
+}
+
+component Card {
+    view {
+        <div class="card">
+            <slot />
+        </div>
+    }
+}
+
+component App {
+    view {
+        <Card>
+            <h1>"Card Title"</h1>
+            <p>"Card description goes here."</p>
+        </Card>
+    }
+}

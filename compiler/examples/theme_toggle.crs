@@ -1,0 +1,29 @@
+component ThemeToggle {
+    state<bool> is_dark = true;
+    state<string> accent_color = "#8B5CF6";
+
+    void toggle_theme() {
+        is_dark = !is_dark;
+    }
+
+    view {
+        <div class="box">
+            <h1>"Dynamic Theme"</h1>
+            <button onclick={toggle_theme}>"Toggle Mode"</button>
+        </div>
+    }
+
+    style {
+        .box {
+            background-color: {is_dark ? "#18181B" : "#F4F4F5"};
+            color: {is_dark ? "#FFFFFF" : "#000000"};
+            border: 2px solid {accent_color};
+            padding: 2rem;
+            border-radius: 12px;
+        }
+
+        .box:hover {
+            transform: scale(1.02);
+        }
+    }
+}
