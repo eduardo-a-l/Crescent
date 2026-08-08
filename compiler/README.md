@@ -15,9 +15,14 @@ supported subset of the language. There is no semantic/type checker yet.
   generated components import at run time
 - `src/index.ts` — demo entry point: parses every `.crs` file in `examples/`, prints the AST, and
   attempts codegen, writing output to `dist/gen/*.js`
+- `scripts/build-web.js` — bundles generated components (via `esbuild`) into a single
+  self-contained `web/index.html` you can open directly in a browser
 - `scripts/test-counter.js`, `scripts/test-day-picker.js` — headless-DOM smoke tests (via
   `jsdom`) that mount the generated components, simulate clicks, and assert the DOM updates
   correctly
+- `scripts/test-web.js` — loads the real `web/index.html` into `jsdom` with script execution
+  enabled and simulates clicks through actual DOM events, as a closer proxy for real-browser
+  behavior than requiring the generated modules directly
 - `examples/*.crs` — sample source files exercising the language's tricky corners
 
 ## Running
@@ -42,6 +47,16 @@ To build and run the end-to-end codegen smoke test:
 ```
 npm test
 ```
+
+To see it running in a real browser, bundle the generated components into a single HTML file and
+open it:
+
+```
+npm run build:web
+```
+
+Then open `web/index.html` directly in a browser (no server required — the bundle is fully
+self-contained). `npm test` also runs this bundling step and a `jsdom`-based check that it works.
 
 ## Codegen
 

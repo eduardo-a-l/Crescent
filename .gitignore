@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 out/
+web/
 *.js.map
 
 # IDEs and Editors
