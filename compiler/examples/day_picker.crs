@@ -1,0 +1,20 @@
+component DayPicker {
+    state<int> selected = 0;
+    const string[] days = ["Mon", "Tue", "Wed"];
+
+    void next() {
+        selected = (selected + 1) % 3;
+    }
+
+    view {
+        <div class="picker">
+            <div class="days">
+                for (string day in days) {
+                    <div class="day">{day}</div>
+                }
+            </div>
+            <p>"Selected: " {days[selected]}</p>
+            <button onclick={next}>"Next"</button>
+        </div>
+    }
+}

@@ -16,7 +16,7 @@ function indentBlock(code: string, levels: number): string {
 
 export function generateProgram(program: AST.Program): string {
   const parts: string[] = [];
-  parts.push(`const { state, effect, h, text, ifBlock } = require('../runtime');`);
+  parts.push(`const { state, effect, h, text, ifBlock, forEach } = require('../runtime');`);
   parts.push('');
   const componentNames: string[] = [];
   for (const decl of program.declarations) {
@@ -232,8 +232,14 @@ function templateNodeToJs(node: AST.TemplateNode, stateNames: Set<string>): stri
       const falseJs = templateNodeToJs(node.alternate[0], stateNames);
       return `ifBlock(() => ${exprToJs(node.test, stateNames)}, () => ${trueJs}, () => ${falseJs})`;
     }
-    case 'TemplateFor':
-      unsupported('for-loops in view blocks');
+    case 'TemplateFor': {
+      if (node.body.length !== 1) unsupported('for-loop with multiple root nodes');
+      const itemJs = templateNodeToJs(node.body[0], stateNames);
+      const iterableJs = exprToJs(node.iterable, stateNames);
+      const args = [`() => ${iterableJs}`, `(${node.itemName}) => ${itemJs}`];
+      if (node.key) args.push(`(${node.itemName}) => ${exprToJs(node.key, stateNames)}`);
+      return `forEach(${args.join(', ')})`;
+    }
     default:
       unsupported((node as { kind: string }).kind);
   }

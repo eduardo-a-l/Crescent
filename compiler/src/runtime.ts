@@ -88,6 +88,22 @@ export function ifBlock(
   return container;
 }
 
+export function forEach<T>(
+  items: () => T[],
+  renderItem: (item: T) => Node,
+  keyFn?: (item: T) => unknown
+): HTMLElement {
+  const container = document.createElement('span');
+  container.style.display = 'contents';
+  effect(() => {
+    container.innerHTML = '';
+    for (const item of items()) {
+      container.appendChild(renderItem(item));
+    }
+  });
+  return container;
+}
+
 export function mount(root: Element, componentFn: () => Node): void {
   root.appendChild(componentFn());
 }

@@ -15,8 +15,9 @@ supported subset of the language. There is no semantic/type checker yet.
   generated components import at run time
 - `src/index.ts` — demo entry point: parses every `.crs` file in `examples/`, prints the AST, and
   attempts codegen, writing output to `dist/gen/*.js`
-- `scripts/test-counter.js` — headless-DOM smoke test (via `jsdom`) that mounts the generated
-  `counter.js`, simulates clicks, and asserts the DOM updates correctly
+- `scripts/test-counter.js`, `scripts/test-day-picker.js` — headless-DOM smoke tests (via
+  `jsdom`) that mount the generated components, simulate clicks, and assert the DOM updates
+  correctly
 - `examples/*.crs` — sample source files exercising the language's tricky corners
 
 ## Running
@@ -52,14 +53,20 @@ automatically when the state they read changes.
 
 **Currently supported:** `state<T>`, `const`, plain functions (including `async`), arithmetic/
 comparison/ternary expressions, `view` blocks containing a single root element, text literals and
-`{expr}` interpolation, `if`/`else` template branches, static and expression-valued attributes, and
-event-handler attributes (`onclick={fn}`).
+`{expr}` interpolation, `if`/`else` template branches, `for` loops over arrays (one root node per
+iteration), static and expression-valued attributes, and event-handler attributes
+(`onclick={fn}`).
+
+`for` loops re-render their entire list on every dependency change rather than doing fine-grained
+reconciliation — correct, but not optimized for large or frequently-updated lists. The `key`
+clause is parsed and passed through to the runtime but isn't yet used for reconciliation, since
+there's no diffing to key against yet.
 
 **Not yet supported by codegen** (the parser still accepts these; codegen throws a
 `CodegenError` naming the feature): `derived<T>`, `provide<T>`/`inject<T>`, `on_mount`/`on_change`,
-`style` blocks, `for` loops in view blocks, component-as-element usage (`<UserCard .../>`),
-assignment to non-identifier targets (e.g. struct field or array-index mutation), and view blocks
-with more than one root node.
+`style` blocks, component-as-element usage (`<UserCard .../>`), assignment to non-identifier
+targets (e.g. struct field or array-index mutation), and view blocks with more than one root
+node.
 
 ## Key implementation decisions
 
