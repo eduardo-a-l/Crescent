@@ -736,19 +736,31 @@ export class Parser {
     if (this.lexer.peekChar() !== ':') throw new ParseError(`Expected ':' after style property '${property}'`);
     this.lexer.advanceChar();
     this.lexer.skipRawWhitespace();
-    if (this.lexer.peekChar() === '{') {
-      this.lexer.advanceChar();
-      const exprSource = this.lexer.readInterpolationSource();
-      this.lexer.advanceChar();
-      const subParser = new Parser(exprSource);
-      const exprValue = subParser.parseExpression();
-      this.lexer.skipRawWhitespace();
-      if (this.lexer.peekChar() === ';') this.lexer.advanceChar();
-      return { property, isExpr: true, exprValue };
+
+    const parts: AST.StyleValuePart[] = [];
+    let rawBuf = '';
+    while (this.lexer.peekChar() !== ';' && this.lexer.peekChar() !== '}' && this.lexer.peekChar() !== '\0') {
+      if (this.lexer.peekChar() === '{') {
+        if (rawBuf.length > 0) {
+          parts.push({ kind: 'raw', text: rawBuf });
+          rawBuf = '';
+        }
+        this.lexer.advanceChar();
+        const exprSource = this.lexer.readInterpolationSource();
+        this.lexer.advanceChar();
+        const subParser = new Parser(exprSource);
+        const exprValue = subParser.parseExpression();
+        parts.push({ kind: 'expr', expr: exprValue });
+      } else {
+        rawBuf += this.lexer.advanceChar();
+      }
     }
-    const rawValue = this.lexer.readRawStyleValueUntilTerminator();
+    if (rawBuf.length > 0) {
+      parts.push({ kind: 'raw', text: rawBuf.replace(/\s+$/, '') });
+    }
     if (this.lexer.peekChar() === ';') this.lexer.advanceChar();
-    return { property, isExpr: false, rawValue };
+    if (parts.length === 0) throw new ParseError(`Expected a value for style property '${property}'`);
+    return { property, parts };
   }
 }
 

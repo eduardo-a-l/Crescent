@@ -257,8 +257,14 @@ StyleBlock         ::= 'style' '{' { StyleRule } '}'
 StyleRule          ::= Selector '{' { StyleDeclaration } '}'
 Selector           ::= SelectorToken { SelectorToken }
 StyleDeclaration    ::= CSSProperty ':' StyleValue ';'
-StyleValue          ::= CSSValueLiteral | '{' Expression '}'
+StyleValue          ::= { StyleValuePart }
+StyleValuePart      ::= CSSValueLiteral | '{' Expression '}'
 ```
+
+A `StyleValue` is a sequence of raw-CSS and `{Expression}` parts concatenated together, so a value
+may freely mix the two — `border: 2px solid {accent_color};` is `[raw "2px solid ", expr
+accent_color]`. A value with no `{Expression}` parts is purely static; a value with at least one
+compiles to a single reactive binding covering the whole property (see `compiler/README.md`).
 
 `Selector` and `CSSProperty` / `CSSValueLiteral` are treated as raw CSS token sequences (the
 grammar doesn't attempt to model full CSS syntax — that's delegated to a CSS sub-lexer). The only

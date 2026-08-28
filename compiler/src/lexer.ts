@@ -175,14 +175,6 @@ export class Lexer {
     return text.trim();
   }
 
-  readRawStyleValueUntilTerminator(): string {
-    let text = '';
-    while (!this.isAtEnd() && this.peekChar() !== ';' && this.peekChar() !== '}') {
-      text += this.advanceChar();
-    }
-    return text.trim();
-  }
-
   readInterpolationSource(): string {
     let depth = 1;
     let text = '';

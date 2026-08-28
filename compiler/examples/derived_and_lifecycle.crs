@@ -1,0 +1,27 @@
+component Cart {
+    state<int> price = 10;
+    state<int> quantity = 2;
+    state<string> log = "";
+
+    derived<int> total = price * quantity;
+
+    on_mount {
+        log = "mounted";
+    }
+
+    on_change(quantity) {
+        log = "quantity changed to " + quantity;
+    }
+
+    void add_one() {
+        quantity++;
+    }
+
+    view {
+        <div class="cart">
+            <p class="total">"Total: " {total}</p>
+            <p class="log">{log}</p>
+            <button onclick={add_one}>"Add one"</button>
+        </div>
+    }
+}

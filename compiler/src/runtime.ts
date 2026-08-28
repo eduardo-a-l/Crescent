@@ -73,6 +73,49 @@ export function text(fn: () => unknown): Text {
   return node;
 }
 
+export function derived<T>(compute: () => T): Signal<T> {
+  let value: T;
+  let dirty = true;
+  const subscribers = new Set<EffectFn>();
+  const markDirty: EffectFn = () => {
+    if (!dirty) {
+      dirty = true;
+      for (const fn of Array.from(subscribers)) fn();
+    }
+  };
+  return {
+    get(): T {
+      if (dirty) {
+        const prevEffect = currentEffect;
+        currentEffect = markDirty;
+        try {
+          value = compute();
+        } finally {
+          currentEffect = prevEffect;
+        }
+        dirty = false;
+      }
+      if (currentEffect) subscribers.add(currentEffect);
+      return value;
+    },
+    set(): void {
+      throw new Error('Cannot assign to a derived value; reassign one of its dependencies instead');
+    },
+  };
+}
+
+export function watch(readDeps: () => void, fn: EffectFn): void {
+  let isFirstRun = true;
+  effect(() => {
+    readDeps();
+    if (isFirstRun) {
+      isFirstRun = false;
+      return;
+    }
+    fn();
+  });
+}
+
 export function ifBlock(
   test: () => boolean,
   renderTrue: () => Node,
@@ -104,6 +147,24 @@ export function forEach<T>(
   return container;
 }
 
+export function slot(children: Child[]): HTMLElement {
+  const container = document.createElement('span');
+  container.style.display = 'contents';
+  appendChildren(container, children);
+  return container;
+}
+
 export function mount(root: Element, componentFn: () => Node): void {
   root.appendChild(componentFn());
+}
+
+const injectedStyleIds = new Set<string>();
+
+export function injectStyle(css: string, styleId: string): void {
+  if (injectedStyleIds.has(styleId)) return;
+  injectedStyleIds.add(styleId);
+  const styleEl = document.createElement('style');
+  styleEl.setAttribute('data-crs-style', styleId);
+  styleEl.textContent = css;
+  document.head.appendChild(styleEl);
 }

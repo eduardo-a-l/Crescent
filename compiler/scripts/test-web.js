@@ -47,6 +47,46 @@ async function main() {
   nextButton.dispatchEvent(new dom.window.Event('click'));
   assert(selectedText() === 'Selected: Tue', `day picker advances on real click, got "${selectedText()}"`);
 
+  const themeToggleRoot = document.getElementById('theme-toggle-root');
+  const box = themeToggleRoot && themeToggleRoot.querySelector('.box');
+  assert(box !== null, 'theme toggle mounted into the page');
+  assert(
+    document.head.querySelector('style[data-crs-style="data-crs-themetoggle"]') !== null,
+    'theme toggle scoped stylesheet injected into real page head'
+  );
+  const toggleButton = themeToggleRoot.querySelector('button');
+  const bgBefore = box.style.getPropertyValue('--crs-0');
+  toggleButton.dispatchEvent(new dom.window.Event('click'));
+  assert(box.style.getPropertyValue('--crs-0') !== bgBefore, 'theme toggle CSS var updates on real click');
+
+  const compositionRoot = document.getElementById('composition-root');
+  assert(compositionRoot && compositionRoot.querySelector('.card') !== null, 'composition example mounted into the page');
+  assert(
+    compositionRoot.querySelector('.greeting') !== null &&
+      compositionRoot.querySelector('.greeting').textContent === 'Hello, World!',
+    'composition example resolves nested component-as-element and slot content in a real page'
+  );
+
+  const reactiveListRoot = document.getElementById('reactive-list-root');
+  assert(reactiveListRoot && reactiveListRoot.querySelectorAll('p').length === 2, 'reactive list example mounted both tasks');
+  const firstTaskBefore = reactiveListRoot.querySelector('p').className;
+  reactiveListRoot.querySelector('button').dispatchEvent(new dom.window.Event('click'));
+  const firstTaskAfter = reactiveListRoot.querySelector('p').className;
+  assert(
+    firstTaskBefore === 'pending' && firstTaskAfter === 'done',
+    `reactive array-index assignment updates the real page, got "${firstTaskBefore}" -> "${firstTaskAfter}"`
+  );
+
+  const derivedRoot = document.getElementById('derived-lifecycle-root');
+  assert(derivedRoot && derivedRoot.querySelector('.total').textContent === 'Total: 20', 'derived/lifecycle example mounted with correct initial total');
+  assert(derivedRoot.querySelector('.log').textContent === 'mounted', 'derived/lifecycle example ran on_mount in a real page');
+  derivedRoot.querySelector('button').dispatchEvent(new dom.window.Event('click'));
+  assert(
+    derivedRoot.querySelector('.total').textContent === 'Total: 30' &&
+      derivedRoot.querySelector('.log').textContent === 'quantity changed to 3',
+    'derived/lifecycle example recomputes derived value and fires on_change on a real click'
+  );
+
   dom.window.close();
 }
 

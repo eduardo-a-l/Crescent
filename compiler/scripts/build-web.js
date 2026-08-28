@@ -9,6 +9,10 @@ fs.mkdirSync(outDir, { recursive: true });
 const targets = [
   { file: 'counter.js', globalName: 'CrescentCounter', mountFn: 'Counter', rootId: 'counter-root' },
   { file: 'day_picker.js', globalName: 'CrescentDayPicker', mountFn: 'DayPicker', rootId: 'day-picker-root' },
+  { file: 'theme_toggle.js', globalName: 'CrescentThemeToggle', mountFn: 'ThemeToggle', rootId: 'theme-toggle-root' },
+  { file: 'composition.js', globalName: 'CrescentComposition', mountFn: 'App', rootId: 'composition-root' },
+  { file: 'reactive_list.js', globalName: 'CrescentReactiveList', mountFn: 'TaskBoard', rootId: 'reactive-list-root' },
+  { file: 'derived_and_lifecycle.js', globalName: 'CrescentDerivedLifecycle', mountFn: 'Cart', rootId: 'derived-lifecycle-root' },
 ];
 
 async function main() {

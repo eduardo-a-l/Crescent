@@ -64,11 +64,11 @@ export type TemplateNode =
   | { kind: 'TextInterpolation'; expr: Expr }
   | { kind: 'TextLiteral'; value: string };
 
+export type StyleValuePart = { kind: 'raw'; text: string } | { kind: 'expr'; expr: Expr };
+
 export interface StyleDeclaration {
   property: string;
-  isExpr: boolean;
-  rawValue?: string;
-  exprValue?: Expr;
+  parts: StyleValuePart[];
 }
 
 export interface StyleRule {

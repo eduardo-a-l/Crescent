@@ -1,0 +1,24 @@
+struct Task {
+    string label;
+    bool done;
+}
+
+component TaskBoard {
+    state<Task[]> tasks = [
+        Task { label: "Write docs", done: false },
+        Task { label: "Ship release", done: false }
+    ];
+
+    void complete_first() {
+        tasks[0] = Task { label: tasks[0].label, done: true };
+    }
+
+    view {
+        <div class="board">
+            for (Task t in tasks key t.label) {
+                <p class={t.done ? "done" : "pending"}>{t.label}</p>
+            }
+            <button onclick={complete_first}>"Complete first"</button>
+        </div>
+    }
+}

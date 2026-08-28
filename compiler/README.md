@@ -11,8 +11,8 @@ supported subset of the language. There is no semantic/type checker yet.
 - `src/ast.ts` — AST node type definitions
 - `src/parser.ts` — the recursive-descent parser
 - `src/codegen.ts` — AST → JavaScript codegen (see "Codegen" below for what's supported)
-- `src/runtime.ts` — the small reactive runtime (`state`, `effect`, `h`, `text`, `ifBlock`) that
-  generated components import at run time
+- `src/runtime.ts` — the small reactive runtime (`state`, `derived`, `effect`, `watch`, `h`, `text`,
+  `ifBlock`, `forEach`, `slot`, `injectStyle`) that generated components import at run time
 - `src/index.ts` — demo entry point: parses every `.crs` file in `examples/`, prints the AST, and
   attempts codegen, writing output to `dist/gen/*.js`
 - `scripts/build-web.js` — bundles generated components (via `esbuild`) into a single
@@ -66,22 +66,57 @@ Reactivity is signal-based: `state<T>` declarations become `state()` calls whose
 tracked by `effect()`, so text interpolations and `if`/`else` template branches re-render
 automatically when the state they read changes.
 
-**Currently supported:** `state<T>`, `const`, plain functions (including `async`), arithmetic/
-comparison/ternary expressions, `view` blocks containing a single root element, text literals and
-`{expr}` interpolation, `if`/`else` template branches, `for` loops over arrays (one root node per
-iteration), static and expression-valued attributes, and event-handler attributes
-(`onclick={fn}`).
+**Currently supported:** `state<T>`, `derived<T>` (lazy pull-based memoization, per §14.5), `const`,
+plain functions (including `async`), arithmetic/comparison/ternary expressions, `view` blocks
+containing a single root element, text literals and `{expr}` interpolation, `if`/`else` template
+branches, `for` loops over arrays (one root node per iteration), static and expression-valued
+attributes, event-handler attributes (`onclick={fn}`), `style` blocks (scoped CSS, see below),
+component-as-element usage (`<UserCard user={user}/>`), `<slot/>` content passthrough,
+`on_mount`, `on_change(...)`, and assignment to non-identifier targets (array-index and, where
+legal, struct-field writes — see below).
 
 `for` loops re-render their entire list on every dependency change rather than doing fine-grained
 reconciliation — correct, but not optimized for large or frequently-updated lists. The `key`
 clause is parsed and passed through to the runtime but isn't yet used for reconciliation, since
 there's no diffing to key against yet.
 
+`style` blocks compile to scoped CSS per §14.3 of the design doc: every native element rendered
+by a component that has a `style` block gets a `data-crs-<component>` attribute, and the block's
+rules are rewritten with that attribute appended to their selector (`.box` → `.box[data-crs-...]`)
+and injected once per component *type* into `<head>` via `injectStyle`. Declarations containing
+`{expr}` — including values that mix raw CSS text and interpolation, e.g. `2px solid {accent}` —
+compile to a CSS custom property (`--crs-N`) set on the component's root element inside a
+per-instance `effect()`, so purely-static declarations stay in the static stylesheet and only the
+reactive ones pay for a per-instance binding.
+
+Component-as-element usage (`<UserCard user={user}/>`) compiles to a direct function call —
+`UserCard({ user: user })`. Every generated component function always destructures a `children`
+prop (defaulting to `[]`), so any nested markup passed between a component's tags —
+`<Card><h1>...</h1></Card>` — is compiled in the *caller's* scope (so it still sees the caller's
+`state`/style scope) into an array of already-built nodes, and a `<slot/>` inside the callee's own
+view compiles to `slot(children)`, a runtime helper that appends that array into a
+`display: contents` wrapper.
+
+Assignment to non-identifier targets follows §13.1/§13.2 of the design doc. An index write whose
+root is a `state<T>` — `items[0] = ...`, including through further chained member/index access
+like `items[0].done = true` — compiles to a direct in-place mutation via `.get()` followed by
+`.set(.get())` to force a reactive notification, since `Signal.set` always notifies subscribers
+regardless of reference equality. A **direct property write on the state itself**
+(`user.name = "Sam"` where `user` is `state<User>`) is a compile-time `CodegenError`, per the
+"forbidden nested object mutation" rule — the whole state must be reassigned instead.
+
+`derived<T>` follows §14.5's lazy pull-based memoization: the runtime `derived()` helper only
+recomputes on the next read after a dependency changes (not eagerly on every change), and
+assigning to a derived name directly (`total = 5;`) is a compile-time `CodegenError` — dependencies
+must be reassigned instead. `on_mount` bodies run once, after the component's view (and any style
+effects) have already been constructed, so state writes inside `on_mount` land on live, already-
+wired subscribers rather than an empty subscriber set. `on_change(a, b)` compiles to a `watch()`
+call that subscribes to the named dependencies but — unlike a plain `effect()` — deliberately skips
+firing on its own first (construction-time) run, so it only fires on genuine subsequent changes.
+
 **Not yet supported by codegen** (the parser still accepts these; codegen throws a
-`CodegenError` naming the feature): `derived<T>`, `provide<T>`/`inject<T>`, `on_mount`/`on_change`,
-`style` blocks, component-as-element usage (`<UserCard .../>`), assignment to non-identifier
-targets (e.g. struct field or array-index mutation), and view blocks with more than one root
-node.
+`CodegenError` naming the feature): `provide<T>`/`inject<T>`, and view blocks with more than one
+root node.
 
 ## Key implementation decisions
 
