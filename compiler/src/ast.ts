@@ -170,7 +170,18 @@ export interface StructDecl {
   fields: StructField[];
 }
 
-export type TopLevelDecl = ComponentDecl | StructDecl;
+export interface ImportItem {
+  name: string;
+  alias?: string;
+}
+
+export interface UseDecl {
+  kind: 'UseDecl';
+  pathSegments: string[];
+  items: ImportItem[];
+}
+
+export type TopLevelDecl = ComponentDecl | StructDecl | UseDecl;
 
 export interface Program {
   kind: 'Program';

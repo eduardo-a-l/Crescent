@@ -1,0 +1,7 @@
+use nonexistent::Thing;
+
+component Broken {
+    view {
+        <p>"broken"</p>
+    }
+}

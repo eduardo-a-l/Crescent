@@ -280,10 +280,10 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
 - **General generics** — resolved: no dedicated syntax needed. `Identifier '<' Type '>'` in
   `BaseType` (§4) handles it via the same type-position rule as the reserved keywords. Validated
   against `Response<User>` in the reference parser's test fixtures.
-- **Struct definitions** — resolved: added as a top-level `StructDecl` (§3), separate from
-  `StructLiteral` (§6), which now assumes the referenced type name has been declared via
-  `StructDecl` elsewhere in the program. Cross-file/forward-reference resolution is left to a future
-  semantic-analysis pass — this grammar only defines the syntax.
+- **Import/module syntax across files** — resolved (§11). `Program` no longer assumes a single
+  source file; the reference compiler discovers every `.crs` file under a project root, resolves
+  each `use` path relative to the *importing file's own directory*, and rejects import cycles
+  before codegen.
 
 ## 10. Open Items for v0.3 of this grammar
 
@@ -292,5 +292,43 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
   type-checker error once one exists.
 - `on_change(data)` (§5) takes bare identifiers naming watched state — no grammar exists yet for
   watching a derived expression rather than a single named binding.
-- Import/module syntax across files is entirely unspecified; `Program` currently assumes a single
-  source file.
+
+## 11. Module Grammar
+
+```
+UseDecl            ::= 'use' PathSegment ('::' PathSegment)* '::' ImportList ';'
+                      | 'use' PathSegment ('::' PathSegment)* ';'
+PathSegment        ::= IDENTIFIER | 'super'
+ImportList         ::= '{' ImportItem (',' ImportItem)* '}'
+ImportItem         ::= IDENTIFIER ('as' IDENTIFIER)?
+```
+
+A `UseDecl` is a new kind of `TopLevelDecl`, alongside `ComponentDecl` and `StructDecl` (§3). All
+top-level `component`/`struct` declarations in a file are implicitly importable by any other file
+— there is no `pub`/`export` keyword.
+
+**Path resolution.** In the bare (non-brace) form, every `PathSegment` except the last names a
+directory or file component; the *last* segment is the single imported item's name. In the brace
+form, every `PathSegment` names a directory or file component, and the braced `ImportList` gives
+one or more items to import from that file (with optional `as` aliasing). A `super` segment walks
+up one directory from the *importing file's own location* — not from the project root — so its
+meaning depends on where the `use` statement lives. Segments (after any `super`s are resolved to
+directory traversal) are joined with `/` and the literal suffix `.crs` is appended to name the
+target file. For example, given a file at `modules/components/card.crs`:
+
+| `use` statement                                | Resolves to                       |
+|-------------------------------------------------|------------------------------------|
+| `use card::UserCard;`                            | `modules/components/card.crs`, item `UserCard` |
+| `use super::shapes::Point;`                      | `modules/shapes.crs`, item `Point` |
+| `use components::forms::{Button, Input as TextInput};` | `components/forms.crs`, items `Button`, `Input` (aliased locally to `TextInput`) |
+
+**Cycle detection.** Because every `use` target is resolved to a concrete file before codegen
+runs, the compiler can (and does) build a file-level dependency graph and reject any cycle with a
+compile error naming the full chain, e.g. `Circular import: a.crs -> b.crs -> a.crs`. This check
+runs across the whole project before any file is code-generated, so a cycle anywhere aborts the
+entire build rather than only the files involved.
+
+**No re-export chaining in v0.1.** An imported name must resolve to an actual `ComponentDecl` or
+`StructDecl` in the target file — importing a name that the target file itself only imported via
+its own `use` is not supported yet (the target's own `UseDecl` entries are ignored when resolving
+an import against it).

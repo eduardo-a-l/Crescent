@@ -10,11 +10,15 @@ supported subset of the language. There is no semantic/type checker yet.
 - `src/lexer.ts` — character-level lexer, plus raw-scan helpers used only by style-block parsing
 - `src/ast.ts` — AST node type definitions
 - `src/parser.ts` — the recursive-descent parser
+- `src/modules.ts` — multi-file module graph: discovers `.crs` files, resolves `use` paths, checks
+  for import cycles, and computes the relative `require()` paths codegen needs (see "Modules"
+  below)
 - `src/codegen.ts` — AST → JavaScript codegen (see "Codegen" below for what's supported)
 - `src/runtime.ts` — the small reactive runtime (`state`, `derived`, `effect`, `watch`, `h`, `text`,
   `ifBlock`, `forEach`, `slot`, `injectStyle`) that generated components import at run time
-- `src/index.ts` — demo entry point: parses every `.crs` file in `examples/`, prints the AST, and
-  attempts codegen, writing output to `dist/gen/*.js`
+- `src/index.ts` — demo entry point: recursively discovers every `.crs` file under `examples/`
+  (including nested directories), resolves imports and checks for cycles across the whole project,
+  then attempts codegen per file, mirroring the source tree under `dist/gen/`
 - `scripts/build-web.js` — bundles generated components (via `esbuild`) into a single
   self-contained `web/index.html` you can open directly in a browser
 - `scripts/test-counter.js`, `scripts/test-day-picker.js` — headless-DOM smoke tests (via
@@ -117,6 +121,36 @@ firing on its own first (construction-time) run, so it only fires on genuine sub
 **Not yet supported by codegen** (the parser still accepts these; codegen throws a
 `CodegenError` naming the feature): `provide<T>`/`inject<T>`, and view blocks with more than one
 root node.
+
+## Modules
+
+Rust-style `use` declarations (see `docs/Crescent_Grammar.md` §11) let one `.crs` file reference
+`component`/`struct` declarations from another. There's no `pub`/`export` keyword — every
+top-level declaration is implicitly importable.
+
+```
+use card::UserCard;                                     // ./card.crs, item UserCard
+use components::forms::{Button, Input as TextInput};    // ./components/forms.crs, two items, one aliased
+use super::shapes::Point;                                // ../shapes.crs relative to *this file's own directory*
+```
+
+`src/index.ts` discovers every `.crs` file under `examples/` first (recursively), resolves every
+`use` path to a concrete file, and builds a file-level dependency graph. Import cycles are rejected
+before any codegen runs, with an error naming the full chain (`Circular import: a.crs -> b.crs ->
+a.crs`) — one cycle anywhere aborts the whole build, not just the files involved. A `use` that
+names a file or item that doesn't exist is also a compile error, reported per file.
+
+Codegen impact differs by what's imported: importing a `struct` produces **no runtime code at
+all**, since struct type names are already fully erased at codegen (a `User { ... }` struct
+literal compiles to a plain JS object literal that never references `User`) — a struct import is
+purely a compile-time name-resolution check. Importing a `component`, on the other hand, compiles
+to a `require()` call — `const { UserCard } = require('./card');` — with a relative path computed
+from the *generated* file's location (mirroring the source tree under `dist/gen/`), so
+`dist/gen/modules/components/card.js` correctly requires `../../../runtime` while a flat file at
+`dist/gen/counter.js` requires `../runtime`, and both resolve to the same `dist/runtime.js`.
+
+There's no re-export chaining in v0.1: an import must resolve to an actual declaration in the
+target file, not to something that file only imported itself.
 
 ## Key implementation decisions
 

@@ -18,15 +18,28 @@ function indentBlock(code: string, levels: number): string {
     .join('\n');
 }
 
-export function generateProgram(program: AST.Program): string {
+export interface ImportBinding {
+  requirePath: string;
+  names: { local: string; imported: string }[];
+}
+
+export function generateProgram(
+  program: AST.Program,
+  runtimeRequirePath: string = '../runtime',
+  imports: ImportBinding[] = []
+): string {
   const parts: string[] = [];
   parts.push(
-    `const { state, effect, h, text, ifBlock, forEach, injectStyle, slot, derived, watch } = require('../runtime');`
+    `const { state, effect, h, text, ifBlock, forEach, injectStyle, slot, derived, watch } = require('${runtimeRequirePath}');`
   );
+  for (const imp of imports) {
+    const names = imp.names.map((n) => (n.local === n.imported ? n.local : `${n.imported}: ${n.local}`));
+    parts.push(`const { ${names.join(', ')} } = require('${imp.requirePath}');`);
+  }
   parts.push('');
   const componentNames: string[] = [];
   for (const decl of program.declarations) {
-    if (decl.kind === 'StructDecl') continue;
+    if (decl.kind === 'StructDecl' || decl.kind === 'UseDecl') continue;
     parts.push(generateComponent(decl));
     parts.push('');
     componentNames.push(decl.name);

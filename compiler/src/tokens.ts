@@ -3,6 +3,7 @@ export type TokenType =
   | 'VIEW' | 'STYLE' | 'IF' | 'ELSE' | 'FOR' | 'IN' | 'KEY' | 'RETURN'
   | 'ASYNC' | 'AWAIT' | 'VOID' | 'TRUE' | 'FALSE' | 'NULL'
   | 'ON_MOUNT' | 'ON_CHANGE' | 'SLOT'
+  | 'USE' | 'SUPER' | 'AS'
   | 'INT_TYPE' | 'FLOAT_TYPE' | 'STRING_TYPE' | 'BOOL_TYPE'
   | 'IDENTIFIER' | 'INT_LITERAL' | 'FLOAT_LITERAL' | 'STRING_LITERAL'
   | 'LPAREN' | 'RPAREN' | 'LBRACE' | 'RBRACE' | 'LBRACKET' | 'RBRACKET'
@@ -11,7 +12,7 @@ export type TokenType =
   | 'PLUS' | 'MINUS' | 'STAR' | 'SLASH' | 'PERCENT'
   | 'PLUS_PLUS' | 'MINUS_MINUS'
   | 'BANG' | 'AND_AND' | 'OR_OR'
-  | 'QUESTION' | 'COLON' | 'SEMI' | 'COMMA' | 'DOT'
+  | 'QUESTION' | 'COLON' | 'COLONCOLON' | 'SEMI' | 'COMMA' | 'DOT'
   | 'SLASH_GT'
   | 'EOF';
 
@@ -47,6 +48,9 @@ export const KEYWORDS: Record<string, TokenType> = {
   on_mount: 'ON_MOUNT',
   on_change: 'ON_CHANGE',
   slot: 'SLOT',
+  use: 'USE',
+  super: 'SUPER',
+  as: 'AS',
   int: 'INT_TYPE',
   float: 'FLOAT_TYPE',
   string: 'STRING_TYPE',

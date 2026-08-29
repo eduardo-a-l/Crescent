@@ -124,7 +124,9 @@ export class Lexer {
       case ']': return this.makeToken('RBRACKET', c, start);
       case ',': return this.makeToken('COMMA', c, start);
       case '.': return this.makeToken('DOT', c, start);
-      case ':': return this.makeToken('COLON', c, start);
+      case ':':
+        if (this.peekChar() === ':') { this.advanceChar(); return this.makeToken('COLONCOLON', '::', start); }
+        return this.makeToken('COLON', c, start);
       case ';': return this.makeToken('SEMI', c, start);
       case '?': return this.makeToken('QUESTION', c, start);
       case '!':

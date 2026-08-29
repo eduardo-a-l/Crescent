@@ -87,6 +87,16 @@ async function main() {
     'derived/lifecycle example recomputes derived value and fires on_change on a real click'
   );
 
+  const modulesRoot = document.getElementById('modules-root');
+  assert(modulesRoot && modulesRoot.querySelector('.card') !== null, 'cross-file module example mounted into the page');
+  assert(
+    modulesRoot.querySelector('.origin') !== null &&
+      modulesRoot.querySelector('.origin').textContent === 'Origin: (0, 0)' &&
+      modulesRoot.querySelector('.point') !== null &&
+      modulesRoot.querySelector('.point').textContent === '(3, 4)',
+    'cross-file module example resolves use/super::/braced imports correctly in a real page'
+  );
+
   dom.window.close();
 }
 

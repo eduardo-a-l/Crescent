@@ -1,0 +1,7 @@
+use lib::Ghost;
+
+component Broken {
+    view {
+        <p>"broken"</p>
+    }
+}

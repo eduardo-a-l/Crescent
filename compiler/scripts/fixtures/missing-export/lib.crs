@@ -1,0 +1,5 @@
+component RealThing {
+    view {
+        <p>"real"</p>
+    }
+}

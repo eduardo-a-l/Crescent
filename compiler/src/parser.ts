@@ -65,7 +65,54 @@ export class Parser {
   private parseTopLevelDecl(): AST.TopLevelDecl {
     if (this.check('STRUCT')) return this.parseStructDecl();
     if (this.check('COMPONENT')) return this.parseComponentDecl();
-    this.fail("Expected 'component' or 'struct' at top level");
+    if (this.check('USE')) return this.parseUseDecl();
+    this.fail("Expected 'component', 'struct', or 'use' at top level");
+  }
+
+  private parsePathSegment(): string {
+    if (this.check('SUPER')) {
+      this.advance();
+      return 'super';
+    }
+    return this.expect('IDENTIFIER').value;
+  }
+
+  private parseImportItem(): AST.ImportItem {
+    const name = this.expect('IDENTIFIER').value;
+    if (this.check('AS')) {
+      this.advance();
+      const alias = this.expect('IDENTIFIER').value;
+      return { name, alias };
+    }
+    return { name };
+  }
+
+  private parseUseDecl(): AST.UseDecl {
+    this.expect('USE');
+    const segments: string[] = [this.parsePathSegment()];
+
+    while (this.check('COLONCOLON')) {
+      this.advance();
+      if (this.check('LBRACE')) {
+        this.advance();
+        const items: AST.ImportItem[] = [this.parseImportItem()];
+        while (this.check('COMMA')) {
+          this.advance();
+          items.push(this.parseImportItem());
+        }
+        this.expect('RBRACE');
+        this.expect('SEMI');
+        return { kind: 'UseDecl', pathSegments: segments, items };
+      }
+      segments.push(this.parsePathSegment());
+    }
+
+    this.expect('SEMI');
+    const itemName = segments.pop();
+    if (itemName === undefined || segments.length === 0) {
+      throw new ParseError("'use' must reference a module path before the imported item, e.g. 'use card::UserCard;'");
+    }
+    return { kind: 'UseDecl', pathSegments: segments, items: [{ name: itemName }] };
   }
 
   private parseStructDecl(): AST.StructDecl {

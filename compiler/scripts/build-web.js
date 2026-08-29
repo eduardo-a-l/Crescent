@@ -13,6 +13,7 @@ const targets = [
   { file: 'composition.js', globalName: 'CrescentComposition', mountFn: 'App', rootId: 'composition-root' },
   { file: 'reactive_list.js', globalName: 'CrescentReactiveList', mountFn: 'TaskBoard', rootId: 'reactive-list-root' },
   { file: 'derived_and_lifecycle.js', globalName: 'CrescentDerivedLifecycle', mountFn: 'Cart', rootId: 'derived-lifecycle-root' },
+  { file: path.join('modules', 'main.js'), globalName: 'CrescentModules', mountFn: 'App', rootId: 'modules-root' },
 ];
 
 async function main() {

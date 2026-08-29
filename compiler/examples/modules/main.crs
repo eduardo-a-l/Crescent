@@ -1,0 +1,10 @@
+use shapes::{Point, PointBadge};
+use components::card::Card;
+
+component App {
+    view {
+        <Card origin={Point { x: 0, y: 0 }}>
+            <PointBadge p={Point { x: 3, y: 4 }}/>
+        </Card>
+    }
+}
