@@ -1,7 +1,7 @@
 # Crescent Compiler — Lexer/Parser/Codegen Scaffold (v0.1)
 
 A hand-written recursive-descent lexer and parser for Crescent, implementing the grammar in
-`Crescent_Grammar_v0.1.md`, plus a first codegen pass that emits plain, runnable JavaScript for a
+`../docs/Crescent_Grammar.md`, plus a codegen pass that emits plain, runnable JavaScript for a
 supported subset of the language. There is no semantic/type checker yet.
 
 ## Structure
@@ -27,7 +27,8 @@ supported subset of the language. There is no semantic/type checker yet.
 - `scripts/test-web.js` — loads the real `web/index.html` into `jsdom` with script execution
   enabled and simulates clicks through actual DOM events, as a closer proxy for real-browser
   behavior than requiring the generated modules directly
-- `examples/*.crs` — sample source files exercising the language's tricky corners
+- `examples/*.crs` — sample source files exercising the language's tricky corners, including a
+  nested `examples/modules/` tree exercising cross-file `use` imports
 
 ## Running
 
@@ -184,11 +185,12 @@ speculative parsing with backtracking: `parseStatement()` snapshots the parser p
 correct rewind since the lexer is stateless beyond its cursor position.
 
 **Style blocks.** `MODE_STYLE` is implemented by having the parser drop out of token-based parsing
-entirely after consuming `style {`, and read raw characters directly via `Lexer.readRawSelector()` /
-`readRawStyleValueUntilTerminator()`. When a `{` interpolation is encountered inside a style value,
-the parser brace-matches the raw source to find the corresponding `}`, and parses the extracted
-substring using a **fresh, independent `Parser` instance**. This sidesteps having to keep a raw
-cursor and a token-lookahead cursor in sync across mode switches.
+entirely after consuming `style {`, and read raw characters directly via `Lexer.readRawSelector()`.
+A style value is a sequence of raw-CSS and `{expr}` parts (`parseStyleDeclaration()` in
+`parser.ts`), so a value can freely mix the two, e.g. `border: 2px solid {accent_color};`. When a
+`{` interpolation is encountered, the parser brace-matches the raw source to find the corresponding
+`}`, and parses the extracted substring using a **fresh, independent `Parser` instance**. This
+sidesteps having to keep a raw cursor and a token-lookahead cursor in sync across mode switches.
 
 **Nullable/array modifier chaining.** `parseType()` parses a base type once, then applies `?` and
 `[]` modifiers left-to-right in a loop, each wrapping the previous type. `string[]?` → nullable
@@ -198,8 +200,7 @@ array of string. `string?[]` → array of nullable string.
 
 - No semantic/type checker (no scope resolution, no type inference/checking, no reactivity
   analysis).
-- No codegen to JS.
 - No `Selector`/CSS-property validation — style selectors and raw property values are captured as
   opaque strings; only the `{expr}` interpolations are actually parsed.
-- Error recovery is fail-fast (throws `ParseError` with a line number) rather than collecting
-  multiple diagnostics.
+- Error recovery is fail-fast (throws `ParseError`/`CodegenError`/`ModuleError` with as much
+  context as is available) rather than collecting multiple diagnostics.

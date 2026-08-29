@@ -5,7 +5,7 @@
 >
 > **v0.2 changes:** resolves all three open items from v0.1 §9 — struct declarations, nullable/array
 > modifier chaining, and generic type resolution — and reflects the implementation choices made in
-> the reference parser (`crescent-compiler/`).
+> the reference parser (`compiler/`).
 
 ---
 
