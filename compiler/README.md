@@ -79,10 +79,25 @@ component-as-element usage (`<UserCard user={user}/>`), `<slot/>` content passth
 `on_mount`, `on_change(...)`, and assignment to non-identifier targets (array-index and, where
 legal, struct-field writes — see below).
 
-`for` loops re-render their entire list on every dependency change rather than doing fine-grained
-reconciliation — correct, but not optimized for large or frequently-updated lists. The `key`
-clause is parsed and passed through to the runtime but isn't yet used for reconciliation, since
-there's no diffing to key against yet.
+`for` loops with an explicit `key` (§14.4) get real keyed reconciliation: `forEach` in
+`runtime.ts` keeps a persistent `key -> { item, node }` map across re-renders and, on each update,
+reuses the existing DOM node for any key whose item reference is unchanged (`===`), only calling
+`renderItem` again for genuinely new or replaced items, then reorders the surviving/created nodes
+into place with `insertBefore` rather than tearing the list down. This means reordering,
+growing, or shrinking a keyed list preserves the DOM node identity of every unaffected item — no
+node is destroyed and recreated just because its position or a sibling changed. **The comparison
+is by reference, not deep equality**: the idiom this is built around is replacing an array element
+wholesale (`items[i] = Struct { ...updatedFields };`, as already used in `reactive_list.crs`) —
+mutating a *field* of an existing element in place (`items[i].done = true;`, which the assignment
+rules in the previous section also permit) keeps the same reference, so reconciliation will treat
+it as unchanged and reuse the old node's stale content. Prefer whole-element replacement over
+in-place field mutation for items that need to visibly update.
+
+A `for` loop **without** a `key` still gets the original, simpler behavior — the whole list is
+wiped (`container.innerHTML = ''`) and rebuilt from scratch on every change — and the compiler now
+also emits a build-time warning (to the compiler's own console, not the generated code) pointing
+at design doc §14.4 and suggesting a key. `examples/day_picker.crs`'s unkeyed loop over a static
+`days` array is deliberately left as-is to keep that warning path exercised in `npm test`.
 
 `style` blocks compile to scoped CSS per §14.3 of the design doc: every native element rendered
 by a component that has a `style` block gets a `data-crs-<component>` attribute, and the block's

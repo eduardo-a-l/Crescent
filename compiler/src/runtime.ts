@@ -131,6 +131,12 @@ export function ifBlock(
   return container;
 }
 
+interface ForEachEntry<T> {
+  key: unknown;
+  item: T;
+  node: Node;
+}
+
 export function forEach<T>(
   items: () => T[],
   renderItem: (item: T) => Node,
@@ -138,12 +144,51 @@ export function forEach<T>(
 ): HTMLElement {
   const container = document.createElement('span');
   container.style.display = 'contents';
+  let entries: ForEachEntry<T>[] = [];
+
   effect(() => {
-    container.innerHTML = '';
-    for (const item of items()) {
-      container.appendChild(renderItem(item));
+    const newItems = items();
+
+    if (!keyFn) {
+      container.innerHTML = '';
+      entries = [];
+      for (const item of newItems) {
+        const node = renderItem(item);
+        entries.push({ key: undefined, item, node });
+        container.appendChild(node);
+      }
+      return;
     }
+
+    const oldByKey = new Map<unknown, ForEachEntry<T>>();
+    for (const entry of entries) oldByKey.set(entry.key, entry);
+
+    const newEntries: ForEachEntry<T>[] = newItems.map((item) => {
+      const key = keyFn(item);
+      const existing = oldByKey.get(key);
+      if (existing && existing.item === item) return existing;
+      return { key, item, node: renderItem(item) };
+    });
+
+    const reusedNodes = new Set(newEntries.map((e) => e.node));
+    for (const entry of entries) {
+      if (!reusedNodes.has(entry.node)) {
+        entry.node.parentNode?.removeChild(entry.node);
+      }
+    }
+
+    let cursor: ChildNode | null = container.firstChild;
+    for (const entry of newEntries) {
+      if (cursor === entry.node) {
+        cursor = cursor.nextSibling;
+      } else {
+        container.insertBefore(entry.node, cursor);
+      }
+    }
+
+    entries = newEntries;
   });
+
   return container;
 }
 

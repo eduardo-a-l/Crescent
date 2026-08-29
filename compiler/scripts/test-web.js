@@ -97,6 +97,17 @@ async function main() {
     'cross-file module example resolves use/super::/braced imports correctly in a real page'
   );
 
+  const keyedListRoot = document.getElementById('keyed-list-root');
+  const initialTodos = keyedListRoot && Array.from(keyedListRoot.querySelectorAll('.todo'));
+  assert(initialTodos && initialTodos.length === 2, 'keyed list example mounted into the page');
+  const firstNode = initialTodos[0];
+  keyedListRoot.querySelector('.swap-btn').dispatchEvent(new dom.window.Event('click'));
+  const afterSwap = Array.from(keyedListRoot.querySelectorAll('.todo'));
+  assert(
+    afterSwap[1] === firstNode && afterSwap.map((n) => n.textContent).join(',') === 'Walk dog,Buy milk',
+    'keyed list reconciliation reuses DOM nodes on reorder in a real page'
+  );
+
   dom.window.close();
 }
 

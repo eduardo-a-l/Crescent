@@ -414,7 +414,13 @@ function templateNodeToJs(node: AST.TemplateNode, stateNames: Set<string>, scope
       const itemJs = templateNodeToJs(node.body[0], stateNames, scopeAttr);
       const iterableJs = exprToJs(node.iterable, stateNames);
       const args = [`() => ${iterableJs}`, `(${node.itemName}) => ${itemJs}`];
-      if (node.key) args.push(`(${node.itemName}) => ${exprToJs(node.key, stateNames)}`);
+      if (node.key) {
+        args.push(`(${node.itemName}) => ${exprToJs(node.key, stateNames)}`);
+      } else {
+        console.warn(
+          `Warning: for-loop over '${node.itemName}' has no explicit key; falling back to index-based list patching (see design doc §14.4). Add 'key <expr>' to the loop for stable, identity-based reconciliation.`
+        );
+      }
       return `forEach(${args.join(', ')})`;
     }
     default:

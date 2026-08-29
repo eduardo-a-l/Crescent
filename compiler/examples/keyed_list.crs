@@ -1,0 +1,34 @@
+struct Todo {
+    string id;
+    string text;
+}
+
+component TodoList {
+    state<Todo[]> todos = [
+        Todo { id: "a", text: "Buy milk" },
+        Todo { id: "b", text: "Walk dog" }
+    ];
+
+    void swap() {
+        todos = [todos[1], todos[0]];
+    }
+
+    void grow() {
+        todos = [todos[0], todos[1], Todo { id: "c", text: "Write code" }];
+    }
+
+    void shrink() {
+        todos = [todos[0]];
+    }
+
+    view {
+        <div class="todos">
+            for (Todo t in todos key t.id) {
+                <p class="todo">{t.text}</p>
+            }
+            <button class="swap-btn" onclick={swap}>"Swap"</button>
+            <button class="grow-btn" onclick={grow}>"Grow"</button>
+            <button class="shrink-btn" onclick={shrink}>"Shrink"</button>
+        </div>
+    }
+}
