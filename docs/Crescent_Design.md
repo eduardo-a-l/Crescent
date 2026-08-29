@@ -546,3 +546,11 @@ for (User user in users key user.id) {
 ### 14.6 Safety Clarification
 
 - **Definition:** "Safety" in Crescent refers specifically to **Application Safety** (Strict Compile-Time Type System + Null Safety `T?`), not systems-level memory safety (like Rust's borrow checker). It prevents runtime type errors at compile time.
+
+### 14.7 Project Milestones: v0.x -> v1.0 -> Post-1.0
+
+- **v0.x (current):** The build-up phase. Language features, the compiler, and the runtime are actively designed and can still change shape as they're built out — this is where the v1.0 base gets produced.
+- **v1.0 Goal:** The base is done. Core language syntax and semantics are stable and won't change substantially after this point — v1.0 is meant to be a solid, dependable foundation, not another moving-target release. Two things are required to call it v1.0:
+  - The **semantic/type checker** exists and is trustworthy (scope resolution, type checking, the reactivity rules already specified throughout this document actually enforced at compile time, not just documented).
+  - Crescent **works well in an editor** — a real language server (LSP) experience in VS Code (diagnostics as you type, autocomplete, go-to-definition, hover types), not just syntax highlighting. This depends on the semantic checker above, since most of what an LSP reports is that checker's output delivered per-keystroke instead of per-build.
+- **Post-1.0:** Only corrections (bug fixes), new things (additive features that don't break the stable v1.0 base), and QoL improvements. No fundamental redesigns of what's already stable.
