@@ -1,0 +1,31 @@
+component TaskList {
+    state<string[]> items = ["Buy milk", "Walk dog"];
+
+    void add_item() {
+        items.push("New task");
+    }
+
+    void remove_last() {
+        items.pop();
+    }
+
+    void remove_walk_dog() {
+        items.remove("Walk dog");
+    }
+
+    void clear_all() {
+        items.clear();
+    }
+
+    view {
+        <div class="list">
+            for (string item in items key item) {
+                <p class="item">{item}</p>
+            }
+            <button class="add-btn" onclick={add_item}>"Add"</button>
+            <button class="pop-btn" onclick={remove_last}>"Remove last"</button>
+            <button class="remove-btn" onclick={remove_walk_dog}>"Remove Walk dog"</button>
+            <button class="clear-btn" onclick={clear_all}>"Clear"</button>
+        </div>
+    }
+}

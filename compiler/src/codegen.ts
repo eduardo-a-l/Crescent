@@ -213,6 +213,35 @@ function generateFunction(fn: AST.FunctionDecl, stateNames: Set<string>, derived
   return lines.join('\n');
 }
 
+const ARRAY_NATIVE_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse']);
+
+function arrayMutatorStmtJs(
+  expr: Extract<AST.Expr, { kind: 'Call' }>,
+  stateNames: Set<string>
+): string | null {
+  if (expr.callee.kind !== 'Member') return null;
+  const member = expr.callee;
+  if (member.object.kind !== 'Identifier' || !stateNames.has(member.object.name)) return null;
+
+  const rootName = member.object.name;
+  const methodName = member.property;
+  const argsJs = expr.args.map((a) => exprToJs(a, stateNames));
+
+  if (ARRAY_NATIVE_MUTATORS.has(methodName)) {
+    return [`${rootName}.get().${methodName}(${argsJs.join(', ')});`, `${rootName}.set(${rootName}.get());`].join('\n');
+  }
+  if (methodName === 'remove') {
+    return [
+      `(() => { const __i = ${rootName}.get().indexOf(${argsJs[0]}); if (__i !== -1) ${rootName}.get().splice(__i, 1); })();`,
+      `${rootName}.set(${rootName}.get());`,
+    ].join('\n');
+  }
+  if (methodName === 'clear') {
+    return [`${rootName}.get().length = 0;`, `${rootName}.set(${rootName}.get());`].join('\n');
+  }
+  return null;
+}
+
 function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<string>): string {
   switch (stmt.kind) {
     case 'VarDecl':
@@ -221,8 +250,13 @@ function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<str
       return assignmentToJs(stmt, stateNames, derivedNames);
     case 'PostfixStmt':
       return postfixToJs(stmt, stateNames, derivedNames);
-    case 'ExprStatement':
+    case 'ExprStatement': {
+      if (stmt.expr.kind === 'Call') {
+        const mutatorJs = arrayMutatorStmtJs(stmt.expr, stateNames);
+        if (mutatorJs) return mutatorJs;
+      }
       return `${exprToJs(stmt.expr, stateNames)};`;
+    }
     case 'If': {
       const lines: string[] = [];
       lines.push(`if (${exprToJs(stmt.test, stateNames)}) {`);

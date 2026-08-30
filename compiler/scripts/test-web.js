@@ -108,6 +108,22 @@ async function main() {
     'keyed list reconciliation reuses DOM nodes on reorder in a real page'
   );
 
+  const mutatorsRoot = document.getElementById('array-mutators-root');
+  assert(mutatorsRoot && mutatorsRoot.querySelectorAll('.item').length === 2, 'array mutators example mounted into the page');
+  mutatorsRoot.querySelector('.add-btn').dispatchEvent(new dom.window.Event('click'));
+  assert(
+    Array.from(mutatorsRoot.querySelectorAll('.item')).map((n) => n.textContent).join(',') === 'Buy milk,Walk dog,New task',
+    'items.push(...) reactively updates a real page'
+  );
+
+  const mutatorsNativeRoot = document.getElementById('array-mutators-native-root');
+  assert(mutatorsNativeRoot && mutatorsNativeRoot.querySelectorAll('.num').length === 3, 'native array mutators example mounted into the page');
+  mutatorsNativeRoot.querySelector('.reverse-btn').dispatchEvent(new dom.window.Event('click'));
+  assert(
+    Array.from(mutatorsNativeRoot.querySelectorAll('.num')).map((n) => n.textContent).join(',') === '2,1,3',
+    'items.reverse() reactively updates a real page'
+  );
+
   dom.window.close();
 }
 

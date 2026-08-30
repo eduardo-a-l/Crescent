@@ -15,6 +15,8 @@ const targets = [
   { file: 'derived_and_lifecycle.js', globalName: 'CrescentDerivedLifecycle', mountFn: 'Cart', rootId: 'derived-lifecycle-root' },
   { file: path.join('modules', 'main.js'), globalName: 'CrescentModules', mountFn: 'App', rootId: 'modules-root' },
   { file: 'keyed_list.js', globalName: 'CrescentKeyedList', mountFn: 'TodoList', rootId: 'keyed-list-root' },
+  { file: 'array_mutators.js', globalName: 'CrescentArrayMutators', mountFn: 'TaskList', rootId: 'array-mutators-root' },
+  { file: 'array_mutators_native.js', globalName: 'CrescentArrayMutatorsNative', mountFn: 'NumberList', rootId: 'array-mutators-native-root' },
 ];
 
 async function main() {

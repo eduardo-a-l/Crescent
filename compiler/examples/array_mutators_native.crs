@@ -1,0 +1,36 @@
+component NumberList {
+    state<int[]> nums = [3, 1, 2];
+
+    void do_shift() {
+        nums.shift();
+    }
+
+    void do_unshift() {
+        nums.unshift(9);
+    }
+
+    void do_splice() {
+        nums.splice(1, 1);
+    }
+
+    void do_sort() {
+        nums.sort();
+    }
+
+    void do_reverse() {
+        nums.reverse();
+    }
+
+    view {
+        <div class="nums">
+            for (int n in nums key n) {
+                <p class="num">{n}</p>
+            }
+            <button class="shift-btn" onclick={do_shift}>"Shift"</button>
+            <button class="unshift-btn" onclick={do_unshift}>"Unshift"</button>
+            <button class="splice-btn" onclick={do_splice}>"Splice"</button>
+            <button class="sort-btn" onclick={do_sort}>"Sort"</button>
+            <button class="reverse-btn" onclick={do_reverse}>"Reverse"</button>
+        </div>
+    }
+}

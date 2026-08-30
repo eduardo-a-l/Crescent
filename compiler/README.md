@@ -128,6 +128,21 @@ regardless of reference equality. A **direct property write on the state itself*
 (`user.name = "Sam"` where `user` is `state<User>`) is a compile-time `CodegenError`, per the
 "forbidden nested object mutation" rule — the whole state must be reassigned instead.
 
+**Array mutator methods** on a `state<T[]>` — `items.push(x)`, `.pop()`, `.shift()`,
+`.unshift(x)`, `.splice(...)`, `.sort()`, `.reverse()` (native JS Array methods), plus two
+Crescent-specific ones, `.remove(x)` (removes the first element `===` to `x`, via `indexOf` +
+`splice`) and `.clear()` (`.length = 0`) — follow the same `.get()`-mutate-then-`.set(.get())`
+pattern as index writes, per §13.1 ("no spread operators required... method calls flag the
+internal collection as dirty"). This is recognized **only** when the call is a bare statement —
+`items.push(x);` on its own line — matching every one of the design doc's own examples; codegen
+does not currently track a forced re-notify through other expression positions (a `VarDecl` whose
+initializer is `items.pop()`, for instance, still mutates the array correctly since `.get()`
+returns the live reference, but won't itself trigger a re-render — only the *value returned* is
+affected, not reactivity). It's also not checked that the receiver is actually an array-typed
+`state` — calling `.push()` on a `state<int>` would silently generate `count.get().push(x)`,
+which fails at runtime, not compile time; the semantic checker does not yet track full type
+information for this to be a real diagnostic.
+
 `derived<T>` follows §14.5's lazy pull-based memoization: the runtime `derived()` helper only
 recomputes on the next read after a dependency changes (not eagerly on every change), and
 assigning to a derived name directly (`total = 5;`) is a compile-time `CodegenError` — dependencies
