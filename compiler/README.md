@@ -232,6 +232,42 @@ declaration-level granularity cheaply; per-token spans (needed for real squiggly
 diagnostics) are a `docs/Crescent_Design.md` §14.7 v1.0-milestone concern, not something this pass
 tries to solve.
 
+## Effect Disposal
+
+Before this, `effect()` had no way to stop reacting: `ifBlock`/`forEach` wiped or removed DOM
+subtrees on every change, but any `effect()` created *inside* that content (every `text()`
+binding, every nested `derived()`, every nested `ifBlock`/`forEach`) kept running forever,
+subscribed to signals nobody would ever read the result of again. This was a real memory leak and
+wasted-work bug, not a missing feature — invisible in small examples because nothing was ever torn
+down often enough to notice.
+
+`effect()` now returns a `dispose()` handle. Internally, each effect tracks exactly which
+signals' subscriber sets it's currently registered in (`ctx.deps`, a `Set` of `Set<EffectFn>`),
+re-collected fresh on every run — so `dispose()` (or a natural re-run) can precisely remove it from
+those sets. This also fixes a smaller pre-existing correctness issue for free: previously, once an
+effect read a signal, it stayed subscribed forever even if a later run took a different branch
+(e.g. a ternary) and stopped reading it.
+
+Knowing *when* to call `dispose()` is the harder half, and it's solved with an ambient
+**disposal-scope stack**, not by threading dispose handles through every call site by hand. Any
+`effect()` created while a scope is active auto-registers its own `dispose` into that scope's list
+— so `ifBlock`/`forEach` wrap each render call in `withDisposalScope(() => renderFn())`, and every
+effect created anywhere inside that call — directly, or transitively through `text()`, a nested
+`derived()`, or a nested `ifBlock`/`forEach` calling `effect()` internally — gets captured
+automatically, with no changes needed to `text()`, `derived()`, or codegen at all. `ifBlock`
+disposes the previous render's scope before building the next one; `forEach` disposes a removed
+keyed entry's scope when it drops out of the list (or the whole current entry set, if the
+`forEach` itself is torn down by an ancestor).
+
+One thing this *doesn't* do automatically: a render function's own outer `effect()` call, when
+disposed, only clears **that effect's own** reactive subscriptions — it has no idea the callback
+also built nested content that needs tearing down. `ifBlock`/`forEach` account for this explicitly
+(each `registerDisposal()`s a combined function that disposes both its own effect *and* whatever
+it last rendered) rather than relying on `effect()`'s auto-registration alone; a bug where the
+composability claim above didn't actually hold for a component-as-element two levels deep inside a
+list was caught by a dedicated test for exactly this (`scripts/test-effect-disposal.js`) before it
+shipped.
+
 ## Key implementation decisions
 
 **`<` disambiguation (generic vs. comparison vs. tag-open).** Not resolved at the lexer level —

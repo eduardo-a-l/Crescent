@@ -4,15 +4,43 @@ export interface Signal<T> {
 }
 
 type EffectFn = () => void;
+type Dispose = () => void;
 
-let currentEffect: EffectFn | null = null;
+interface EffectContext {
+  run: EffectFn;
+  deps: Set<Set<EffectFn>>;
+}
+
+let currentContext: EffectContext | null = null;
+const disposalStack: Dispose[][] = [];
+
+function registerDisposal(dispose: Dispose): void {
+  if (disposalStack.length > 0) {
+    disposalStack[disposalStack.length - 1].push(dispose);
+  }
+}
+
+function withDisposalScope<T>(fn: () => T): [T, Dispose] {
+  const scope: Dispose[] = [];
+  disposalStack.push(scope);
+  let result: T;
+  try {
+    result = fn();
+  } finally {
+    disposalStack.pop();
+  }
+  return [result, () => { for (const dispose of scope) dispose(); }];
+}
 
 export function state<T>(initial: T): Signal<T> {
   let value = initial;
   const subscribers = new Set<EffectFn>();
   return {
     get(): T {
-      if (currentEffect) subscribers.add(currentEffect);
+      if (currentContext) {
+        subscribers.add(currentContext.run);
+        currentContext.deps.add(subscribers);
+      }
       return value;
     },
     set(next: T): void {
@@ -22,17 +50,27 @@ export function state<T>(initial: T): Signal<T> {
   };
 }
 
-export function effect(fn: EffectFn): void {
-  const wrapped: EffectFn = () => {
-    const prev = currentEffect;
-    currentEffect = wrapped;
+export function effect(fn: EffectFn): Dispose {
+  const ctx: EffectContext = { run: () => {}, deps: new Set() };
+  ctx.run = () => {
+    for (const depSet of ctx.deps) depSet.delete(ctx.run);
+    ctx.deps.clear();
+    const prevContext = currentContext;
+    currentContext = ctx;
     try {
       fn();
     } finally {
-      currentEffect = prev;
+      currentContext = prevContext;
     }
   };
-  wrapped();
+  ctx.run();
+
+  const dispose: Dispose = () => {
+    for (const depSet of ctx.deps) depSet.delete(ctx.run);
+    ctx.deps.clear();
+  };
+  registerDisposal(dispose);
+  return dispose;
 }
 
 type Attrs = Record<string, unknown>;
@@ -77,25 +115,38 @@ export function derived<T>(compute: () => T): Signal<T> {
   let value: T;
   let dirty = true;
   const subscribers = new Set<EffectFn>();
-  const markDirty: EffectFn = () => {
+  const ctx: EffectContext = { run: () => {}, deps: new Set() };
+  ctx.run = () => {
     if (!dirty) {
       dirty = true;
       for (const fn of Array.from(subscribers)) fn();
     }
   };
+
+  const dispose: Dispose = () => {
+    for (const depSet of ctx.deps) depSet.delete(ctx.run);
+    ctx.deps.clear();
+  };
+  registerDisposal(dispose);
+
   return {
     get(): T {
       if (dirty) {
-        const prevEffect = currentEffect;
-        currentEffect = markDirty;
+        for (const depSet of ctx.deps) depSet.delete(ctx.run);
+        ctx.deps.clear();
+        const prevContext = currentContext;
+        currentContext = ctx;
         try {
           value = compute();
         } finally {
-          currentEffect = prevEffect;
+          currentContext = prevContext;
         }
         dirty = false;
       }
-      if (currentEffect) subscribers.add(currentEffect);
+      if (currentContext) {
+        subscribers.add(currentContext.run);
+        currentContext.deps.add(subscribers);
+      }
       return value;
     },
     set(): void {
@@ -104,9 +155,9 @@ export function derived<T>(compute: () => T): Signal<T> {
   };
 }
 
-export function watch(readDeps: () => void, fn: EffectFn): void {
+export function watch(readDeps: () => void, fn: EffectFn): Dispose {
   let isFirstRun = true;
-  effect(() => {
+  return effect(() => {
     readDeps();
     if (isFirstRun) {
       isFirstRun = false;
@@ -123,11 +174,24 @@ export function ifBlock(
 ): HTMLElement {
   const container = document.createElement('span');
   container.style.display = 'contents';
-  effect(() => {
+  let disposeCurrent: Dispose | null = null;
+
+  const disposeEffect = effect(() => {
+    if (disposeCurrent) {
+      disposeCurrent();
+      disposeCurrent = null;
+    }
     container.innerHTML = '';
-    const node = test() ? renderTrue() : renderFalse ? renderFalse() : null;
+    const [node, disposeAll] = withDisposalScope(() => (test() ? renderTrue() : renderFalse ? renderFalse() : null));
+    disposeCurrent = disposeAll;
     if (node) container.appendChild(node);
   });
+
+  registerDisposal(() => {
+    disposeEffect();
+    if (disposeCurrent) disposeCurrent();
+  });
+
   return container;
 }
 
@@ -135,6 +199,7 @@ interface ForEachEntry<T> {
   key: unknown;
   item: T;
   node: Node;
+  dispose: Dispose;
 }
 
 export function forEach<T>(
@@ -146,15 +211,16 @@ export function forEach<T>(
   container.style.display = 'contents';
   let entries: ForEachEntry<T>[] = [];
 
-  effect(() => {
+  const disposeEffect = effect(() => {
     const newItems = items();
 
     if (!keyFn) {
+      for (const entry of entries) entry.dispose();
       container.innerHTML = '';
       entries = [];
       for (const item of newItems) {
-        const node = renderItem(item);
-        entries.push({ key: undefined, item, node });
+        const [node, dispose] = withDisposalScope(() => renderItem(item));
+        entries.push({ key: undefined, item, node, dispose });
         container.appendChild(node);
       }
       return;
@@ -167,13 +233,15 @@ export function forEach<T>(
       const key = keyFn(item);
       const existing = oldByKey.get(key);
       if (existing && existing.item === item) return existing;
-      return { key, item, node: renderItem(item) };
+      const [node, dispose] = withDisposalScope(() => renderItem(item));
+      return { key, item, node, dispose };
     });
 
     const reusedNodes = new Set(newEntries.map((e) => e.node));
     for (const entry of entries) {
       if (!reusedNodes.has(entry.node)) {
         entry.node.parentNode?.removeChild(entry.node);
+        entry.dispose();
       }
     }
 
@@ -187,6 +255,11 @@ export function forEach<T>(
     }
 
     entries = newEntries;
+  });
+
+  registerDisposal(() => {
+    disposeEffect();
+    for (const entry of entries) entry.dispose();
   });
 
   return container;
