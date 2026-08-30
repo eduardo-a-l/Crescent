@@ -1,0 +1,7 @@
+component Broken {
+    state<string?> user_name = null;
+
+    view {
+        <p>{user_name.length}</p>
+    }
+}

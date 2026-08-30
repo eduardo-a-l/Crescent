@@ -63,6 +63,13 @@ export class Parser {
   }
 
   private parseTopLevelDecl(): AST.TopLevelDecl {
+    const line = this.current.line;
+    const decl = this.parseTopLevelDeclInner();
+    decl.line = line;
+    return decl;
+  }
+
+  private parseTopLevelDeclInner(): AST.TopLevelDecl {
     if (this.check('STRUCT')) return this.parseStructDecl();
     if (this.check('COMPONENT')) return this.parseComponentDecl();
     if (this.check('USE')) return this.parseUseDecl();
@@ -102,7 +109,7 @@ export class Parser {
         }
         this.expect('RBRACE');
         this.expect('SEMI');
-        return { kind: 'UseDecl', pathSegments: segments, items };
+        return { kind: 'UseDecl', pathSegments: segments, items , line: 0 };
       }
       segments.push(this.parsePathSegment());
     }
@@ -112,7 +119,7 @@ export class Parser {
     if (itemName === undefined || segments.length === 0) {
       throw new ParseError("'use' must reference a module path before the imported item, e.g. 'use card::UserCard;'");
     }
-    return { kind: 'UseDecl', pathSegments: segments, items: [{ name: itemName }] };
+    return { kind: 'UseDecl', pathSegments: segments, items: [{ name: itemName }] , line: 0 };
   }
 
   private parseStructDecl(): AST.StructDecl {
@@ -127,7 +134,7 @@ export class Parser {
       fields.push({ type, name: fieldName });
     }
     this.expect('RBRACE');
-    return { kind: 'StructDecl', name, fields };
+    return { kind: 'StructDecl', name, fields , line: 0 };
   }
 
   private parseComponentDecl(): AST.ComponentDecl {
@@ -145,7 +152,7 @@ export class Parser {
       members.push(this.parseComponentMember());
     }
     this.expect('RBRACE');
-    return { kind: 'ComponentDecl', name, params, members };
+    return { kind: 'ComponentDecl', name, params, members , line: 0 };
   }
 
   private parseParamList(): AST.Param[] {
@@ -172,6 +179,13 @@ export class Parser {
   }
 
   private parseComponentMember(): AST.ComponentMember {
+    const line = this.current.line;
+    const member = this.parseComponentMemberInner();
+    member.line = line;
+    return member;
+  }
+
+  private parseComponentMemberInner(): AST.ComponentMember {
     switch (this.current.type) {
       case 'STATE': return this.parseStateDecl();
       case 'DERIVED': return this.parseDerivedDecl();
@@ -203,7 +217,7 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'StateDecl', type, name, init };
+    return { kind: 'StateDecl', type, name, init , line: 0 };
   }
 
   private parseDerivedDecl(): AST.DerivedDecl {
@@ -215,7 +229,7 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'DerivedDecl', type, name, init };
+    return { kind: 'DerivedDecl', type, name, init , line: 0 };
   }
 
   private parseProvideDecl(): AST.ProvideDecl {
@@ -227,7 +241,7 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'ProvideDecl', type, name, init };
+    return { kind: 'ProvideDecl', type, name, init , line: 0 };
   }
 
   private parseInjectDecl(): AST.InjectDecl {
@@ -237,7 +251,7 @@ export class Parser {
     this.expect('GT');
     const name = this.expect('IDENTIFIER').value;
     this.expect('SEMI');
-    return { kind: 'InjectDecl', type, name };
+    return { kind: 'InjectDecl', type, name , line: 0 };
   }
 
   private parseConstDecl(): AST.ConstDecl {
@@ -247,13 +261,13 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'ConstDecl', type, name, init };
+    return { kind: 'ConstDecl', type, name, init , line: 0 };
   }
 
   private parseOnMountDecl(): AST.OnMountDecl {
     this.expect('ON_MOUNT');
     const body = this.parseBlock();
-    return { kind: 'OnMountDecl', body };
+    return { kind: 'OnMountDecl', body , line: 0 };
   }
 
   private parseOnChangeDecl(): AST.OnChangeDecl {
@@ -266,7 +280,7 @@ export class Parser {
     }
     this.expect('RPAREN');
     const body = this.parseBlock();
-    return { kind: 'OnChangeDecl', watched, body };
+    return { kind: 'OnChangeDecl', watched, body , line: 0 };
   }
 
   private parseFunctionDecl(): AST.FunctionDecl {
@@ -288,7 +302,7 @@ export class Parser {
     if (!this.check('RPAREN')) params = this.parseParamList();
     this.expect('RPAREN');
     const body = this.parseBlock();
-    return { kind: 'FunctionDecl', isAsync, returnType, name, params, body };
+    return { kind: 'FunctionDecl', isAsync, returnType, name, params, body , line: 0 };
   }
 
   parseType(): AST.CrescentType {
@@ -334,6 +348,13 @@ export class Parser {
   }
 
   private parseStatement(): AST.Stmt {
+    const line = this.current.line;
+    const stmt = this.parseStatementInner();
+    stmt.line = line;
+    return stmt;
+  }
+
+  private parseStatementInner(): AST.Stmt {
     if (PRIMITIVE_TYPE_TOKENS.includes(this.current.type)) {
       return this.parseVarDeclStatement();
     }
@@ -359,7 +380,7 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'VarDecl', type, name, init };
+    return { kind: 'VarDecl', type, name, init, line: 0 };
   }
 
   private parseAssignmentOrExprStatement(): AST.Stmt {
@@ -369,14 +390,14 @@ export class Parser {
       const op = this.advance().value;
       const value = this.parseExpression();
       this.expect('SEMI');
-      return { kind: 'Assignment', target: expr, op, value };
+      return { kind: 'Assignment', target: expr, op, value, line: 0 };
     }
     if (expr.kind === 'Postfix') {
       this.expect('SEMI');
-      return { kind: 'PostfixStmt', target: expr.operand, op: expr.op };
+      return { kind: 'PostfixStmt', target: expr.operand, op: expr.op, line: 0 };
     }
     this.expect('SEMI');
-    return { kind: 'ExprStatement', expr };
+    return { kind: 'ExprStatement', expr, line: 0 };
   }
 
   private parseIfStatement(): AST.Stmt {
@@ -394,7 +415,7 @@ export class Parser {
         alternate = this.parseBlock();
       }
     }
-    return { kind: 'If', test, consequent, alternate };
+    return { kind: 'If', test, consequent, alternate, line: 0 };
   }
 
   private parseForStatement(): AST.Stmt {
@@ -406,18 +427,18 @@ export class Parser {
     const iterable = this.parseExpression();
     this.expect('RPAREN');
     const body = this.parseBlock();
-    return { kind: 'For', itemType, itemName, iterable, body };
+    return { kind: 'For', itemType, itemName, iterable, body, line: 0 };
   }
 
   private parseReturnStatement(): AST.Stmt {
     this.expect('RETURN');
     if (this.check('SEMI')) {
       this.advance();
-      return { kind: 'Return' };
+      return { kind: 'Return', line: 0 };
     }
     const value = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'Return', value };
+    return { kind: 'Return', value, line: 0 };
   }
 
   parseExpression(): AST.Expr {
@@ -630,10 +651,17 @@ export class Parser {
       nodes.push(this.parseTemplateNode());
     }
     this.expect('RBRACE');
-    return { kind: 'ViewBlockDecl', nodes };
+    return { kind: 'ViewBlockDecl', nodes , line: 0 };
   }
 
   private parseTemplateNode(): AST.TemplateNode {
+    const line = this.current.line;
+    const node = this.parseTemplateNodeInner();
+    node.line = line;
+    return node;
+  }
+
+  private parseTemplateNodeInner(): AST.TemplateNode {
     if (this.check('LT')) return this.parseElement();
     if (this.check('IF')) return this.parseTemplateIf();
     if (this.check('FOR')) return this.parseTemplateFor();
@@ -641,10 +669,10 @@ export class Parser {
       this.advance();
       const expr = this.parseExpression();
       this.expect('RBRACE');
-      return { kind: 'TextInterpolation', expr };
+      return { kind: 'TextInterpolation', expr, line: 0 };
     }
     if (this.check('STRING_LITERAL')) {
-      return { kind: 'TextLiteral', value: this.advance().value };
+      return { kind: 'TextLiteral', value: this.advance().value, line: 0 };
     }
     this.fail('Expected a template node inside view block');
   }
@@ -675,7 +703,7 @@ export class Parser {
     }
     if (this.check('SLASH_GT')) {
       this.advance();
-      return { kind: 'Element', tag, isComponent, attributes, children: [], selfClosing: true };
+      return { kind: 'Element', tag, isComponent, attributes, children: [], selfClosing: true , line: 0 };
     }
     this.expect('GT');
     const children: AST.TemplateNode[] = [];
@@ -689,7 +717,7 @@ export class Parser {
       this.fail(`Mismatched closing tag: expected </${tag}> but got </${closeTag}>`);
     }
     this.expect('GT');
-    return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false };
+    return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
   }
 
   private isClosingTagAhead(): boolean {
@@ -721,7 +749,7 @@ export class Parser {
         this.expect('RBRACE');
       }
     }
-    return { kind: 'TemplateIf', test, consequent, alternate };
+    return { kind: 'TemplateIf', test, consequent, alternate , line: 0 };
   }
 
   private parseTemplateFor(): AST.TemplateNode {
@@ -741,7 +769,7 @@ export class Parser {
     const body: AST.TemplateNode[] = [];
     while (!this.check('RBRACE')) body.push(this.parseTemplateNode());
     this.expect('RBRACE');
-    return { kind: 'TemplateFor', itemType, itemName, iterable, key, body };
+    return { kind: 'TemplateFor', itemType, itemName, iterable, key, body , line: 0 };
   }
 
   private parseStyleBlockDecl(): AST.StyleBlockDecl {
@@ -758,7 +786,7 @@ export class Parser {
       rules.push(this.parseStyleRule());
     }
     this.current = this.lexer.nextToken();
-    return { kind: 'StyleBlockDecl', rules };
+    return { kind: 'StyleBlockDecl', rules , line: 0 };
   }
 
   private parseStyleRule(): AST.StyleRule {

@@ -1,0 +1,12 @@
+struct User {
+    string name;
+    int age;
+}
+
+component Broken {
+    state<User> user = User { name: "Alex" };
+
+    view {
+        <p>{user.name}</p>
+    }
+}

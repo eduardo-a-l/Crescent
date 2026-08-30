@@ -13,12 +13,15 @@ supported subset of the language. There is no semantic/type checker yet.
 - `src/modules.ts` — multi-file module graph: discovers `.crs` files, resolves `use` paths, checks
   for import cycles, and computes the relative `require()` paths codegen needs (see "Modules"
   below)
+- `src/checker.ts` — the semantic checker: scope resolution, struct/prop/type checks, reactivity
+  rules, and non-flow-sensitive null-safety warnings (see "Semantic Checker" below)
 - `src/codegen.ts` — AST → JavaScript codegen (see "Codegen" below for what's supported)
 - `src/runtime.ts` — the small reactive runtime (`state`, `derived`, `effect`, `watch`, `h`, `text`,
   `ifBlock`, `forEach`, `slot`, `injectStyle`) that generated components import at run time
 - `src/index.ts` — demo entry point: recursively discovers every `.crs` file under `examples/`
   (including nested directories), resolves imports and checks for cycles across the whole project,
-  then attempts codegen per file, mirroring the source tree under `dist/gen/`
+  runs the semantic checker per file (skipping codegen for that file if it reports any errors),
+  then attempts codegen, mirroring the source tree under `dist/gen/`
 - `scripts/build-web.js` — bundles generated components (via `esbuild`) into a single
   self-contained `web/index.html` you can open directly in a browser
 - `scripts/test-counter.js`, `scripts/test-day-picker.js` — headless-DOM smoke tests (via
@@ -168,6 +171,67 @@ from the *generated* file's location (mirroring the source tree under `dist/gen/
 There's no re-export chaining in v0.1: an import must resolve to an actual declaration in the
 target file, not to something that file only imported itself.
 
+## Semantic Checker
+
+`src/checker.ts` runs as its own pass between parsing and codegen (`checkFile()`, wired into
+`src/index.ts`) and collects **multiple** diagnostics per file — rather than throwing on the first
+problem like `ParseError`/`CodegenError` — so a file can be checked once and report everything
+wrong with it. A diagnostic is `{ severity: 'error' | 'warning', message, where, line }`; `where`
+is a human-readable path like `component 'Cart', function 'add_one'`, and `line` is the line of
+the enclosing statement or declaration (see the source-location note below). Errors block codegen
+for that file (`index.ts` prints all diagnostics, then skips codegen if any are errors);
+warnings are printed but don't block.
+
+What it checks:
+- **Scope resolution** — every `Identifier` used anywhere (expressions, assignment targets,
+  `on_change(...)` watch lists) must resolve to a param, `state`/`derived`/`const`/`provide`/
+  `inject`, a local `for`-loop or `VarDecl` binding, a sibling function, a component/struct name
+  (local or imported), or one of a small allowlist of browser/JS globals (`fetch`, `console`,
+  `Math`, `Date`, `JSON`, `Promise`, timers, `window`, `document`, storage) — the design doc's own
+  `async`/`await` example (§13.4) uses `fetch(...)`, so that had to be recognized rather than
+  flagged.
+- **Struct literals** — every field the struct declares must be provided, and every field provided
+  must be declared (missing/unknown field errors), plus a literal-shaped field value's type is
+  checked against the field's declared type.
+- **Component prop passing** — `<UserCard user={u}/>` checks the attribute names against
+  `UserCard`'s declared params (missing required / unknown prop errors). Event-handler attributes
+  (`onclick={...}`, anything starting with `on`) are exempted since they're not component props.
+- **`state`/`derived`/`const`/`provide` initializers** — checked against the declared type, but
+  **only when the initializer is a literal** (`IntLiteral`, `StringLiteral`, a struct literal, an
+  array literal, etc.). An initializer that's a function call, a binary expression, or any other
+  non-literal is left unchecked — see "Explicitly out of scope" below for why.
+- **Reactivity rules** — the same two rules enforced in codegen (`user.name = ...` forbidden on a
+  `state<T>` struct; assigning to a `derived<T>` name forbidden) are re-checked here too, so they
+  surface as a `where`/`line`-tagged diagnostic instead of only a codegen exception. This is
+  deliberate, harmless duplication — codegen keeps its own check so it's still correct if ever run
+  without the checker in front of it.
+- **Null safety (`T?`), non-flow-sensitively** — a `Member`/`Index` access on an identifier whose
+  declared type is `T?` is flagged as a **warning** unless it's inside the `consequent` branch of
+  an `if (x)` or `if (x != null)` check on that exact identifier, matching the design doc's own
+  §11 example. This narrowing is deliberately simple: it only recognizes that one direct pattern,
+  re-derived fresh at each `if`, with no tracking across early returns, loops, or compound boolean
+  conditions.
+
+**Explicitly out of scope for this version** (so these are known gaps, not silent ones):
+- General type inference. There's no unification engine — a `const` or `state` initialized from a
+  function call, a variable reference, or an arithmetic expression isn't type-checked against its
+  declared type, only literal-shaped initializers are.
+- Flow-sensitive null narrowing beyond the single direct-`if`-guard pattern above (no narrowing
+  through `&&`, no narrowing that survives past an early `return`, no loop-carried narrowing).
+- Per-expression source locations. Diagnostics point at the enclosing **statement** or
+  **declaration** (see "Source locations" below), not the specific sub-expression — e.g. a type
+  error deep inside a large ternary is reported at the statement's line, not the ternary's.
+
+**Source locations.** The AST previously carried no position information at all — only tokens did.
+This version adds a `line: number` field to `Stmt`, `ComponentMember`, `TopLevelDecl`, and
+`TemplateNode`, populated via three/four choke-point wrapper functions in the parser
+(`parseStatement`, `parseComponentMember`, `parseTopLevelDecl`, `parseTemplateNode`) that capture
+`this.current.line` before dispatching to the real per-kind parse function, rather than threading a
+`line` parameter through every individual `parse*()` function by hand. This gives statement/
+declaration-level granularity cheaply; per-token spans (needed for real squiggly-line LSP
+diagnostics) are a `docs/Crescent_Design.md` §14.7 v1.0-milestone concern, not something this pass
+tries to solve.
+
 ## Key implementation decisions
 
 **`<` disambiguation (generic vs. comparison vs. tag-open).** Not resolved at the lexer level —
@@ -198,9 +262,10 @@ array of string. `string?[]` → array of nullable string.
 
 ## What's deliberately not here yet
 
-- No semantic/type checker (no scope resolution, no type inference/checking, no reactivity
-  analysis).
+- A first-version semantic checker exists (`src/checker.ts`, see "Semantic Checker" above), but it
+  does not do general type inference or flow-sensitive null narrowing — see that section's
+  "Explicitly out of scope" list for the precise boundary.
 - No `Selector`/CSS-property validation — style selectors and raw property values are captured as
   opaque strings; only the `{expr}` interpolations are actually parsed.
-- Error recovery is fail-fast (throws `ParseError`/`CodegenError`/`ModuleError` with as much
-  context as is available) rather than collecting multiple diagnostics.
+- `ParseError`/`CodegenError`/`ModuleError` are still fail-fast (thrown on the first problem) —
+  only the semantic checker collects multiple diagnostics per file.

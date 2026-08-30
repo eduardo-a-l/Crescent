@@ -16,9 +16,13 @@ component UserList {
     state<string[]?> tags = null;
     state<string?[]> nicknames = [];
 
+    User fetch_pending() {
+        return User { name: "Pending User", age: 0 };
+    }
+
     void update_first_user() {
         Response<User> pending_response = fetch_pending();
-        users[0] = User { name: "Sam", age: 30 };
+        users[0] = User { name: pending_response.name, age: pending_response.age };
     }
 
     view {

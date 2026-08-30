@@ -23,13 +23,13 @@ export type Expr =
   | { kind: 'Postfix'; op: '++' | '--'; operand: Expr };
 
 export type Stmt =
-  | { kind: 'VarDecl'; type: CrescentType; name: string; init: Expr }
-  | { kind: 'Assignment'; target: Expr; op: string; value: Expr }
-  | { kind: 'PostfixStmt'; target: Expr; op: '++' | '--' }
-  | { kind: 'ExprStatement'; expr: Expr }
-  | { kind: 'If'; test: Expr; consequent: Stmt[]; alternate?: Stmt[] }
-  | { kind: 'For'; itemType: CrescentType; itemName: string; iterable: Expr; body: Stmt[] }
-  | { kind: 'Return'; value?: Expr };
+  | { kind: 'VarDecl'; type: CrescentType; name: string; init: Expr; line: number }
+  | { kind: 'Assignment'; target: Expr; op: string; value: Expr; line: number }
+  | { kind: 'PostfixStmt'; target: Expr; op: '++' | '--'; line: number }
+  | { kind: 'ExprStatement'; expr: Expr; line: number }
+  | { kind: 'If'; test: Expr; consequent: Stmt[]; alternate?: Stmt[]; line: number }
+  | { kind: 'For'; itemType: CrescentType; itemName: string; iterable: Expr; body: Stmt[]; line: number }
+  | { kind: 'Return'; value?: Expr; line: number };
 
 export interface Param {
   type: CrescentType;
@@ -51,8 +51,9 @@ export type TemplateNode =
       attributes: Attribute[];
       children: TemplateNode[];
       selfClosing: boolean;
+      line: number;
     }
-  | { kind: 'TemplateIf'; test: Expr; consequent: TemplateNode[]; alternate?: TemplateNode[] }
+  | { kind: 'TemplateIf'; test: Expr; consequent: TemplateNode[]; alternate?: TemplateNode[]; line: number }
   | {
       kind: 'TemplateFor';
       itemType: CrescentType;
@@ -60,9 +61,10 @@ export type TemplateNode =
       iterable: Expr;
       key?: Expr;
       body: TemplateNode[];
+      line: number;
     }
-  | { kind: 'TextInterpolation'; expr: Expr }
-  | { kind: 'TextLiteral'; value: string };
+  | { kind: 'TextInterpolation'; expr: Expr; line: number }
+  | { kind: 'TextLiteral'; value: string; line: number };
 
 export type StyleValuePart = { kind: 'raw'; text: string } | { kind: 'expr'; expr: Expr };
 
@@ -81,6 +83,7 @@ export interface StateDecl {
   type: CrescentType;
   name: string;
   init: Expr;
+  line: number;
 }
 
 export interface DerivedDecl {
@@ -88,6 +91,7 @@ export interface DerivedDecl {
   type: CrescentType;
   name: string;
   init: Expr;
+  line: number;
 }
 
 export interface ProvideDecl {
@@ -95,12 +99,14 @@ export interface ProvideDecl {
   type: CrescentType;
   name: string;
   init: Expr;
+  line: number;
 }
 
 export interface InjectDecl {
   kind: 'InjectDecl';
   type: CrescentType;
   name: string;
+  line: number;
 }
 
 export interface ConstDecl {
@@ -108,6 +114,7 @@ export interface ConstDecl {
   type: CrescentType;
   name: string;
   init: Expr;
+  line: number;
 }
 
 export interface FunctionDecl {
@@ -117,27 +124,32 @@ export interface FunctionDecl {
   name: string;
   params: Param[];
   body: Stmt[];
+  line: number;
 }
 
 export interface OnMountDecl {
   kind: 'OnMountDecl';
   body: Stmt[];
+  line: number;
 }
 
 export interface OnChangeDecl {
   kind: 'OnChangeDecl';
   watched: string[];
   body: Stmt[];
+  line: number;
 }
 
 export interface ViewBlockDecl {
   kind: 'ViewBlockDecl';
   nodes: TemplateNode[];
+  line: number;
 }
 
 export interface StyleBlockDecl {
   kind: 'StyleBlockDecl';
   rules: StyleRule[];
+  line: number;
 }
 
 export type ComponentMember =
@@ -157,6 +169,7 @@ export interface ComponentDecl {
   name: string;
   params: Param[];
   members: ComponentMember[];
+  line: number;
 }
 
 export interface StructField {
@@ -168,6 +181,7 @@ export interface StructDecl {
   kind: 'StructDecl';
   name: string;
   fields: StructField[];
+  line: number;
 }
 
 export interface ImportItem {
@@ -179,6 +193,7 @@ export interface UseDecl {
   kind: 'UseDecl';
   pathSegments: string[];
   items: ImportItem[];
+  line: number;
 }
 
 export type TopLevelDecl = ComponentDecl | StructDecl | UseDecl;

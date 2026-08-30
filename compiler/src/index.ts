@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CodegenError, generateProgram, ImportBinding } from './codegen';
+import { checkFile, Diagnostic } from './checker';
 import {
   detectCycles,
   FileImports,
@@ -32,6 +33,14 @@ try {
   }
 }
 
+function printDiagnostics(diagnostics: Diagnostic[]): void {
+  for (const d of diagnostics) {
+    const location = d.line > 0 ? `${d.where}, line ${d.line}` : d.where;
+    const label = d.severity === 'error' ? 'error' : 'warning';
+    console.log(`  [${label}] ${location}: ${d.message}`);
+  }
+}
+
 if (cycleError) {
   console.error(`\nFAILED: ${cycleError.message}`);
   process.exitCode = 1;
@@ -40,8 +49,24 @@ if (cycleError) {
     console.log(`\n=== ${relPath} ===`);
     console.log(`Parsed OK — ${file.program.declarations.length} top-level declaration(s)`);
 
+    const fileImports = importsByFile.get(relPath) ?? [];
+    const diagnostics = checkFile(file, files, fileImports);
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    const warnings = diagnostics.filter((d) => d.severity === 'warning');
+
+    if (diagnostics.length > 0) {
+      console.log(`Semantic check found ${errors.length} error(s), ${warnings.length} warning(s):`);
+      printDiagnostics(diagnostics);
+    } else {
+      console.log('Semantic check OK');
+    }
+
+    if (errors.length > 0) {
+      console.log('Codegen skipped: semantic errors above must be fixed first');
+      continue;
+    }
+
     try {
-      const fileImports = importsByFile.get(relPath) ?? [];
       const bindingsByTarget = new Map<string, ImportBinding>();
       for (const imp of fileImports) {
         const componentNames = imp.names.filter((n) => n.kind === 'component');

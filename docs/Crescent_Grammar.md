@@ -287,9 +287,12 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
 
 ## 10. Open Items for v0.3 of this grammar
 
-- No semantic rule yet for what happens when a `StructLiteral`'s `typeName` doesn't match any
-  declared `StructDecl` — currently a parser-level non-issue (parses either way) but a real
-  type-checker error once one exists.
+- **Resolved (partially):** a `StructLiteral`'s `typeName` not matching any declared `StructDecl`
+  is now a real diagnostic — the semantic checker (`compiler/src/checker.ts`) flags an unknown
+  struct type, missing/unknown fields, and (for literal-shaped field values) a field-type mismatch.
+  What's still open: the checker does not do general type inference, so a field initialized from a
+  non-literal expression (a function call, a variable, an arithmetic expression) isn't checked
+  against its declared field type — only literal-shaped values are.
 - `on_change(data)` (§5) takes bare identifiers naming watched state — no grammar exists yet for
   watching a derived expression rather than a single named binding.
 

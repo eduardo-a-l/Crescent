@@ -1,0 +1,9 @@
+component Broken {
+    void greet() {
+        message = "hi";
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}
