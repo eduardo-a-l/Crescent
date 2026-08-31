@@ -17,6 +17,7 @@ const targets = [
   { file: 'keyed_list.js', globalName: 'CrescentKeyedList', mountFn: 'TodoList', rootId: 'keyed-list-root' },
   { file: 'array_mutators.js', globalName: 'CrescentArrayMutators', mountFn: 'TaskList', rootId: 'array-mutators-root' },
   { file: 'array_mutators_native.js', globalName: 'CrescentArrayMutatorsNative', mountFn: 'NumberList', rootId: 'array-mutators-native-root' },
+  { file: 'provide_inject.js', globalName: 'CrescentProvideInject', mountFn: 'App', rootId: 'provide-inject-root' },
 ];
 
 async function main() {

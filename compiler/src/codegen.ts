@@ -1,4 +1,5 @@
 import * as AST from './ast';
+import { typeToString } from './checker';
 
 export class CodegenError extends Error {}
 
@@ -69,7 +70,7 @@ function generateComponent(component: AST.ComponentDecl): string {
   const scopeAttr = styleMember ? scopeAttrFor(component.name) : null;
 
   const paramNames = component.params.map((p) => p.name);
-  const destructureNames = [...paramNames, 'children = []'];
+  const destructureNames = [...paramNames, 'children = []', '__ctx = {}'];
   const signature = `{ ${destructureNames.join(', ')} } = {}`;
 
   const lines: string[] = [];
@@ -78,6 +79,8 @@ function generateComponent(component: AST.ComponentDecl): string {
   const bodyLines: string[] = [];
   const onMountBodies: AST.Stmt[][] = [];
   let viewExpr: string | null = null;
+  let ctxVarName = '__ctx';
+  let ctxCounter = 0;
 
   for (const member of component.members) {
     switch (member.kind) {
@@ -95,7 +98,6 @@ function generateComponent(component: AST.ComponentDecl): string {
         break;
       case 'ViewBlockDecl':
         if (viewExpr !== null) unsupported('multiple view blocks');
-        viewExpr = generateViewBlock(member, stateNames, scopeAttr);
         break;
       case 'StyleBlockDecl':
         break;
@@ -109,16 +111,28 @@ function generateComponent(component: AST.ComponentDecl): string {
         bodyLines.push('  });');
         break;
       }
-      case 'ProvideDecl':
-        unsupported('provide<T>');
+      case 'ProvideDecl': {
+        const key = typeToString(member.type);
+        bodyLines.push(`  const ${member.name} = ${exprToJs(member.init, stateNames)};`);
+        ctxCounter += 1;
+        const nextCtxVarName = `__ctx${ctxCounter}`;
+        bodyLines.push(`  const ${nextCtxVarName} = { ...${ctxVarName}, ${JSON.stringify(key)}: ${member.name} };`);
+        ctxVarName = nextCtxVarName;
         break;
-      case 'InjectDecl':
-        unsupported('inject<T>');
+      }
+      case 'InjectDecl': {
+        const key = typeToString(member.type);
+        bodyLines.push(`  const ${member.name} = ${ctxVarName}[${JSON.stringify(key)}];`);
         break;
+      }
       default:
         unsupported((member as { kind: string }).kind);
     }
   }
+
+  const viewMember = component.members.find((m): m is AST.ViewBlockDecl => m.kind === 'ViewBlockDecl');
+  if (!viewMember) unsupported('component without a view block');
+  viewExpr = generateViewBlock(viewMember, stateNames, scopeAttr, ctxVarName);
 
   if (viewExpr === null) unsupported('component without a view block');
 
@@ -415,37 +429,43 @@ function exprToJs(expr: AST.Expr, stateNames: Set<string>): string {
 function generateViewBlock(
   view: AST.ViewBlockDecl,
   stateNames: Set<string>,
-  scopeAttr: string | null
+  scopeAttr: string | null,
+  ctxVarName: string
 ): string {
   if (view.nodes.length !== 1) {
     unsupported('view block without exactly one root node');
   }
-  return templateNodeToJs(view.nodes[0], stateNames, scopeAttr);
+  return templateNodeToJs(view.nodes[0], stateNames, scopeAttr, ctxVarName);
 }
 
-function templateNodeToJs(node: AST.TemplateNode, stateNames: Set<string>, scopeAttr: string | null): string {
+function templateNodeToJs(
+  node: AST.TemplateNode,
+  stateNames: Set<string>,
+  scopeAttr: string | null,
+  ctxVarName: string
+): string {
   switch (node.kind) {
     case 'Element':
       if (node.tag === 'slot') return 'slot(children)';
-      if (node.isComponent) return componentCallToJs(node, stateNames, scopeAttr);
-      return elementToJs(node, stateNames, scopeAttr);
+      if (node.isComponent) return componentCallToJs(node, stateNames, scopeAttr, ctxVarName);
+      return elementToJs(node, stateNames, scopeAttr, ctxVarName);
     case 'TextLiteral':
       return JSON.stringify(node.value);
     case 'TextInterpolation':
       return `text(() => ${exprToJs(node.expr, stateNames)})`;
     case 'TemplateIf': {
       if (node.consequent.length !== 1) unsupported('if-block with multiple root nodes');
-      const trueJs = templateNodeToJs(node.consequent[0], stateNames, scopeAttr);
+      const trueJs = templateNodeToJs(node.consequent[0], stateNames, scopeAttr, ctxVarName);
       if (!node.alternate) {
         return `ifBlock(() => ${exprToJs(node.test, stateNames)}, () => ${trueJs})`;
       }
       if (node.alternate.length !== 1) unsupported('else-block with multiple root nodes');
-      const falseJs = templateNodeToJs(node.alternate[0], stateNames, scopeAttr);
+      const falseJs = templateNodeToJs(node.alternate[0], stateNames, scopeAttr, ctxVarName);
       return `ifBlock(() => ${exprToJs(node.test, stateNames)}, () => ${trueJs}, () => ${falseJs})`;
     }
     case 'TemplateFor': {
       if (node.body.length !== 1) unsupported('for-loop with multiple root nodes');
-      const itemJs = templateNodeToJs(node.body[0], stateNames, scopeAttr);
+      const itemJs = templateNodeToJs(node.body[0], stateNames, scopeAttr, ctxVarName);
       const iterableJs = exprToJs(node.iterable, stateNames);
       const args = [`() => ${iterableJs}`, `(${node.itemName}) => ${itemJs}`];
       if (node.key) {
@@ -465,7 +485,8 @@ function templateNodeToJs(node: AST.TemplateNode, stateNames: Set<string>, scope
 function componentCallToJs(
   node: Extract<AST.TemplateNode, { kind: 'Element' }>,
   stateNames: Set<string>,
-  scopeAttr: string | null
+  scopeAttr: string | null,
+  ctxVarName: string
 ): string {
   const propParts: string[] = [];
   for (const attr of node.attributes) {
@@ -473,16 +494,18 @@ function componentCallToJs(
     propParts.push(`${attr.name}: ${value}`);
   }
   if (node.children.length > 0) {
-    const childrenJs = node.children.map((c) => templateNodeToJs(c, stateNames, scopeAttr));
+    const childrenJs = node.children.map((c) => templateNodeToJs(c, stateNames, scopeAttr, ctxVarName));
     propParts.push(`children: [${childrenJs.join(', ')}]`);
   }
+  propParts.push(`__ctx: ${ctxVarName}`);
   return `${node.tag}({ ${propParts.join(', ')} })`;
 }
 
 function elementToJs(
   node: Extract<AST.TemplateNode, { kind: 'Element' }>,
   stateNames: Set<string>,
-  scopeAttr: string | null
+  scopeAttr: string | null,
+  ctxVarName: string
 ): string {
   const attrParts: string[] = [];
   for (const attr of node.attributes) {
@@ -493,7 +516,7 @@ function elementToJs(
     attrParts.push(`${JSON.stringify(scopeAttr)}: ''`);
   }
   const attrsJs = `{ ${attrParts.join(', ')} }`;
-  const childrenJs = node.children.map((c) => templateNodeToJs(c, stateNames, scopeAttr));
+  const childrenJs = node.children.map((c) => templateNodeToJs(c, stateNames, scopeAttr, ctxVarName));
   const args = [`'${node.tag}'`, attrsJs, ...childrenJs];
   return `h(${args.join(', ')})`;
 }

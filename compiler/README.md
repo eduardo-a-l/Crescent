@@ -152,9 +152,27 @@ wired subscribers rather than an empty subscriber set. `on_change(a, b)` compile
 call that subscribes to the named dependencies but — unlike a plain `effect()` — deliberately skips
 firing on its own first (construction-time) run, so it only fires on genuine subsequent changes.
 
+`provide<T>`/`inject<T>` (§13's "Dependency Injection / Tree Context") thread a value down the
+component tree keyed **by type name**, not by variable name — `provide<ThemeState> current_theme`
+in an ancestor and `inject<ThemeState> theme` in any descendant match because both say
+`ThemeState`, regardless of the different local variable names. This works via a hidden `__ctx`
+parameter every generated component function accepts (`{ ..., __ctx = {} } = {}`, alongside the
+already-existing hidden `children` parameter) and passes to every child component call it makes,
+whether or not that component itself provides or injects anything — so an intermediate component
+that does neither still transparently forwards context through to its own descendants. A
+`provide<T>` member computes its value once, merges it into a **new** context object
+(`{ ...__ctx, ThemeState: current_theme }`, using a fresh `__ctxN` variable each time since `const`
+can't self-reference in the same scope), and that new object — not the one the component itself
+received — is what gets passed to its own children from that point on. **Two things this version
+does not do**, stated rather than silently missing: the threaded value is a **one-time snapshot**,
+not reactive — if `current_theme` is later reassigned, already-rendered descendants that injected
+it will not update, since it's a plain captured value, not a signal; and calling `inject<T>` with
+no ancestor providing that type isn't caught at compile time — it fails at runtime with a
+`TypeError` on first property access, not a compile error (though at least a clear one, not a
+silent wrong value).
+
 **Not yet supported by codegen** (the parser still accepts these; codegen throws a
-`CodegenError` naming the feature): `provide<T>`/`inject<T>`, and view blocks with more than one
-root node.
+`CodegenError` naming the feature): view blocks with more than one root node.
 
 ## Modules
 

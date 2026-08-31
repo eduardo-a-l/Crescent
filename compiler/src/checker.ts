@@ -55,7 +55,7 @@ function typeIsResolvable(type: AST.CrescentType, scope: Map<string, SymbolInfo>
   }
 }
 
-function typeToString(type: AST.CrescentType): string {
+export function typeToString(type: AST.CrescentType): string {
   switch (type.kind) {
     case 'PrimitiveType':
       return type.name;

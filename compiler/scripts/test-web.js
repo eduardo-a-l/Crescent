@@ -124,6 +124,14 @@ async function main() {
     'items.reverse() reactively updates a real page'
   );
 
+  const provideInjectRoot = document.getElementById('provide-inject-root');
+  assert(
+    provideInjectRoot &&
+      provideInjectRoot.querySelector('div') !== null &&
+      provideInjectRoot.querySelector('div').className === 'dark-theme',
+    'provide<T>/inject<T> context threads correctly through a real page'
+  );
+
   dom.window.close();
 }
 
