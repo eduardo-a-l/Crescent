@@ -272,6 +272,13 @@ export function slot(children: Child[]): HTMLElement {
   return container;
 }
 
+export function fragment(...children: Child[]): HTMLElement {
+  const container = document.createElement('span');
+  container.style.display = 'contents';
+  appendChildren(container, children);
+  return container;
+}
+
 export function mount(root: Element, componentFn: () => Node): void {
   root.appendChild(componentFn());
 }

@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "ts-node src/index.ts",
     "build:web": "npm run build && npm start && node scripts/build-web.js",
-    "test": "npm run build && npm start && node scripts/test-checker.js && node scripts/test-effect-disposal.js && node scripts/test-array-mutators.js && node scripts/test-array-mutators-native.js && node scripts/test-provide-inject.js && node scripts/test-counter.js && node scripts/test-day-picker.js && node scripts/test-theme-toggle.js && node scripts/test-composition.js && node scripts/test-reactive-list.js && node scripts/test-forbidden-property-write.js && node scripts/test-derived-lifecycle.js && node scripts/test-forbidden-derived-assignment.js && node scripts/test-modules.js && node scripts/test-circular-import.js && node scripts/test-missing-import.js && node scripts/test-keyed-list.js && node scripts/build-web.js && node scripts/test-web.js"
+    "test": "npm run build && npm start && node scripts/test-checker.js && node scripts/test-effect-disposal.js && node scripts/test-array-mutators.js && node scripts/test-array-mutators-native.js && node scripts/test-provide-inject.js && node scripts/test-multi-root.js && node scripts/test-counter.js && node scripts/test-day-picker.js && node scripts/test-theme-toggle.js && node scripts/test-composition.js && node scripts/test-reactive-list.js && node scripts/test-forbidden-property-write.js && node scripts/test-derived-lifecycle.js && node scripts/test-forbidden-derived-assignment.js && node scripts/test-modules.js && node scripts/test-circular-import.js && node scripts/test-missing-import.js && node scripts/test-keyed-list.js && node scripts/build-web.js && node scripts/test-web.js"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

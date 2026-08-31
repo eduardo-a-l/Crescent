@@ -132,6 +132,19 @@ async function main() {
     'provide<T>/inject<T> context threads correctly through a real page'
   );
 
+  const multiRootRoot = document.getElementById('multi-root-root');
+  assert(
+    multiRootRoot &&
+      multiRootRoot.querySelector('h1') !== null &&
+      multiRootRoot.querySelectorAll('.subtitle, .hint').length === 2,
+    'multi-root view block renders all its root nodes in a real page'
+  );
+  multiRootRoot.querySelector('button').dispatchEvent(new dom.window.Event('click'));
+  assert(
+    multiRootRoot.querySelectorAll('.subtitle').length === 1 && multiRootRoot.querySelectorAll('.hint').length === 0,
+    'multi-root if/else branch switching works correctly in a real page'
+  );
+
   dom.window.close();
 }
 

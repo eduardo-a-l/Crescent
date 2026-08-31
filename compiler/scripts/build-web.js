@@ -18,6 +18,7 @@ const targets = [
   { file: 'array_mutators.js', globalName: 'CrescentArrayMutators', mountFn: 'TaskList', rootId: 'array-mutators-root' },
   { file: 'array_mutators_native.js', globalName: 'CrescentArrayMutatorsNative', mountFn: 'NumberList', rootId: 'array-mutators-native-root' },
   { file: 'provide_inject.js', globalName: 'CrescentProvideInject', mountFn: 'App', rootId: 'provide-inject-root' },
+  { file: 'multi_root.js', globalName: 'CrescentMultiRoot', mountFn: 'Header', rootId: 'multi-root-root' },
 ];
 
 async function main() {

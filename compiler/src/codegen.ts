@@ -31,7 +31,7 @@ export function generateProgram(
 ): string {
   const parts: string[] = [];
   parts.push(
-    `const { state, effect, h, text, ifBlock, forEach, injectStyle, slot, derived, watch } = require('${runtimeRequirePath}');`
+    `const { state, effect, h, text, ifBlock, forEach, injectStyle, slot, derived, watch, fragment } = require('${runtimeRequirePath}');`
   );
   for (const imp of imports) {
     const names = imp.names.map((n) => (n.local === n.imported ? n.local : `${n.imported}: ${n.local}`));
@@ -426,16 +426,22 @@ function exprToJs(expr: AST.Expr, stateNames: Set<string>): string {
   }
 }
 
+function wrapMultiRootJs(nodesJs: string[]): string {
+  if (nodesJs.length === 1) return nodesJs[0];
+  return `fragment(${nodesJs.join(', ')})`;
+}
+
 function generateViewBlock(
   view: AST.ViewBlockDecl,
   stateNames: Set<string>,
   scopeAttr: string | null,
   ctxVarName: string
 ): string {
-  if (view.nodes.length !== 1) {
-    unsupported('view block without exactly one root node');
+  if (view.nodes.length === 0) {
+    unsupported('view block with no root nodes');
   }
-  return templateNodeToJs(view.nodes[0], stateNames, scopeAttr, ctxVarName);
+  const nodesJs = view.nodes.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName));
+  return wrapMultiRootJs(nodesJs);
 }
 
 function templateNodeToJs(
@@ -454,18 +460,18 @@ function templateNodeToJs(
     case 'TextInterpolation':
       return `text(() => ${exprToJs(node.expr, stateNames)})`;
     case 'TemplateIf': {
-      if (node.consequent.length !== 1) unsupported('if-block with multiple root nodes');
-      const trueJs = templateNodeToJs(node.consequent[0], stateNames, scopeAttr, ctxVarName);
+      if (node.consequent.length === 0) unsupported('if-block with no root nodes');
+      const trueJs = wrapMultiRootJs(node.consequent.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName)));
       if (!node.alternate) {
         return `ifBlock(() => ${exprToJs(node.test, stateNames)}, () => ${trueJs})`;
       }
-      if (node.alternate.length !== 1) unsupported('else-block with multiple root nodes');
-      const falseJs = templateNodeToJs(node.alternate[0], stateNames, scopeAttr, ctxVarName);
+      if (node.alternate.length === 0) unsupported('else-block with no root nodes');
+      const falseJs = wrapMultiRootJs(node.alternate.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName)));
       return `ifBlock(() => ${exprToJs(node.test, stateNames)}, () => ${trueJs}, () => ${falseJs})`;
     }
     case 'TemplateFor': {
-      if (node.body.length !== 1) unsupported('for-loop with multiple root nodes');
-      const itemJs = templateNodeToJs(node.body[0], stateNames, scopeAttr, ctxVarName);
+      if (node.body.length === 0) unsupported('for-loop with no root nodes');
+      const itemJs = wrapMultiRootJs(node.body.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName)));
       const iterableJs = exprToJs(node.iterable, stateNames);
       const args = [`() => ${iterableJs}`, `(${node.itemName}) => ${itemJs}`];
       if (node.key) {

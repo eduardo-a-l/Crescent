@@ -171,8 +171,16 @@ no ancestor providing that type isn't caught at compile time — it fails at run
 `TypeError` on first property access, not a compile error (though at least a clear one, not a
 silent wrong value).
 
-**Not yet supported by codegen** (the parser still accepts these; codegen throws a
-`CodegenError` naming the feature): view blocks with more than one root node.
+A `view` block, an `if`/`else` branch, or a `for`-loop body with **more than one** root
+node compiles to a `fragment(...)` call — a `display: contents` wrapper `<span>`, the same
+pattern `ifBlock`/`forEach`/`slot` already use internally — so multiple sibling elements can be
+returned from any of those three positions without an extra, semantically-meaningless wrapper
+`<div>` showing up in page layout. This only kicks in when there's genuinely more than one node in
+a given position: a single-root case still compiles exactly as before (no `fragment()` call at
+all), so nothing changes for the overwhelming majority of existing components. The three positions
+nest independently — a 2-node `if`-branch inside an otherwise single-root `view` block gets its
+own `fragment()` wrapper at exactly that level, while the enclosing `view`, if it also has just one
+top-level root node, does not.
 
 ## Modules
 
