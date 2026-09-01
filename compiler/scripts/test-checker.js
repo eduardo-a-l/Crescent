@@ -85,6 +85,12 @@ const cases = [
     pattern: /Unknown type 'Row' referenced by template for-loop item 'row'/,
     label: 'an unresolvable template for-loop item type',
   },
+  {
+    file: 'unknown-function-param-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by param 'x'/,
+    label: 'a function param declared with an unresolvable type',
+  },
 ];
 
 for (const c of cases) {

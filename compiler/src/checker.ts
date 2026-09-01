@@ -30,6 +30,8 @@ const BUILTIN_GLOBALS = new Set([
   'sessionStorage',
 ]);
 
+const BUILTIN_EVENT_TYPES = new Set(['MouseEvent', 'KeyboardEvent', 'FormEvent']);
+
 function err(message: string, where: string, line: number): Diagnostic {
   return { severity: 'error', message, where, line };
 }
@@ -43,6 +45,8 @@ function typeIsResolvable(type: AST.CrescentType, scope: Map<string, SymbolInfo>
     case 'PrimitiveType':
       return true;
     case 'NamedType':
+      if (type.name === 'void()') return true;
+      if (BUILTIN_EVENT_TYPES.has(type.name)) return true;
       return scope.has(type.name);
     case 'GenericType':
       return scope.has(type.name) && typeIsResolvable(type.typeArg, scope);
@@ -445,6 +449,11 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         const fnScope = new Set(scope);
         for (const p of m.params) fnScope.add(p.name);
         const fnWhere = `${where}, function '${m.name}'`;
+        for (const p of m.params) {
+          if (!typeIsResolvable(p.type, globalScope)) {
+            diagnostics.push(err(`Unknown type '${typeToString(p.type)}' referenced by param '${p.name}'`, fnWhere, m.line));
+          }
+        }
         if (m.returnType !== 'void' && !typeIsResolvable(m.returnType, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(m.returnType)}' referenced by return type of function '${m.name}'`, fnWhere, m.line));
         }

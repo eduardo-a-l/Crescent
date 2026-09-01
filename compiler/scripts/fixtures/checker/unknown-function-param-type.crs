@@ -1,0 +1,9 @@
+component Broken {
+    void run(BogusType x) {
+        return;
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

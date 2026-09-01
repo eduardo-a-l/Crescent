@@ -300,9 +300,34 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
   What's still open: the checker does not do general type inference, so a field initialized from a
   non-literal expression (a function call, a variable, an arithmetic expression) isn't checked
   against its declared field type — only literal-shaped values are.
-- A local `VarDecl`'s declared type, a non-`void` function `ReturnType`, and both statement and
-  template `for`-loop `itemType`s are now checked for existence the same way component params and
-  struct fields are. Function parameter types are not yet run through this same existence check.
+- A local `VarDecl`'s declared type, a non-`void` function `ReturnType`, both statement and
+  template `for`-loop `itemType`s, and now function param types are all checked for existence the
+  same way component params and struct fields are (`compiler/scripts/fixtures/checker/unknown-function-param-type.crs`
+  is the regression fixture). This closes the type-name-existence-checking gap across every
+  declared-type position the checker currently visits.
+- **Function-type parameters (`void()`).** The design doc (§6, `void() action`) and the parser
+  (`parser.ts`'s `parseParam()`) support a callback-typed parameter written as `void()`, but this
+  grammar document has no production for it — `BaseType` (§4) only covers primitives, plain
+  identifiers, and `Identifier<Type>`. The parser represents it as a special-cased
+  `NamedType { name: 'void()' }` rather than a real function-type AST node, and the semantic
+  checker now explicitly recognizes that exact marker as always resolvable (rather than looking it
+  up as a declared component/struct name) so that legitimate callback params like the design doc's
+  own `CustomButton(string label, void() action)` don't get flagged as an unknown type. See
+  `compiler/examples/callback_param.crs` for a working, checked, and code-generated example. This
+  remains a narrow special case, not a general function-type feature: there is no syntax for a
+  callback with parameters or a return value (e.g. no `void(int)` or `string()`), and no dedicated
+  grammar production formalizes it yet.
+- **Built-in DOM event types.** The design doc (§13.3) documents typed browser event-handler
+  params — `MouseEvent`, `KeyboardEvent`, `FormEvent` — as valid parameter types, e.g.
+  `void handle_key(KeyboardEvent e)`, but these names are never declared anywhere as a `struct` or
+  `component`, and this grammar document doesn't list them as recognized type names anywhere
+  (compare `BUILTIN_GLOBALS` in `checker.ts`, which plays the analogous role for *identifiers* in
+  expressions, e.g. `fetch`, `console`, `window`). Extending declared-type existence checking to
+  function params (this session) would otherwise have flagged every one of these documented types
+  as an "Unknown type" error. Fixed by adding the equivalent `BUILTIN_EVENT_TYPES` set
+  (`MouseEvent`, `KeyboardEvent`, `FormEvent` — exactly the three named in §13.3, nothing more
+  invented) to `typeIsResolvable()`. See `compiler/examples/typed_event_handler.crs` for a working
+  example.
 - `on_change(data)` (§5) takes bare identifiers naming watched state — no grammar exists yet for
   watching a derived expression rather than a single named binding.
 

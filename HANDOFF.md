@@ -14,9 +14,10 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: extend declared-type existence checking to function return types and `for` loop
-item types (see "Last Completed Work" below). Choose the next item from `TODO.md` before beginning
-new work.
+Just completed: extend declared-type existence checking to function parameter types, and fix a
+pre-existing bug where the design doc's `void()` callback-param syntax was already failing this
+same class of check on component params (see "Last Completed Work" below). Choose the next item
+from `TODO.md` before beginning new work.
 
 ---
 
@@ -48,28 +49,53 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-Semantic checker: validate declared type names in non-`void` function return types and in both
-statement and template `for` loop item types.
+Semantic checker: validate declared type names on function parameters — the last unchecked
+declared-type position identified in the prior sessions. Also fixed a pre-existing bug this
+surfaced: the design doc's `void()` callback-parameter syntax was already silently broken by the
+same class of check on *component* params, before this session touched anything.
 
 ### What changed
 
-`checker.ts` now applies the existing `typeIsResolvable()` rule to every non-`void`
-`FunctionDecl.returnType`, regular-statement `For.itemType`, and view `TemplateFor.itemType`.
-This includes generic base-name resolution. It reports context-specific diagnostics while continuing
-to collect other errors in the file.
+`checker.ts`'s `FunctionDecl` case in `checkComponentDecl()` now loops over `m.params` and runs
+each param's declared type through `typeIsResolvable()`, exactly like component params already do.
 
-Added `unknown-return-and-for-types.crs`, a negative fixture that contains one unresolved generic
-function return type plus unresolved statement and template loop item types. The checker regression
-test asserts all three diagnostics.
+While verifying this against the design doc's own example (§6, `component CustomButton(string
+label, void() action)`), confirmed against the actual build that `typeIsResolvable()` already threw
+`Unknown type 'void()' referenced by param 'action'` for that component *before* this session's
+change — a genuine pre-existing bug, not something introduced by extending the check to function
+params. Root cause: `parser.ts`'s `parseParam()` represents a `void()` callback-typed parameter as
+a special-cased `NamedType { name: 'void()' }` rather than a real function-type AST node, and
+`typeIsResolvable()`'s `NamedType` case did a plain `scope.has(type.name)` lookup, which a marker
+string like `'void()'` can never satisfy. Fixed by special-casing that exact marker in
+`typeIsResolvable()` to always resolve, since it isn't a user type name to look up.
 
-Updated `docs/Crescent_Grammar.md` §10 to reflect the newly checked positions and record the
-remaining function-parameter gap.
+While adding a positive fixture to confirm the fix, also checked the design doc's other documented
+parameter-typing example (§13.3, `void handle_key(KeyboardEvent e)`) against the same code path and
+found the identical class of bug: `MouseEvent`/`KeyboardEvent`/`FormEvent` are documented as valid
+param types but are never declared anywhere as a `struct`/`component`, so extending existence
+checking to function params would have flagged them too. Fixed the same way component params
+already handle plain identifier globals (`BUILTIN_GLOBALS`) by adding an analogous
+`BUILTIN_EVENT_TYPES` set (`MouseEvent`, `KeyboardEvent`, `FormEvent`) to `typeIsResolvable()`.
+
+Added `compiler/examples/callback_param.crs` (mirrors §6's `CustomButton`/click-handler snippet)
+and `compiler/examples/typed_event_handler.crs` (mirrors §13.3's `handle_key(KeyboardEvent e)`
+snippet) — both parse, semantic-check cleanly, and code-generate correctly (verified generated JS
+and diagnostics by hand for both). These are the first real examples exercising either syntax.
+Added `unknown-function-param-type.crs`, a negative fixture (using an actually-undeclared type
+name, not one of the two builtin categories above) for the new function-param check, plus a
+matching case in `test-checker.js`.
+
+Updated `docs/Crescent_Grammar.md` §10: closed out the function-param-type item, and added two new
+entries documenting the `void()` marker and the `BUILTIN_EVENT_TYPES` set as narrow, ungeneralized
+special cases (no grammar production for function types or built-in event types exists yet).
 
 ### Files changed
 
 - `compiler/src/checker.ts`
 - `compiler/scripts/test-checker.js`
-- `compiler/scripts/fixtures/checker/unknown-return-and-for-types.crs` (new)
+- `compiler/scripts/fixtures/checker/unknown-function-param-type.crs` (new)
+- `compiler/examples/callback_param.crs` (new)
+- `compiler/examples/typed_event_handler.crs` (new)
 - `docs/Crescent_Grammar.md`
 - `HANDOFF.md`
 
@@ -77,27 +103,17 @@ remaining function-parameter gap.
 
 ## Tests
 
-### Last type-check and focused regression test
+### Last type-check and full suite
 
 ```text
-npm run build && node scripts/test-checker.js
--> no errors; all checker regressions pass, including the three new cases
-```
+npx tsc --noEmit
+-> no errors
 
-### Last test suite
-
-```text
 npm test
--> compiler, checker, runtime, DOM, module, and keyed-list tests passed through the final
-   bundle step, but esbuild failed because the sandbox denied a resolved directory read.
-   This is an environment restriction, not a test assertion failure.
-```
-
-### Last web test
-
-```text
-node scripts/build-web.js && node scripts/test-web.js (with required elevated sandbox access)
--> bundle written successfully; all browser smoke tests PASS
+-> 134 PASS, 0 FAIL, exit code 0
+(build, npm start over examples/ including the new callback_param.crs and
+typed_event_handler.crs, test-checker.js with the new unknown-function-param-type.crs
+case, all other script tests, build-web, and test-web.js)
 ```
 
 ---
@@ -134,25 +150,35 @@ Do not blindly "fix" this without checking the current implementation and intend
 
 ### Other
 
-- Function (not component) parameter types are still not validated for existence (e.g. a
-  handler declared as `void handle_key(KeyboardEvent e)` never confirms `KeyboardEvent` resolves
-  to anything). This is the smallest remaining type-name-resolution gap.
+- `callback_param.crs` isn't wired into `build-web.js`/`test-web.js`, so `void()` callback params
+  are checked and code-generated (verified by hand) but not yet exercised by a real-browser DOM
+  click test. Would be a reasonable small follow-up if `void()` params become more widely used.
+- The `void()` marker is still a narrow special case, not a real function-type feature — there is
+  no grammar production for it, and no support for callback shapes with parameters or return
+  values (e.g. `void(int)`). Formalizing function types as a real `CrescentType` variant (rather
+  than a magic-string `NamedType`) is a larger, separate design task, not attempted here.
+- No other known type-name-existence gaps remain in the positions the checker currently visits
+  (component params, struct fields, `inject<T>`, `VarDecl`, function return types, function param
+  types, and statement/template `for`-loop item types are all now checked). The two builtin-type
+  special cases added this session (`void()` callback params, `BUILTIN_EVENT_TYPES`) are the only
+  named exceptions, and both are now backed by working examples.
 
 ---
 
 ## Unfinished Work
 
-_No active unfinished implementation. The return/loop type-resolution task above is complete and
-tested. See "Known Problems > Other" for the closely related function-parameter gap._
+_No active unfinished implementation. The function-param-type task above, and the two pre-existing
+bugs it surfaced (`void()` and DOM event types), are complete and tested._
 
 ---
 
 ## Recommended Next Step
 
 1. Read `TODO.md`.
-2. Consider extending type-existence checking (`typeIsResolvable`) to function parameter types,
-   following the existing component-parameter pattern — likely the smallest next coherent unit in
-   the same area.
+2. No further type-name-existence gaps are known in the checker at this point (see "Known
+   Problems > Other"). Consider moving to the next `TODO.md` priority area instead — e.g.
+   strengthening component-argument/return-type *compatibility* checking (not just existence),
+   or the README self-contradiction fix that's been deferred across several sessions.
 3. Otherwise, select a different small, coherent task from `TODO.md`.
 4. Read the relevant design/grammar sections.
 5. Inspect the existing implementation.
@@ -167,6 +193,31 @@ tested. See "Known Problems > Other" for the closely related function-parameter 
 
 ### Latest session
 
+**AI:** Claude
+
+**Task:** Extend declared type-name resolution to function parameter types (the last unchecked
+declared-type position identified by the prior session).
+
+**Result:** Done, plus two pre-existing bugs found and fixed along the way. Extending the check
+surfaced that `typeIsResolvable()` already broke the design doc's own `void()` callback-param
+example (§6) *before* this session touched it, and would have newly broken the `KeyboardEvent`/
+`MouseEvent`/`FormEvent` typed-event-handler example (§13.3) once function params were checked.
+Fixed both with narrow, documented special cases in `typeIsResolvable()`, and added working
+examples (`callback_param.crs`, `typed_event_handler.crs`) plus a negative regression fixture for
+the new function-param check itself.
+
+**Commit:** Not committed — working tree contains the focused diff described above.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (134 PASS, 0 FAIL, exit 0), including both new
+examples compiling end-to-end and the new checker regression case.
+
+**Next:** No known type-existence-checking gaps remain; move to a different `TODO.md` priority
+(see "Recommended Next Step").
+
+---
+
+## Previous session
+
 **AI:** Codex
 
 **Task:** Extend declared type-name resolution to non-`void` function return types and statement/
@@ -175,14 +226,11 @@ template `for` loop item types.
 **Result:** Done. The checker now reports unresolved return and loop item types in all relevant AST
 positions. Added one fixture and three regression assertions. Grammar documentation updated.
 
-**Commit:** Not committed — working tree contains the focused diff described above.
+**Commit:** Not committed at the time.
 
 **Tests:** `npm run build && node scripts/test-checker.js` (clean/all PASS); `npm test` passed all
 steps before the sandbox blocked its final esbuild directory read; `node scripts/build-web.js &&
 node scripts/test-web.js` rerun with elevated sandbox access (all PASS).
-
-**Next:** Extend the same `typeIsResolvable()` check to function parameter types, or choose another
-small TODO item.
 
 ---
 
