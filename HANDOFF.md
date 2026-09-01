@@ -175,17 +175,24 @@ bugs it surfaced (`void()` and DOM event types), are complete and tested._
 ## Recommended Next Step
 
 1. Read `TODO.md`.
-2. No further type-name-existence gaps are known in the checker at this point (see "Known
-   Problems > Other"). Consider moving to the next `TODO.md` priority area instead — e.g.
-   strengthening component-argument/return-type *compatibility* checking (not just existence),
-   or the README self-contradiction fix that's been deferred across several sessions.
-3. Otherwise, select a different small, coherent task from `TODO.md`.
-4. Read the relevant design/grammar sections.
-5. Inspect the existing implementation.
-6. Implement the task.
-7. Run tests.
-8. Update this file.
-9. Commit the completed unit if appropriate.
+2. The maintainer wants an early, usable VS Code feedback loop rather than waiting for a complete
+   language implementation. A detailed staged plan is now recorded in `TODO.md` under
+   "Near-Term VS Code Enablement (v0.x)".
+3. The recommended first implementation unit is to extract reusable `checkProject()` and
+   `buildProject()` APIs from `compiler/src/index.ts`, then expose them through path-based
+   `crescent check` / `crescent build` commands. This unlocks both editor diagnostics and preview
+   without coupling the initial VS Code extension to the current `examples/` demo entry point.
+4. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
+   from semantic diagnostics, and incomplete checking must not be presented as full type safety.
+5. Treat the minimal VS Code extension (file association, syntax highlighting, diagnostics, and
+   build/preview commands) as a v0.x deliverable; defer a complete incremental LSP to v1.0.
+6. Otherwise, select a different small, coherent task from `TODO.md`.
+7. Read the relevant design/grammar sections.
+8. Inspect the existing implementation.
+9. Implement the task.
+10. Run tests.
+11. Update this file.
+12. Commit the completed unit if appropriate.
 
 ---
 

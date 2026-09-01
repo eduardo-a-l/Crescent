@@ -355,6 +355,26 @@ Every important compiler bug should ideally become a regression test.
 - [ ] Clear compiler diagnostics
 - [ ] Config file
 
+## Near-Term VS Code Enablement (v0.x)
+
+> Goal: make Crescent pleasant enough to write, check, build, and preview in VS Code before the
+> semantic checker and full LSP are complete. Early tooling must report the compiler's current
+> behavior faithfully; it must not invent type-system guarantees that the compiler does not have.
+
+- [ ] Extract reusable project APIs from `src/index.ts`:
+  `checkProject(root, inMemoryFiles?)` and `buildProject(root, outDir)`.
+- [ ] Make `crescent check <path>` and `crescent build <path> --out-dir <path>` work on arbitrary
+  projects rather than the hard-coded `examples/` directory.
+- [ ] Define machine-readable diagnostics with file, line, column (line-only temporarily if
+  necessary), severity, message, and a stable error code when available.
+- [ ] Create a minimal VS Code extension: `.crs` file association, TextMate syntax highlighting,
+  comment/bracket/indent configuration, and `Crescent: Check` / `Crescent: Build` commands.
+- [ ] Publish parser, module, semantic, and codegen diagnostics in VS Code on save, then on document
+  changes; a full incremental checker is not required for this first version.
+- [ ] Add a `Crescent: Preview` command that builds the project and opens/reloads the browser output.
+- [ ] Replace process-based checking with a small LSP server once the shared project API and
+  diagnostic model are stable.
+
 ## Formatting
 
 - [ ] Decide whether Crescent needs an official formatter
@@ -363,7 +383,8 @@ Every important compiler bug should ideally become a regression test.
 
 ## Language Server
 
-> Major v1.0 milestone.
+> A complete, incremental LSP remains a major v1.0 milestone. The minimal VS Code diagnostics and
+> preview loop above are intentionally an earlier v0.x deliverable.
 
 - [ ] LSP architecture
 - [ ] Diagnostics
