@@ -1,0 +1,13 @@
+component Broken {
+    int helper() {
+        return 1;
+    }
+
+    void run() {
+        Response<int> pending = helper();
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

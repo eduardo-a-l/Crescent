@@ -2,7 +2,7 @@
 
 A hand-written recursive-descent lexer and parser for Crescent, implementing the grammar in
 `../docs/Crescent_Grammar.md`, plus a codegen pass that emits plain, runnable JavaScript for a
-supported subset of the language. There is no semantic/type checker yet.
+supported subset of the language.
 
 ## Structure
 
@@ -92,7 +92,7 @@ growing, or shrinking a keyed list preserves the DOM node identity of every unaf
 node is destroyed and recreated just because its position or a sibling changed. **The comparison
 is by reference, not deep equality**: the idiom this is built around is replacing an array element
 wholesale (`items[i] = Struct { ...updatedFields };`, as already used in `reactive_list.crs`) —
-mutating a *field* of an existing element in place (`items[i].done = true;`, which the assignment
+mutating a _field_ of an existing element in place (`items[i].done = true;`, which the assignment
 rules in the previous section also permit) keeps the same reference, so reconciliation will treat
 it as unchanged and reuse the old node's stale content. Prefer whole-element replacement over
 in-place field mutation for items that need to visibly update.
@@ -106,7 +106,7 @@ at design doc §14.4 and suggesting a key. `examples/day_picker.crs`'s unkeyed l
 `style` blocks compile to scoped CSS per §14.3 of the design doc: every native element rendered
 by a component that has a `style` block gets a `data-crs-<component>` attribute, and the block's
 rules are rewritten with that attribute appended to their selector (`.box` → `.box[data-crs-...]`)
-and injected once per component *type* into `<head>` via `injectStyle`. Declarations containing
+and injected once per component _type_ into `<head>` via `injectStyle`. Declarations containing
 `{expr}` — including values that mix raw CSS text and interpolation, e.g. `2px solid {accent}` —
 compile to a CSS custom property (`--crs-N`) set on the component's root element inside a
 per-instance `effect()`, so purely-static declarations stay in the static stylesheet and only the
@@ -115,7 +115,7 @@ reactive ones pay for a per-instance binding.
 Component-as-element usage (`<UserCard user={user}/>`) compiles to a direct function call —
 `UserCard({ user: user })`. Every generated component function always destructures a `children`
 prop (defaulting to `[]`), so any nested markup passed between a component's tags —
-`<Card><h1>...</h1></Card>` — is compiled in the *caller's* scope (so it still sees the caller's
+`<Card><h1>...</h1></Card>` — is compiled in the _caller's_ scope (so it still sees the caller's
 `state`/style scope) into an array of already-built nodes, and a `<slot/>` inside the callee's own
 view compiles to `slot(children)`, a runtime helper that appends that array into a
 `display: contents` wrapper.
@@ -137,7 +137,7 @@ internal collection as dirty"). This is recognized **only** when the call is a b
 `items.push(x);` on its own line — matching every one of the design doc's own examples; codegen
 does not currently track a forced re-notify through other expression positions (a `VarDecl` whose
 initializer is `items.pop()`, for instance, still mutates the array correctly since `.get()`
-returns the live reference, but won't itself trigger a re-render — only the *value returned* is
+returns the live reference, but won't itself trigger a re-render — only the _value returned_ is
 affected, not reactivity). It's also not checked that the receiver is actually an array-typed
 `state` — calling `.push()` on a `state<int>` would silently generate `count.get().push(x)`,
 which fails at runtime, not compile time; the semantic checker does not yet track full type
@@ -205,7 +205,7 @@ all**, since struct type names are already fully erased at codegen (a `User { ..
 literal compiles to a plain JS object literal that never references `User`) — a struct import is
 purely a compile-time name-resolution check. Importing a `component`, on the other hand, compiles
 to a `require()` call — `const { UserCard } = require('./card');` — with a relative path computed
-from the *generated* file's location (mirroring the source tree under `dist/gen/`), so
+from the _generated_ file's location (mirroring the source tree under `dist/gen/`), so
 `dist/gen/modules/components/card.js` correctly requires `../../../runtime` while a flat file at
 `dist/gen/counter.js` requires `../runtime`, and both resolve to the same `dist/runtime.js`.
 
@@ -224,6 +224,7 @@ for that file (`index.ts` prints all diagnostics, then skips codegen if any are 
 warnings are printed but don't block.
 
 What it checks:
+
 - **Scope resolution** — every `Identifier` used anywhere (expressions, assignment targets,
   `on_change(...)` watch lists) must resolve to a param, `state`/`derived`/`const`/`provide`/
   `inject`, a local `for`-loop or `VarDecl` binding, a sibling function, a component/struct name
@@ -254,6 +255,7 @@ What it checks:
   conditions.
 
 **Explicitly out of scope for this version** (so these are known gaps, not silent ones):
+
 - General type inference. There's no unification engine — a `const` or `state` initialized from a
   function call, a variable reference, or an arithmetic expression isn't type-checked against its
   declared type, only literal-shaped initializers are.
@@ -276,7 +278,7 @@ tries to solve.
 ## Effect Disposal
 
 Before this, `effect()` had no way to stop reacting: `ifBlock`/`forEach` wiped or removed DOM
-subtrees on every change, but any `effect()` created *inside* that content (every `text()`
+subtrees on every change, but any `effect()` created _inside_ that content (every `text()`
 binding, every nested `derived()`, every nested `ifBlock`/`forEach`) kept running forever,
 subscribed to signals nobody would ever read the result of again. This was a real memory leak and
 wasted-work bug, not a missing feature — invisible in small examples because nothing was ever torn
@@ -289,7 +291,7 @@ those sets. This also fixes a smaller pre-existing correctness issue for free: p
 effect read a signal, it stayed subscribed forever even if a later run took a different branch
 (e.g. a ternary) and stopped reading it.
 
-Knowing *when* to call `dispose()` is the harder half, and it's solved with an ambient
+Knowing _when_ to call `dispose()` is the harder half, and it's solved with an ambient
 **disposal-scope stack**, not by threading dispose handles through every call site by hand. Any
 `effect()` created while a scope is active auto-registers its own `dispose` into that scope's list
 — so `ifBlock`/`forEach` wrap each render call in `withDisposalScope(() => renderFn())`, and every
@@ -300,10 +302,10 @@ disposes the previous render's scope before building the next one; `forEach` dis
 keyed entry's scope when it drops out of the list (or the whole current entry set, if the
 `forEach` itself is torn down by an ancestor).
 
-One thing this *doesn't* do automatically: a render function's own outer `effect()` call, when
+One thing this _doesn't_ do automatically: a render function's own outer `effect()` call, when
 disposed, only clears **that effect's own** reactive subscriptions — it has no idea the callback
 also built nested content that needs tearing down. `ifBlock`/`forEach` account for this explicitly
-(each `registerDisposal()`s a combined function that disposes both its own effect *and* whatever
+(each `registerDisposal()`s a combined function that disposes both its own effect _and_ whatever
 it last rendered) rather than relying on `effect()`'s auto-registration alone; a bug where the
 composability claim above didn't actually hold for a component-as-element two levels deep inside a
 list was caught by a dedicated test for exactly this (`scripts/test-effect-disposal.js`) before it

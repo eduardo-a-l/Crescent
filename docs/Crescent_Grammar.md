@@ -278,8 +278,15 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
 - **Nullable/array chaining** — resolved: left-to-right, per §4. `T[]?` and `T?[]` are both legal
   and mean different things.
 - **General generics** — resolved: no dedicated syntax needed. `Identifier '<' Type '>'` in
-  `BaseType` (§4) handles it via the same type-position rule as the reserved keywords. Validated
-  against `Response<User>` in the reference parser's test fixtures.
+  `BaseType` (§4) handles it via the same type-position rule as the reserved keywords. This covers
+  both parsing and existence-checking: the semantic checker (`compiler/src/checker.ts`) resolves a
+  `GenericType`'s own name against declared components/structs, the same way it resolves a plain
+  `NamedType`, in addition to recursively checking the type argument. See
+  `compiler/scripts/fixtures/checker/unknown-generic-type.crs` for the negative case. Note that
+  Crescent has no syntax for declaring a generic `struct`/`component` (no type parameters on
+  `StructDecl`/`ComponentDecl`), so this check only verifies that the outer name resolves to *some*
+  declared type — it does not (and currently cannot) verify that the declared type actually accepts
+  a type argument.
 - **Import/module syntax across files** — resolved (§11). `Program` no longer assumes a single
   source file; the reference compiler discovers every `.crs` file under a project root, resolves
   each `use` path relative to the *importing file's own directory*, and rejects import cycles
@@ -293,6 +300,9 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
   What's still open: the checker does not do general type inference, so a field initialized from a
   non-literal expression (a function call, a variable, an arithmetic expression) isn't checked
   against its declared field type — only literal-shaped values are.
+- A local `VarDecl`'s declared type is now checked for existence the same way component params and
+  struct fields are. Still open: function `ReturnType`s and `for`-loop `itemType`s are not yet run
+  through this same existence check.
 - `on_change(data)` (§5) takes bare identifiers naming watched state — no grammar exists yet for
   watching a derived expression rather than a single named binding.
 

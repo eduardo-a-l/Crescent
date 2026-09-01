@@ -45,7 +45,7 @@ function typeIsResolvable(type: AST.CrescentType, scope: Map<string, SymbolInfo>
     case 'NamedType':
       return scope.has(type.name);
     case 'GenericType':
-      return typeIsResolvable(type.typeArg, scope);
+      return scope.has(type.name) && typeIsResolvable(type.typeArg, scope);
     case 'NullableType':
       return typeIsResolvable(type.inner, scope);
     case 'ArrayType':
@@ -263,6 +263,9 @@ function checkStmts(
     switch (stmt.kind) {
       case 'VarDecl':
         checkExpr(stmt.init, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        if (!typeIsResolvable(stmt.type, globalScope)) {
+          diagnostics.push(err(`Unknown type '${typeToString(stmt.type)}' referenced by variable '${stmt.name}'`, where, stmt.line));
+        }
         localScope.add(stmt.name);
         break;
       case 'Assignment':

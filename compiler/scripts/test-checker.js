@@ -61,6 +61,12 @@ const cases = [
     pattern: /'user_name' is nullable \(string\?\) and is accessed here without a null check/,
     label: 'a nullable value accessed without a narrowing guard',
   },
+  {
+    file: 'unknown-generic-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Response<int>' referenced by variable 'pending'/,
+    label: 'a local variable declared with an unresolvable generic type name',
+  },
 ];
 
 for (const c of cases) {
