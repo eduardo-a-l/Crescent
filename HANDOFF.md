@@ -14,8 +14,9 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: close a semantic-checker gap in generic-type-name resolution (see "Last Completed
-Work" below). Choose the next item from `TODO.md` before beginning new work.
+Just completed: extend declared-type existence checking to function return types and `for` loop
+item types (see "Last Completed Work" below). Choose the next item from `TODO.md` before beginning
+new work.
 
 ---
 
@@ -47,67 +48,56 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-Semantic checker: validate the base name of a `GenericType` (e.g. `Response<User>`), and validate
-a local `VarDecl`'s declared type for existence at all (it previously wasn't checked at all).
+Semantic checker: validate declared type names in non-`void` function return types and in both
+statement and template `for` loop item types.
 
 ### What changed
 
-`checker.ts`'s `typeIsResolvable()` previously only recursed into a `GenericType`'s type argument
-and never checked whether the generic's own name (e.g. `Response` in `Response<User>`) resolved to
-anything declared. Separately, `checkStmts()`'s `VarDecl` case never ran the declared type through
-`typeIsResolvable()` at all, unlike component params, struct fields, and `inject<T>`, which already
-did. Both gaps meant a local variable declared with a completely undefined type name (generic or
-not) passed the checker silently.
+`checker.ts` now applies the existing `typeIsResolvable()` rule to every non-`void`
+`FunctionDecl.returnType`, regular-statement `For.itemType`, and view `TemplateFor.itemType`.
+This includes generic base-name resolution. It reports context-specific diagnostics while continuing
+to collect other errors in the file.
 
-`examples/structs_and_generics.crs` had been relying on exactly this hole: it declared
-`Response<User> pending_response = fetch_pending();` even though no `Response` type is declared
-anywhere in the project (Crescent also has no syntax for declaring a generic `struct`, i.e. no type
-parameters on `StructDecl`, so `Response<User>` could never have resolved to anything real). Fixed
-by changing the declaration to `User pending_response = ...`, matching `fetch_pending()`'s actual
-return type.
+Added `unknown-return-and-for-types.crs`, a negative fixture that contains one unresolved generic
+function return type plus unresolved statement and template loop item types. The checker regression
+test asserts all three diagnostics.
 
-Added a negative fixture (`unknown-generic-type.crs`) and a corresponding case in
-`test-checker.js` to regression-test the new diagnostic.
-
-Updated `docs/Crescent_Grammar.md` §9/§10: previously claimed generics were "resolved" partly on
-the strength of "validated ... in the reference parser's test fixtures," which conflated
-parsing with existence-checking. Now states plainly that the checker validates the generic name's
-existence too (with the caveat that it can't check type-argument arity/validity, since generic
-struct/component declarations don't exist in the language yet), and documents the new VarDecl gap
-that's still open (function `ReturnType`s and `for`-loop `itemType`s are still unchecked).
+Updated `docs/Crescent_Grammar.md` §10 to reflect the newly checked positions and record the
+remaining function-parameter gap.
 
 ### Files changed
 
 - `compiler/src/checker.ts`
-- `compiler/examples/structs_and_generics.crs`
 - `compiler/scripts/test-checker.js`
-- `compiler/scripts/fixtures/checker/unknown-generic-type.crs` (new)
+- `compiler/scripts/fixtures/checker/unknown-return-and-for-types.crs` (new)
 - `docs/Crescent_Grammar.md`
+- `HANDOFF.md`
 
 ---
 
 ## Tests
 
-### Last type-check
+### Last type-check and focused regression test
 
 ```text
-npx tsc --noEmit
--> no errors
+npm run build && node scripts/test-checker.js
+-> no errors; all checker regressions pass, including the three new cases
 ```
 
 ### Last test suite
 
 ```text
 npm test
--> 130 PASS, 0 FAIL, exit code 0
-(includes: build, npm start over examples/, test-checker.js with the new
-unknown-generic-type.crs case, all other script tests, build-web, and test-web.js)
+-> compiler, checker, runtime, DOM, module, and keyed-list tests passed through the final
+   bundle step, but esbuild failed because the sandbox denied a resolved directory read.
+   This is an environment restriction, not a test assertion failure.
 ```
 
 ### Last web test
 
 ```text
-Included in the npm test run above (test-web.js) — all PASS.
+node scripts/build-web.js && node scripts/test-web.js (with required elevated sandbox access)
+-> bundle written successfully; all browser smoke tests PASS
 ```
 
 ---
@@ -144,31 +134,25 @@ Do not blindly "fix" this without checking the current implementation and intend
 
 ### Other
 
-- Function `ReturnType`s and `for`-loop `itemType`s are still never run through
-  `typeIsResolvable()` — only component params, struct fields, `inject<T>`, and (as of this
-  session) local `VarDecl`s are checked for type-name existence. A function declared with a
-  bogus return type, or a `for` loop over a bogus item type, currently passes the checker
-  silently. Reasonable next small unit of work.
-- Function (not component) parameter types are also never validated for existence (e.g. a
+- Function (not component) parameter types are still not validated for existence (e.g. a
   handler declared as `void handle_key(KeyboardEvent e)` never confirms `KeyboardEvent` resolves
-  to anything). Not yet reflected in `docs/Crescent_Grammar.md`.
+  to anything). This is the smallest remaining type-name-resolution gap.
 
 ---
 
 ## Unfinished Work
 
-_No active unfinished implementation. The generic-type-resolution task above is complete and
-tested. See "Known Problems > Other" for closely related follow-up gaps (function return types,
-for-loop item types, function param types) that were deliberately left out of this unit._
+_No active unfinished implementation. The return/loop type-resolution task above is complete and
+tested. See "Known Problems > Other" for the closely related function-parameter gap._
 
 ---
 
 ## Recommended Next Step
 
 1. Read `TODO.md`.
-2. Consider extending type-existence checking (`typeIsResolvable`) to function `ReturnType`s and
-   `for`-loop `itemType`s, following the same pattern used for `VarDecl` in this session — likely
-   the smallest next coherent unit in the same area.
+2. Consider extending type-existence checking (`typeIsResolvable`) to function parameter types,
+   following the existing component-parameter pattern — likely the smallest next coherent unit in
+   the same area.
 3. Otherwise, select a different small, coherent task from `TODO.md`.
 4. Read the relevant design/grammar sections.
 5. Inspect the existing implementation.
@@ -183,25 +167,22 @@ for-loop item types, function param types) that were deliberately left out of th
 
 ### Latest session
 
-**AI:** Claude
+**AI:** Codex
 
-**Task:** Strengthen the semantic checker's generic-type resolution (`Response<User>`-style types)
-and close the related gap where local `VarDecl` types were never checked for existence at all.
+**Task:** Extend declared type-name resolution to non-`void` function return types and statement/
+template `for` loop item types.
 
-**Result:** Done. `typeIsResolvable()` now checks a `GenericType`'s own name, not just its type
-argument. `VarDecl` statements now run their declared type through the same check as component
-params/struct fields/`inject<T>`. Fixed `structs_and_generics.crs`, which had been relying on the
-old hole (`Response<User>` was never a declared type). Added a negative fixture + test case.
-Updated `docs/Crescent_Grammar.md` §9/§10 accordingly.
+**Result:** Done. The checker now reports unresolved return and loop item types in all relevant AST
+positions. Added one fixture and three regression assertions. Grammar documentation updated.
 
-**Commit:** Not committed — working tree left with the uncommitted diff described above; no patch
-file was requested.
+**Commit:** Not committed — working tree contains the focused diff described above.
 
-**Tests:** `npx tsc --noEmit` (clean); `npm test` (130 PASS, 0 FAIL, exit 0), including the new
-`unknown-generic-type.crs` case and the full jsdom + real-browser (`test-web.js`) suites.
+**Tests:** `npm run build && node scripts/test-checker.js` (clean/all PASS); `npm test` passed all
+steps before the sandbox blocked its final esbuild directory read; `node scripts/build-web.js &&
+node scripts/test-web.js` rerun with elevated sandbox access (all PASS).
 
-**Next:** Extend the same `typeIsResolvable()` check to function `ReturnType`s and `for`-loop
-`itemType`s (see "Recommended Next Step").
+**Next:** Extend the same `typeIsResolvable()` check to function parameter types, or choose another
+small TODO item.
 
 ---
 

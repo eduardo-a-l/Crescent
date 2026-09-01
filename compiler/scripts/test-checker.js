@@ -67,6 +67,24 @@ const cases = [
     pattern: /Unknown type 'Response<int>' referenced by variable 'pending'/,
     label: 'a local variable declared with an unresolvable generic type name',
   },
+  {
+    file: 'unknown-return-and-for-types.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Response<int>' referenced by return type of function 'load'/,
+    label: 'an unresolvable function return type',
+  },
+  {
+    file: 'unknown-return-and-for-types.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Entry' referenced by for-loop item 'entry'/,
+    label: 'an unresolvable statement for-loop item type',
+  },
+  {
+    file: 'unknown-return-and-for-types.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Row' referenced by template for-loop item 'row'/,
+    label: 'an unresolvable template for-loop item type',
+  },
 ];
 
 for (const c of cases) {

@@ -300,9 +300,9 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
   What's still open: the checker does not do general type inference, so a field initialized from a
   non-literal expression (a function call, a variable, an arithmetic expression) isn't checked
   against its declared field type — only literal-shaped values are.
-- A local `VarDecl`'s declared type is now checked for existence the same way component params and
-  struct fields are. Still open: function `ReturnType`s and `for`-loop `itemType`s are not yet run
-  through this same existence check.
+- A local `VarDecl`'s declared type, a non-`void` function `ReturnType`, and both statement and
+  template `for`-loop `itemType`s are now checked for existence the same way component params and
+  struct fields are. Function parameter types are not yet run through this same existence check.
 - `on_change(data)` (§5) takes bare identifiers naming watched state — no grammar exists yet for
   watching a derived expression rather than a single named binding.
 

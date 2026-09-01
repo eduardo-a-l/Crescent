@@ -293,6 +293,9 @@ function checkStmts(
       }
       case 'For': {
         checkExpr(stmt.iterable, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        if (!typeIsResolvable(stmt.itemType, globalScope)) {
+          diagnostics.push(err(`Unknown type '${typeToString(stmt.itemType)}' referenced by for-loop item '${stmt.itemName}'`, where, stmt.line));
+        }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
         checkStmts(stmt.body, bodyScope, globalScope, narrow, derivedNames, where, diagnostics);
@@ -357,6 +360,9 @@ function checkTemplateNode(
     }
     case 'TemplateFor': {
       checkExpr(node.iterable, scope, globalScope, narrow, where, line, diagnostics);
+      if (!typeIsResolvable(node.itemType, globalScope)) {
+        diagnostics.push(err(`Unknown type '${typeToString(node.itemType)}' referenced by template for-loop item '${node.itemName}'`, where, line));
+      }
       const bodyScope = new Set(scope);
       bodyScope.add(node.itemName);
       if (node.key) checkExpr(node.key, bodyScope, globalScope, narrow, where, line, diagnostics);
@@ -439,6 +445,9 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         const fnScope = new Set(scope);
         for (const p of m.params) fnScope.add(p.name);
         const fnWhere = `${where}, function '${m.name}'`;
+        if (m.returnType !== 'void' && !typeIsResolvable(m.returnType, globalScope)) {
+          diagnostics.push(err(`Unknown type '${typeToString(m.returnType)}' referenced by return type of function '${m.name}'`, fnWhere, m.line));
+        }
         checkStmts(m.body, fnScope, globalScope, narrow, derivedNames, fnWhere, diagnostics);
         break;
       }

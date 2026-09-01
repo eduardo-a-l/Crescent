@@ -1,0 +1,19 @@
+component Broken {
+    state<int[]> values = [];
+
+    Response<int> load() {
+        return 1;
+    }
+
+    void inspect() {
+        for (Entry entry in values) {
+            console.log(entry);
+        }
+    }
+
+    view {
+        for (Row row in values key row) {
+            <p>{row}</p>
+        }
+    }
+}
