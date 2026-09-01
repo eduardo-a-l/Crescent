@@ -487,6 +487,79 @@ tests, git history, and language specification remain authoritative.
 
 ---
 
+### Session Checkpoints
+
+AI coding sessions may end unexpectedly because of context, usage, time, or platform limits.
+
+For tasks that involve substantial changes, create checkpoints during the work rather than relying exclusively on the final response.
+
+A checkpoint should contain:
+
+- current implementation state;
+- tests already run;
+- known failures;
+- remaining work;
+- important decisions;
+- files changed.
+
+When practical, maintain a patch representing the uncommitted work.
+
+Do not wait until the final moments of a session to create the only copy of the work.
+
+---
+
+### Before Ending a Session
+
+When the current task is complete, or when the session may be approaching its practical limit:
+
+1. Stop expanding the task.
+2. Finish the smallest coherent unit currently being implemented.
+3. Run relevant tests.
+4. Inspect `git diff`.
+5. Update `HANDOFF.md`.
+6. Ensure all important changes are represented in the repository or in a patch.
+7. Clearly state what remains unfinished.
+8. Give a concise handoff summary.
+
+If a patch is requested or needed, create it before continuing with any optional work.
+
+---
+
+### Patch Handoff
+
+A patch may be used to transfer uncommitted work between environments or AI agents.
+
+When creating a patch:
+
+- include only changes belonging to the current task;
+- do not include unrelated user changes;
+- ensure the patch can be applied cleanly;
+- include `HANDOFF.md` when it contains information necessary to understand the changes;
+- mention the patch filename in the final handoff.
+
+Prefer a Git-generated patch when possible.
+
+Example:
+
+```
+git diff > crescent-checkpoint.patch
+```
+
+For staged changes:
+
+```
+git diff --cached > crescent-checkpoint.patch
+```
+
+Before declaring a patch ready, inspect it:
+
+```
+git diff --check
+git diff
+```
+
+The patch itself is not the source of truth. The source of truth is the resulting repository state after the patch is applied and tested.
+
 ## 20. Final Response Format
 
 When finishing a session, use this structure:
