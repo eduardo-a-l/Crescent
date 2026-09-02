@@ -168,6 +168,38 @@ function checkCallArgs(
   }
 }
 
+function checkAttributeTypeMatch(
+  declared: AST.CrescentType,
+  attr: AST.Attribute,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[]
+): void {
+  if (!attr.isExpr) {
+    const actual: AST.CrescentType = { kind: 'PrimitiveType', name: 'string' };
+    if (!literalTypeMatches(declared, actual)) {
+      diagnostics.push(
+        err(`Type mismatch: prop '${attr.name}' expects '${typeToString(declared)}' but received a 'string' value`, where, line)
+      );
+    }
+    return;
+  }
+  const exprValue = attr.exprValue!;
+  if (exprValue.kind === 'NullLiteral') {
+    if (declared.kind !== 'NullableType') {
+      diagnostics.push(err(`'null' passed to prop '${attr.name}', which is not nullable`, where, line));
+    }
+    return;
+  }
+  const actual = inferLiteralType(exprValue);
+  if (!actual) return;
+  if (!literalTypeMatches(declared, actual)) {
+    diagnostics.push(
+      err(`Type mismatch: prop '${attr.name}' expects '${typeToString(declared)}' but received a '${typeToString(actual)}' value`, where, line)
+    );
+  }
+}
+
 interface NarrowState {
   nullable: Map<string, AST.CrescentType>;
   narrowed: Set<string>;
@@ -380,7 +412,7 @@ function checkTemplateNode(
           diagnostics.push(err(`'${node.tag}' is a struct, not a component — it cannot be used as an element`, where, line));
         } else {
           const compDecl = info.decl as AST.ComponentDecl;
-          const declaredParams = new Set(compDecl.params.map((p) => p.name));
+          const declaredParams = new Map(compDecl.params.map((p) => [p.name, p.type]));
           const providedNames = new Set(node.attributes.map((a) => a.name));
           for (const p of compDecl.params) {
             if (!providedNames.has(p.name)) {
@@ -388,8 +420,12 @@ function checkTemplateNode(
             }
           }
           for (const a of node.attributes) {
-            if (!declaredParams.has(a.name) && !a.name.startsWith('on')) {
-              diagnostics.push(err(`Unknown prop '${a.name}' passed to <${node.tag}> (not declared as a param)`, where, line));
+            if (!declaredParams.has(a.name)) {
+              if (!a.name.startsWith('on')) {
+                diagnostics.push(err(`Unknown prop '${a.name}' passed to <${node.tag}> (not declared as a param)`, where, line));
+              }
+            } else {
+              checkAttributeTypeMatch(declaredParams.get(a.name)!, a, where, line, diagnostics);
             }
           }
         }

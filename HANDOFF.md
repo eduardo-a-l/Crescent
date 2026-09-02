@@ -14,10 +14,10 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: semantic checker now validates function-call arguments (arity and, for
-literal-shaped arguments, type) against the callee's declared parameters, for calls to functions
-declared as members of the same component (see "Last Completed Work" below). Choose the next item
-from `TODO.md` before beginning new work.
+Just completed: semantic checker now validates component prop *types* (not just prop names) for
+literal-shaped values — both `attr="string"` attributes and `attr={literal}` expr attributes are
+compared against the target component's declared param types (see "Last Completed Work" below).
+Choose the next item from `TODO.md` before beginning new work.
 
 ---
 
@@ -49,63 +49,63 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-Semantic checker: "Function argument checking" (`TODO.md`, Semantic Checker → Types). Calls to a
-function declared as a member of the *same* component now have their argument list checked against
-the function's declared parameters:
+Semantic checker: "Component prop type checking" (`TODO.md`, Semantic Checker → Types). The
+existing `<Tag prop={...}>`/`<Tag prop="...">` check in `checkTemplateNode`'s `Element` case
+already validated prop *names* (`Missing prop '...'` / `Unknown prop '...'` diagnostics); it now
+also validates prop *types* for literal-shaped values, the same class of check this and the prior
+session added for struct-literal fields and function-call arguments.
 
-1. **Arity** — the number of call arguments must match the number of declared parameters. A
-   mismatch (too few or too many) is always reported, regardless of argument shape.
-2. **Type (literal-shaped arguments only)** — for each argument that is a literal (or a `null`),
-   its type is compared against the corresponding parameter's declared type, using the same
-   `inferLiteralType`/`literalTypeMatches` machinery already used for `VarDecl`/`state`/`struct`-
-   field initializers. A non-literal argument (a variable, a call, an arithmetic expression) is not
-   type-checked, matching the checker's existing "literal-shaped only" limitation everywhere else
-   type compatibility is checked (there is no general type inference yet).
+Two attribute shapes are handled:
+
+1. **Plain string attributes** (`name="World"`, parsed as `{ isExpr: false, stringValue }`) — these
+   are always a `string` value; checked directly against the declared param type (e.g. `int value`
+   receiving `value="5"` is now flagged).
+2. **Expr attributes** (`name={expr}`, parsed as `{ isExpr: true, exprValue }`) — `null` is checked
+   against nullability, and literal-shaped exprs (`IntLiteral`, `StringLiteral`, etc., via the
+   existing `inferLiteralType`) are compared against the declared type. A non-literal expr (an
+   identifier, a call, a member access — e.g. the very common `<UserCard user={user}/>` pattern) is
+   not type-checked, matching the checker's pre-existing "literal-shaped only" limitation.
 
 ### What changed
 
 `checker.ts`:
 
-- Added `checkCallArgs(fnDecl, args, where, line, diagnostics)`: reports an arity mismatch
-  (`Function 'name' expects N argument(s) but received M`) or, per-argument, a `null`-into-non-
-  nullable mismatch or a literal type mismatch (`Type mismatch: argument 'param' of function
-  'name' expects 'T' but received a 'U' value`).
-- `checkComponentDecl()` now builds a `functions: Map<string, AST.FunctionDecl>` from the
-  component's own `FunctionDecl` members and threads it down through `checkExpr`, `checkStmts`,
-  and `checkTemplateNode` (mirroring how `narrow`/`derivedNames` are already threaded) so that a
-  `Call` anywhere — a statement, a nested expression, a template interpolation, an event-handler
-  attribute, a style-block expression — can resolve the callee against the component's own
-  functions.
-- The `Call` case in `checkExpr` now looks up `functions.get(callee.name)` (only when the callee is
-  a bare `Identifier`) and, if found, calls `checkCallArgs`.
-
-This is intentionally scoped to same-component function calls: Crescent currently has no top-level
-(non-member) function declarations (confirmed against `docs/Crescent_Grammar.md` §`FunctionDecl`),
-and there is no method-call syntax (`obj.method(...)`) to resolve against another component's
-members, so `Call.callee` being a bare local `Identifier` covers every case this check can
-currently apply to.
+- Added `checkAttributeTypeMatch(declared, attr, where, line, diagnostics)`, mirroring
+  `checkCallArgs`'s per-argument logic but adapted for `AST.Attribute`'s two shapes (plain-string
+  vs expr).
+- In `checkTemplateNode`'s `Element` case, `declaredParams` changed from a `Set<string>` (name
+  existence only) to a `Map<string, AST.CrescentType>` (name → declared type), and the "Unknown
+  prop" loop now calls `checkAttributeTypeMatch` for every attribute whose name *does* match a
+  declared param (the `on*` event-handler skip for unknown-name attributes is unchanged).
 
 Added three new fixtures under `compiler/scripts/fixtures/checker/`:
 
-- `wrong-arg-count.crs` — negative, arity mismatch (`add(1)` where `add` takes 2 params).
-- `wrong-arg-type.crs` — negative, literal type mismatch (`add(1, "two")`).
-- `correct-call-ok.crs` — positive, a correctly-typed/arity call produces zero diagnostics.
+- `wrong-prop-type.crs` — negative, an expr-attribute literal mismatch (`name={42}` where
+  `Greeting` declares `string name`).
+- `wrong-prop-type-string-attr.crs` — negative, a plain string attribute against a non-string
+  param (`value="5"` where `Age` declares `int value`).
+- `correct-prop-type-ok.crs` — positive, both a non-literal expr prop (`name={username}`, a
+  `state<string>`, skipped as non-literal) and a correctly-typed string-literal prop
+  (`name="Bob"`) produce zero diagnostics — regression coverage for the very common "pass a
+  variable as a prop" pattern already used throughout `examples/` (e.g.
+  `structs_and_generics.crs`'s `<UserCard user={user}/>`), confirming it's still not (incorrectly)
+  flagged.
 
 Added matching cases/assertions to `compiler/scripts/test-checker.js`.
 
-Did not touch `docs/Crescent_Design.md` or `docs/Crescent_Grammar.md`: this closes a semantic-
-checker TODO item using syntax and semantics that are already fully documented (function
-declarations, parameter types, call expressions) — no syntax or design changed, only what the
+Did not touch `docs/Crescent_Design.md` or `docs/Crescent_Grammar.md`: same reasoning as the prior
+session — this closes a semantic-checker TODO item using syntax/semantics that are already fully
+documented (components, params, element attributes); no syntax or design changed, only what the
 checker now verifies about already-legal programs.
 
 ### Files changed
 
 - `compiler/src/checker.ts`
 - `compiler/scripts/test-checker.js`
-- `compiler/scripts/fixtures/checker/wrong-arg-count.crs` (new)
-- `compiler/scripts/fixtures/checker/wrong-arg-type.crs` (new)
-- `compiler/scripts/fixtures/checker/correct-call-ok.crs` (new)
-- `TODO.md` (checked off "Function argument checking")
+- `compiler/scripts/fixtures/checker/wrong-prop-type.crs` (new)
+- `compiler/scripts/fixtures/checker/wrong-prop-type-string-attr.crs` (new)
+- `compiler/scripts/fixtures/checker/correct-prop-type-ok.crs` (new)
+- `TODO.md` (checked off "Component prop type checking")
 - `HANDOFF.md`
 
 ---
@@ -119,14 +119,10 @@ npx tsc --noEmit
 -> no errors
 
 npm test
--> 137 PASS, 0 FAIL, exit code 0
+-> 140 PASS, 0 FAIL, exit code 0
 (build, npm start over examples/, test-checker.js with the three new fixtures above plus all
 prior checker cases, all other script tests, build-web, and test-web.js)
 ```
-
-Note: `compiler/node_modules` was not present at the start of this session (fresh clone); ran
-`npm install` in `compiler/` before `npx tsc --noEmit`/`npm test` would work. No `package.json`/
-`package-lock.json` changes were made or are expected from this.
 
 ---
 
@@ -169,26 +165,30 @@ Do not blindly "fix" this without checking the current implementation and intend
   no grammar production for it, and no support for callback shapes with parameters or return
   values (e.g. `void(int)`). Formalizing function types as a real `CrescentType` variant (rather
   than a magic-string `NamedType`) is a larger, separate design task, not attempted here.
-- No known type-name-existence gaps remain in the positions the checker currently visits
-  (component params, struct fields, `inject<T>`, `VarDecl`, function return types, function param
-  types, and statement/template `for`-loop item types are all now checked).
-- Function-argument checking (this session) is intentionally scoped: only same-component calls to
+- Function-argument checking (prior session) is intentionally scoped: only same-component calls to
   a bare-identifier callee are resolved against a known `FunctionDecl`; calls where the checker
   cannot otherwise resolve the callee (e.g. an expression callee) are silently skipped rather than
   flagged, since Crescent has no other call form yet. If component-to-component method-style calls
   or top-level functions are ever added, `checkCallArgs`'s call site in the `Call` case of
   `checkExpr` is where resolution would need to be extended.
-- Argument type checking, like every other type-compatibility check in this file, only covers
-  literal-shaped arguments (`inferLiteralType` returns `null`, and is silently skipped, for a
-  variable, a call, or an arithmetic expression passed as an argument). This is a pre-existing
-  limitation of the whole checker, not something new introduced this session — "Complete assignment
-  compatibility" and general type inference remain open `TODO.md` items.
+- Component prop type checking (this session) has the identical literal-shaped-only limitation:
+  `checkAttributeTypeMatch` only flags a mismatch when the attribute is a plain string or an
+  expr-attribute whose value is a literal; a variable, call, or arithmetic-expression prop value
+  (by far the most common case — e.g. `<UserCard user={user}/>`) is not type-checked.
+- Argument/prop type checking, like every other type-compatibility check in this file, only covers
+  literal-shaped values (`inferLiteralType` returns `null`, and is silently skipped, for a
+  variable, a call, or an arithmetic expression). This is a pre-existing limitation of the whole
+  checker, not something new — "Complete assignment compatibility" and general type inference
+  remain open `TODO.md` items. Closing this properly would need a real expression type-inference
+  pass (tracking declared types for identifiers/derived/state through `scope`, not just literals),
+  which is a materially bigger task than any single session so far and should be scoped
+  deliberately rather than folded into the next narrow fixture-driven task.
 
 ---
 
 ## Unfinished Work
 
-_No active unfinished implementation. The function-argument-checking task above is complete and
+_No active unfinished implementation. The component-prop-type-checking task above is complete and
 tested._
 
 ---
@@ -204,27 +204,78 @@ tested._
    `crescent check` / `crescent build` commands. This unlocks both editor diagnostics and preview
    without coupling the initial VS Code extension to the current `examples/` demo entry point.
 4. Alternatively, continue strengthening the semantic checker per `TODO.md`'s "Current Priority
-   Order" (§16) — reasonable next candidates in the Types section are "Function return-type
-   checking" (verify a `return <expr>`'s literal-shaped type against the function's declared,
-   non-`void` return type — note this is distinct from the already-completed return-type
-   *existence* check) or "Component prop type checking" (the existing `<Tag prop={...}>` check
-   in `checkTemplateNode` only verifies prop *names*, via `Missing prop`/`Unknown prop`
-   diagnostics; it does not yet compare a literal-shaped prop value against the component's
-   declared param type, the same gap this session closed for function calls).
-5. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
+   Order" (§16). The narrow, literal-shaped-value checks in the Types section
+   (arg/prop/struct-field/`VarDecl` type matching) are now largely done; remaining Types items —
+   "Complete assignment compatibility", "Array element type checking", "Function-type
+   compatibility" — all fundamentally need the same thing: a real expression type-inference helper
+   that can determine the type of an arbitrary expression (an identifier's declared type from
+   scope, a derived's type, a binary expression's result type), not just a literal's type. Consider
+   scoping that inference helper as its own small unit before building more callers on top of it,
+   rather than deepening literal-only special cases further.
+5. Other reasonable next candidates: "Function return-type checking" (verify a `return <expr>`'s
+   literal-shaped type against the function's declared, non-`void` return type — distinct from the
+   already-completed return-type *existence* check), or moving into the Scope/Names or Reactivity
+   subsections of `TODO.md`'s Semantic Checker section (e.g. "Duplicate declaration diagnostics").
+6. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
    from semantic diagnostics, and incomplete checking must not be presented as full type safety.
-6. Read the relevant design/grammar sections.
-7. Inspect the existing implementation.
-8. Implement the task.
-9. Run tests.
-10. Update this file.
-11. Commit the completed unit if appropriate.
+7. Read the relevant design/grammar sections.
+8. Inspect the existing implementation.
+9. Implement the task.
+10. Run tests.
+11. Update this file.
+12. Commit the completed unit if appropriate.
 
 ---
 
 ## Session Log
 
 ### Latest session
+
+**AI:** Claude
+
+**Task:** Component prop type checking (`TODO.md`, Semantic Checker → Types) — compare
+literal-shaped prop values passed to component elements against the target component's declared
+param types, extending the existing prop *name* check (`Missing prop`/`Unknown prop`).
+
+**Result:** Done. Added `checkAttributeTypeMatch()`, covering both plain string attributes
+(`name="World"`) and expr attributes (`name={42}`); non-literal expr values (the common
+`name={someVar}` case) are left unchecked, matching the checker's existing literal-shaped-only
+limitation. Added two negative fixtures and one positive regression fixture, plus matching
+`test-checker.js` cases.
+
+**Commit:** Not committed — working tree contains the focused diff described above.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (140 PASS, 0 FAIL, exit 0).
+
+**Next:** See "Recommended Next Step" above — a real expression type-inference helper is needed
+before the remaining Types-section TODO items (assignment compatibility, array elements,
+function-type compatibility) can go beyond literal-only checking.
+
+---
+
+### Previous session
+
+**AI:** Claude
+
+**Task:** Function argument checking (`TODO.md`, Semantic Checker → Types) — validate a function
+call's argument count and (for literal-shaped arguments) types against the callee's declared
+parameters, for same-component function calls.
+
+**Result:** Done. Added `checkCallArgs()` and threaded a per-component `functions` map through
+`checkExpr`/`checkStmts`/`checkTemplateNode` so calls anywhere in a component's body, view, or
+style block can be resolved. Added two negative fixtures (`wrong-arg-count.crs`,
+`wrong-arg-type.crs`) and one positive regression fixture (`correct-call-ok.crs`).
+
+**Commit:** Not committed at the time; pushed to `develop` by the maintainer as commit
+`541a24a feat: add function argument checking`.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (137 PASS, 0 FAIL, exit 0). Note:
+`compiler/node_modules` was not present at the start of that session (fresh clone); `npm install`
+was run first.
+
+---
+
+### Older session
 
 **AI:** Claude
 

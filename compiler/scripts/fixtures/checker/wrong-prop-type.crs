@@ -1,0 +1,11 @@
+component Greeting(string name) {
+    view {
+        <p>{name}</p>
+    }
+}
+
+component Broken {
+    view {
+        <Greeting name={42}/>
+    }
+}

@@ -148,7 +148,7 @@
 - [x] Function argument checking
 - [ ] Function return-type checking
 - [ ] Array element type checking
-- [ ] Component prop type checking
+- [x] Component prop type checking
 - [ ] Function-type compatibility
 - [ ] More precise diagnostic messages
 

@@ -1,0 +1,14 @@
+component Greeting(string name) {
+    view {
+        <p>{name}</p>
+    }
+}
+
+component Fine {
+    state<string> username = "Ada";
+
+    view {
+        <Greeting name={username}/>
+        <Greeting name="Bob"/>
+    }
+}

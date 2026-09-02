@@ -103,6 +103,18 @@ const cases = [
     pattern: /argument 'b' of function 'add' expects 'int' but received a 'string' value/,
     label: 'a call to a local function with a mismatched argument type',
   },
+  {
+    file: 'wrong-prop-type.crs',
+    severity: 'error',
+    pattern: /prop 'name' expects 'string' but received a 'int' value/,
+    label: 'a component prop passed an expr literal of the wrong type',
+  },
+  {
+    file: 'wrong-prop-type-string-attr.crs',
+    severity: 'error',
+    pattern: /prop 'value' expects 'int' but received a 'string' value/,
+    label: 'a component prop passed a plain string attribute for a non-string param',
+  },
 ];
 
 for (const c of cases) {
@@ -115,6 +127,9 @@ assert(guardedDiagnostics.length === 0, `guarded-nullable-ok.crs: an if (x != nu
 
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
 assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);
+
+const correctPropDiagnostics = diagnosticsFor('correct-prop-type-ok.crs');
+assert(correctPropDiagnostics.length === 0, `correct-prop-type-ok.crs: correctly-typed literal and non-literal props produce no diagnostics, got ${JSON.stringify(correctPropDiagnostics)}`);
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
 let totalExampleDiagnostics = 0;
