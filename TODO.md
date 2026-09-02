@@ -145,7 +145,7 @@
 - [x] Generic-aware type positions
 - [~] Nullable checking
 - [ ] Complete assignment compatibility
-- [ ] Function argument checking
+- [x] Function argument checking
 - [ ] Function return-type checking
 - [ ] Array element type checking
 - [ ] Component prop type checking

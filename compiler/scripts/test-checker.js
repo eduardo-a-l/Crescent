@@ -91,6 +91,18 @@ const cases = [
     pattern: /Unknown type 'BogusType' referenced by param 'x'/,
     label: 'a function param declared with an unresolvable type',
   },
+  {
+    file: 'wrong-arg-count.crs',
+    severity: 'error',
+    pattern: /Function 'add' expects 2 argument\(s\) but received 1/,
+    label: 'a call to a local function with too few arguments',
+  },
+  {
+    file: 'wrong-arg-type.crs',
+    severity: 'error',
+    pattern: /argument 'b' of function 'add' expects 'int' but received a 'string' value/,
+    label: 'a call to a local function with a mismatched argument type',
+  },
 ];
 
 for (const c of cases) {
@@ -100,6 +112,9 @@ for (const c of cases) {
 
 const guardedDiagnostics = diagnosticsFor('guarded-nullable-ok.crs');
 assert(guardedDiagnostics.length === 0, `guarded-nullable-ok.crs: an if (x != null) guard suppresses the nullable-access warning, got ${JSON.stringify(guardedDiagnostics)}`);
+
+const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
+assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
 let totalExampleDiagnostics = 0;

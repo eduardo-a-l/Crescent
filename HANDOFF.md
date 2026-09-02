@@ -14,9 +14,9 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: extend declared-type existence checking to function parameter types, and fix a
-pre-existing bug where the design doc's `void()` callback-param syntax was already failing this
-same class of check on component params (see "Last Completed Work" below). Choose the next item
+Just completed: semantic checker now validates function-call arguments (arity and, for
+literal-shaped arguments, type) against the callee's declared parameters, for calls to functions
+declared as members of the same component (see "Last Completed Work" below). Choose the next item
 from `TODO.md` before beginning new work.
 
 ---
@@ -49,54 +49,63 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-Semantic checker: validate declared type names on function parameters — the last unchecked
-declared-type position identified in the prior sessions. Also fixed a pre-existing bug this
-surfaced: the design doc's `void()` callback-parameter syntax was already silently broken by the
-same class of check on *component* params, before this session touched anything.
+Semantic checker: "Function argument checking" (`TODO.md`, Semantic Checker → Types). Calls to a
+function declared as a member of the *same* component now have their argument list checked against
+the function's declared parameters:
+
+1. **Arity** — the number of call arguments must match the number of declared parameters. A
+   mismatch (too few or too many) is always reported, regardless of argument shape.
+2. **Type (literal-shaped arguments only)** — for each argument that is a literal (or a `null`),
+   its type is compared against the corresponding parameter's declared type, using the same
+   `inferLiteralType`/`literalTypeMatches` machinery already used for `VarDecl`/`state`/`struct`-
+   field initializers. A non-literal argument (a variable, a call, an arithmetic expression) is not
+   type-checked, matching the checker's existing "literal-shaped only" limitation everywhere else
+   type compatibility is checked (there is no general type inference yet).
 
 ### What changed
 
-`checker.ts`'s `FunctionDecl` case in `checkComponentDecl()` now loops over `m.params` and runs
-each param's declared type through `typeIsResolvable()`, exactly like component params already do.
+`checker.ts`:
 
-While verifying this against the design doc's own example (§6, `component CustomButton(string
-label, void() action)`), confirmed against the actual build that `typeIsResolvable()` already threw
-`Unknown type 'void()' referenced by param 'action'` for that component *before* this session's
-change — a genuine pre-existing bug, not something introduced by extending the check to function
-params. Root cause: `parser.ts`'s `parseParam()` represents a `void()` callback-typed parameter as
-a special-cased `NamedType { name: 'void()' }` rather than a real function-type AST node, and
-`typeIsResolvable()`'s `NamedType` case did a plain `scope.has(type.name)` lookup, which a marker
-string like `'void()'` can never satisfy. Fixed by special-casing that exact marker in
-`typeIsResolvable()` to always resolve, since it isn't a user type name to look up.
+- Added `checkCallArgs(fnDecl, args, where, line, diagnostics)`: reports an arity mismatch
+  (`Function 'name' expects N argument(s) but received M`) or, per-argument, a `null`-into-non-
+  nullable mismatch or a literal type mismatch (`Type mismatch: argument 'param' of function
+  'name' expects 'T' but received a 'U' value`).
+- `checkComponentDecl()` now builds a `functions: Map<string, AST.FunctionDecl>` from the
+  component's own `FunctionDecl` members and threads it down through `checkExpr`, `checkStmts`,
+  and `checkTemplateNode` (mirroring how `narrow`/`derivedNames` are already threaded) so that a
+  `Call` anywhere — a statement, a nested expression, a template interpolation, an event-handler
+  attribute, a style-block expression — can resolve the callee against the component's own
+  functions.
+- The `Call` case in `checkExpr` now looks up `functions.get(callee.name)` (only when the callee is
+  a bare `Identifier`) and, if found, calls `checkCallArgs`.
 
-While adding a positive fixture to confirm the fix, also checked the design doc's other documented
-parameter-typing example (§13.3, `void handle_key(KeyboardEvent e)`) against the same code path and
-found the identical class of bug: `MouseEvent`/`KeyboardEvent`/`FormEvent` are documented as valid
-param types but are never declared anywhere as a `struct`/`component`, so extending existence
-checking to function params would have flagged them too. Fixed the same way component params
-already handle plain identifier globals (`BUILTIN_GLOBALS`) by adding an analogous
-`BUILTIN_EVENT_TYPES` set (`MouseEvent`, `KeyboardEvent`, `FormEvent`) to `typeIsResolvable()`.
+This is intentionally scoped to same-component function calls: Crescent currently has no top-level
+(non-member) function declarations (confirmed against `docs/Crescent_Grammar.md` §`FunctionDecl`),
+and there is no method-call syntax (`obj.method(...)`) to resolve against another component's
+members, so `Call.callee` being a bare local `Identifier` covers every case this check can
+currently apply to.
 
-Added `compiler/examples/callback_param.crs` (mirrors §6's `CustomButton`/click-handler snippet)
-and `compiler/examples/typed_event_handler.crs` (mirrors §13.3's `handle_key(KeyboardEvent e)`
-snippet) — both parse, semantic-check cleanly, and code-generate correctly (verified generated JS
-and diagnostics by hand for both). These are the first real examples exercising either syntax.
-Added `unknown-function-param-type.crs`, a negative fixture (using an actually-undeclared type
-name, not one of the two builtin categories above) for the new function-param check, plus a
-matching case in `test-checker.js`.
+Added three new fixtures under `compiler/scripts/fixtures/checker/`:
 
-Updated `docs/Crescent_Grammar.md` §10: closed out the function-param-type item, and added two new
-entries documenting the `void()` marker and the `BUILTIN_EVENT_TYPES` set as narrow, ungeneralized
-special cases (no grammar production for function types or built-in event types exists yet).
+- `wrong-arg-count.crs` — negative, arity mismatch (`add(1)` where `add` takes 2 params).
+- `wrong-arg-type.crs` — negative, literal type mismatch (`add(1, "two")`).
+- `correct-call-ok.crs` — positive, a correctly-typed/arity call produces zero diagnostics.
+
+Added matching cases/assertions to `compiler/scripts/test-checker.js`.
+
+Did not touch `docs/Crescent_Design.md` or `docs/Crescent_Grammar.md`: this closes a semantic-
+checker TODO item using syntax and semantics that are already fully documented (function
+declarations, parameter types, call expressions) — no syntax or design changed, only what the
+checker now verifies about already-legal programs.
 
 ### Files changed
 
 - `compiler/src/checker.ts`
 - `compiler/scripts/test-checker.js`
-- `compiler/scripts/fixtures/checker/unknown-function-param-type.crs` (new)
-- `compiler/examples/callback_param.crs` (new)
-- `compiler/examples/typed_event_handler.crs` (new)
-- `docs/Crescent_Grammar.md`
+- `compiler/scripts/fixtures/checker/wrong-arg-count.crs` (new)
+- `compiler/scripts/fixtures/checker/wrong-arg-type.crs` (new)
+- `compiler/scripts/fixtures/checker/correct-call-ok.crs` (new)
+- `TODO.md` (checked off "Function argument checking")
 - `HANDOFF.md`
 
 ---
@@ -110,11 +119,14 @@ npx tsc --noEmit
 -> no errors
 
 npm test
--> 134 PASS, 0 FAIL, exit code 0
-(build, npm start over examples/ including the new callback_param.crs and
-typed_event_handler.crs, test-checker.js with the new unknown-function-param-type.crs
-case, all other script tests, build-web, and test-web.js)
+-> 137 PASS, 0 FAIL, exit code 0
+(build, npm start over examples/, test-checker.js with the three new fixtures above plus all
+prior checker cases, all other script tests, build-web, and test-web.js)
 ```
+
+Note: `compiler/node_modules` was not present at the start of this session (fresh clone); ran
+`npm install` in `compiler/` before `npx tsc --noEmit`/`npm test` would work. No `package.json`/
+`package-lock.json` changes were made or are expected from this.
 
 ---
 
@@ -157,18 +169,27 @@ Do not blindly "fix" this without checking the current implementation and intend
   no grammar production for it, and no support for callback shapes with parameters or return
   values (e.g. `void(int)`). Formalizing function types as a real `CrescentType` variant (rather
   than a magic-string `NamedType`) is a larger, separate design task, not attempted here.
-- No other known type-name-existence gaps remain in the positions the checker currently visits
+- No known type-name-existence gaps remain in the positions the checker currently visits
   (component params, struct fields, `inject<T>`, `VarDecl`, function return types, function param
-  types, and statement/template `for`-loop item types are all now checked). The two builtin-type
-  special cases added this session (`void()` callback params, `BUILTIN_EVENT_TYPES`) are the only
-  named exceptions, and both are now backed by working examples.
+  types, and statement/template `for`-loop item types are all now checked).
+- Function-argument checking (this session) is intentionally scoped: only same-component calls to
+  a bare-identifier callee are resolved against a known `FunctionDecl`; calls where the checker
+  cannot otherwise resolve the callee (e.g. an expression callee) are silently skipped rather than
+  flagged, since Crescent has no other call form yet. If component-to-component method-style calls
+  or top-level functions are ever added, `checkCallArgs`'s call site in the `Call` case of
+  `checkExpr` is where resolution would need to be extended.
+- Argument type checking, like every other type-compatibility check in this file, only covers
+  literal-shaped arguments (`inferLiteralType` returns `null`, and is silently skipped, for a
+  variable, a call, or an arithmetic expression passed as an argument). This is a pre-existing
+  limitation of the whole checker, not something new introduced this session — "Complete assignment
+  compatibility" and general type inference remain open `TODO.md` items.
 
 ---
 
 ## Unfinished Work
 
-_No active unfinished implementation. The function-param-type task above, and the two pre-existing
-bugs it surfaced (`void()` and DOM event types), are complete and tested._
+_No active unfinished implementation. The function-argument-checking task above is complete and
+tested._
 
 ---
 
@@ -176,23 +197,28 @@ bugs it surfaced (`void()` and DOM event types), are complete and tested._
 
 1. Read `TODO.md`.
 2. The maintainer wants an early, usable VS Code feedback loop rather than waiting for a complete
-   language implementation. A detailed staged plan is now recorded in `TODO.md` under
+   language implementation. A detailed staged plan is recorded in `TODO.md` under
    "Near-Term VS Code Enablement (v0.x)".
-3. The recommended first implementation unit is to extract reusable `checkProject()` and
+3. A reasonable first implementation unit there is to extract reusable `checkProject()` and
    `buildProject()` APIs from `compiler/src/index.ts`, then expose them through path-based
    `crescent check` / `crescent build` commands. This unlocks both editor diagnostics and preview
    without coupling the initial VS Code extension to the current `examples/` demo entry point.
-4. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
+4. Alternatively, continue strengthening the semantic checker per `TODO.md`'s "Current Priority
+   Order" (§16) — reasonable next candidates in the Types section are "Function return-type
+   checking" (verify a `return <expr>`'s literal-shaped type against the function's declared,
+   non-`void` return type — note this is distinct from the already-completed return-type
+   *existence* check) or "Component prop type checking" (the existing `<Tag prop={...}>` check
+   in `checkTemplateNode` only verifies prop *names*, via `Missing prop`/`Unknown prop`
+   diagnostics; it does not yet compare a literal-shaped prop value against the component's
+   declared param type, the same gap this session closed for function calls).
+5. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
    from semantic diagnostics, and incomplete checking must not be presented as full type safety.
-5. Treat the minimal VS Code extension (file association, syntax highlighting, diagnostics, and
-   build/preview commands) as a v0.x deliverable; defer a complete incremental LSP to v1.0.
-6. Otherwise, select a different small, coherent task from `TODO.md`.
-7. Read the relevant design/grammar sections.
-8. Inspect the existing implementation.
-9. Implement the task.
-10. Run tests.
-11. Update this file.
-12. Commit the completed unit if appropriate.
+6. Read the relevant design/grammar sections.
+7. Inspect the existing implementation.
+8. Implement the task.
+9. Run tests.
+10. Update this file.
+11. Commit the completed unit if appropriate.
 
 ---
 

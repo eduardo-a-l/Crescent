@@ -126,6 +126,48 @@ function checkLiteralTypeMatch(declared: AST.CrescentType, init: AST.Expr, where
   }
 }
 
+function checkCallArgs(
+  fnDecl: AST.FunctionDecl,
+  args: AST.Expr[],
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[]
+): void {
+  if (args.length !== fnDecl.params.length) {
+    diagnostics.push(
+      err(
+        `Function '${fnDecl.name}' expects ${fnDecl.params.length} argument(s) but received ${args.length}`,
+        where,
+        line
+      )
+    );
+    return;
+  }
+  for (let i = 0; i < args.length; i++) {
+    const param = fnDecl.params[i];
+    const arg = args[i];
+    if (arg.kind === 'NullLiteral') {
+      if (param.type.kind !== 'NullableType') {
+        diagnostics.push(
+          err(`'null' passed as argument '${param.name}' of function '${fnDecl.name}', which is not nullable`, where, line)
+        );
+      }
+      continue;
+    }
+    const actual = inferLiteralType(arg);
+    if (!actual) continue;
+    if (!literalTypeMatches(param.type, actual)) {
+      diagnostics.push(
+        err(
+          `Type mismatch: argument '${param.name}' of function '${fnDecl.name}' expects '${typeToString(param.type)}' but received a '${typeToString(actual)}' value`,
+          where,
+          line
+        )
+      );
+    }
+  }
+}
+
 interface NarrowState {
   nullable: Map<string, AST.CrescentType>;
   narrowed: Set<string>;
@@ -144,6 +186,7 @@ function checkExpr(
   expr: AST.Expr,
   scope: Set<string>,
   globalScope: Map<string, SymbolInfo>,
+  functions: Map<string, AST.FunctionDecl>,
   narrow: NarrowState,
   where: string,
   line: number,
@@ -184,27 +227,31 @@ function checkExpr(
           }
         }
       }
-      for (const f of expr.fields) checkExpr(f.value, scope, globalScope, narrow, where, line, diagnostics);
+      for (const f of expr.fields) checkExpr(f.value, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     }
     case 'ArrayLiteral':
-      for (const el of expr.elements) checkExpr(el, scope, globalScope, narrow, where, line, diagnostics);
+      for (const el of expr.elements) checkExpr(el, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     case 'Unary':
-      checkExpr(expr.operand, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(expr.operand, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     case 'Binary':
-      checkExpr(expr.left, scope, globalScope, narrow, where, line, diagnostics);
-      checkExpr(expr.right, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(expr.left, scope, globalScope, functions, narrow, where, line, diagnostics);
+      checkExpr(expr.right, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     case 'Ternary':
-      checkExpr(expr.test, scope, globalScope, narrow, where, line, diagnostics);
-      checkExpr(expr.consequent, scope, globalScope, narrow, where, line, diagnostics);
-      checkExpr(expr.alternate, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(expr.test, scope, globalScope, functions, narrow, where, line, diagnostics);
+      checkExpr(expr.consequent, scope, globalScope, functions, narrow, where, line, diagnostics);
+      checkExpr(expr.alternate, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     case 'Call':
-      checkExpr(expr.callee, scope, globalScope, narrow, where, line, diagnostics);
-      for (const a of expr.args) checkExpr(a, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(expr.callee, scope, globalScope, functions, narrow, where, line, diagnostics);
+      for (const a of expr.args) checkExpr(a, scope, globalScope, functions, narrow, where, line, diagnostics);
+      if (expr.callee.kind === 'Identifier') {
+        const calleeFn = functions.get(expr.callee.name);
+        if (calleeFn) checkCallArgs(calleeFn, expr.args, where, line, diagnostics);
+      }
       return;
     case 'Member':
       if (expr.object.kind === 'Identifier' && narrow.nullable.has(expr.object.name) && !narrow.narrowed.has(expr.object.name)) {
@@ -212,7 +259,7 @@ function checkExpr(
           warn(`'${expr.object.name}' is nullable (${typeToString(narrow.nullable.get(expr.object.name)!)}) and is accessed here without a null check`, where, line)
         );
       }
-      checkExpr(expr.object, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(expr.object, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     case 'Index':
       if (expr.object.kind === 'Identifier' && narrow.nullable.has(expr.object.name) && !narrow.narrowed.has(expr.object.name)) {
@@ -220,11 +267,11 @@ function checkExpr(
           warn(`'${expr.object.name}' is nullable (${typeToString(narrow.nullable.get(expr.object.name)!)}) and is accessed here without a null check`, where, line)
         );
       }
-      checkExpr(expr.object, scope, globalScope, narrow, where, line, diagnostics);
-      checkExpr(expr.index, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(expr.object, scope, globalScope, functions, narrow, where, line, diagnostics);
+      checkExpr(expr.index, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     case 'Postfix':
-      checkExpr(expr.operand, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(expr.operand, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
   }
 }
@@ -257,6 +304,7 @@ function checkStmts(
   stmts: AST.Stmt[],
   scope: Set<string>,
   globalScope: Map<string, SymbolInfo>,
+  functions: Map<string, AST.FunctionDecl>,
   narrow: NarrowState,
   derivedNames: Set<string>,
   where: string,
@@ -266,47 +314,47 @@ function checkStmts(
   for (const stmt of stmts) {
     switch (stmt.kind) {
       case 'VarDecl':
-        checkExpr(stmt.init, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.init, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         if (!typeIsResolvable(stmt.type, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(stmt.type)}' referenced by variable '${stmt.name}'`, where, stmt.line));
         }
         localScope.add(stmt.name);
         break;
       case 'Assignment':
-        checkExpr(stmt.value, localScope, globalScope, narrow, where, stmt.line, diagnostics);
-        checkExpr(stmt.target, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, where, stmt.line, diagnostics);
         break;
       case 'PostfixStmt':
-        checkExpr(stmt.target, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, where, stmt.line, diagnostics);
         break;
       case 'ExprStatement':
-        checkExpr(stmt.expr, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.expr, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         break;
       case 'If': {
-        checkExpr(stmt.test, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.test, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         const target = narrowingTarget(stmt.test, narrow.nullable);
         const consequentNarrow: NarrowState = {
           nullable: narrow.nullable,
           narrowed: target ? new Set(narrow.narrowed).add(target) : narrow.narrowed,
         };
-        checkStmts(stmt.consequent, localScope, globalScope, consequentNarrow, derivedNames, where, diagnostics);
-        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, narrow, derivedNames, where, diagnostics);
+        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics);
+        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics);
         break;
       }
       case 'For': {
-        checkExpr(stmt.iterable, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.iterable, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         if (!typeIsResolvable(stmt.itemType, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(stmt.itemType)}' referenced by for-loop item '${stmt.itemName}'`, where, stmt.line));
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        checkStmts(stmt.body, bodyScope, globalScope, narrow, derivedNames, where, diagnostics);
+        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics);
         break;
       }
       case 'Return':
-        if (stmt.value) checkExpr(stmt.value, localScope, globalScope, narrow, where, stmt.line, diagnostics);
+        if (stmt.value) checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         break;
     }
   }
@@ -316,6 +364,7 @@ function checkTemplateNode(
   node: AST.TemplateNode,
   scope: Set<string>,
   globalScope: Map<string, SymbolInfo>,
+  functions: Map<string, AST.FunctionDecl>,
   narrow: NarrowState,
   where: string,
   diagnostics: Diagnostic[]
@@ -346,35 +395,35 @@ function checkTemplateNode(
         }
       }
       for (const a of node.attributes) {
-        if (a.isExpr && a.exprValue) checkExpr(a.exprValue, scope, globalScope, narrow, where, line, diagnostics);
+        if (a.isExpr && a.exprValue) checkExpr(a.exprValue, scope, globalScope, functions, narrow, where, line, diagnostics);
       }
-      for (const c of node.children) checkTemplateNode(c, scope, globalScope, narrow, where, diagnostics);
+      for (const c of node.children) checkTemplateNode(c, scope, globalScope, functions, narrow, where, diagnostics);
       return;
     }
     case 'TemplateIf': {
-      checkExpr(node.test, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(node.test, scope, globalScope, functions, narrow, where, line, diagnostics);
       const target = narrowingTarget(node.test, narrow.nullable);
       const consequentNarrow: NarrowState = {
         nullable: narrow.nullable,
         narrowed: target ? new Set(narrow.narrowed).add(target) : narrow.narrowed,
       };
-      for (const c of node.consequent) checkTemplateNode(c, scope, globalScope, consequentNarrow, where, diagnostics);
-      if (node.alternate) for (const c of node.alternate) checkTemplateNode(c, scope, globalScope, narrow, where, diagnostics);
+      for (const c of node.consequent) checkTemplateNode(c, scope, globalScope, functions, consequentNarrow, where, diagnostics);
+      if (node.alternate) for (const c of node.alternate) checkTemplateNode(c, scope, globalScope, functions, narrow, where, diagnostics);
       return;
     }
     case 'TemplateFor': {
-      checkExpr(node.iterable, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(node.iterable, scope, globalScope, functions, narrow, where, line, diagnostics);
       if (!typeIsResolvable(node.itemType, globalScope)) {
         diagnostics.push(err(`Unknown type '${typeToString(node.itemType)}' referenced by template for-loop item '${node.itemName}'`, where, line));
       }
       const bodyScope = new Set(scope);
       bodyScope.add(node.itemName);
-      if (node.key) checkExpr(node.key, bodyScope, globalScope, narrow, where, line, diagnostics);
-      for (const c of node.body) checkTemplateNode(c, bodyScope, globalScope, narrow, where, diagnostics);
+      if (node.key) checkExpr(node.key, bodyScope, globalScope, functions, narrow, where, line, diagnostics);
+      for (const c of node.body) checkTemplateNode(c, bodyScope, globalScope, functions, narrow, where, diagnostics);
       return;
     }
     case 'TextInterpolation':
-      checkExpr(node.expr, scope, globalScope, narrow, where, line, diagnostics);
+      checkExpr(node.expr, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
     case 'TextLiteral':
       return;
@@ -426,6 +475,10 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
   if (viewCount === 0) diagnostics.push(err(`Component has no 'view' block`, where, decl.line));
   if (viewCount > 1) diagnostics.push(err(`Component has more than one 'view' block`, where, decl.line));
 
+  const functions = new Map(
+    decl.members.filter((m): m is AST.FunctionDecl => m.kind === 'FunctionDecl').map((m) => [m.name, m])
+  );
+
   const derivedNames = new Set(
     decl.members.filter((m): m is AST.DerivedDecl => m.kind === 'DerivedDecl').map((m) => m.name)
   );
@@ -437,7 +490,7 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
       case 'DerivedDecl':
       case 'ProvideDecl':
       case 'ConstDecl':
-        checkExpr(m.init, scope, globalScope, narrow, `${where}, '${m.name}'`, m.line, diagnostics);
+        checkExpr(m.init, scope, globalScope, functions, narrow, `${where}, '${m.name}'`, m.line, diagnostics);
         checkLiteralTypeMatch(m.type, m.init, `${where}, '${m.name}'`, m.line, diagnostics);
         break;
       case 'InjectDecl':
@@ -457,26 +510,26 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         if (m.returnType !== 'void' && !typeIsResolvable(m.returnType, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(m.returnType)}' referenced by return type of function '${m.name}'`, fnWhere, m.line));
         }
-        checkStmts(m.body, fnScope, globalScope, narrow, derivedNames, fnWhere, diagnostics);
+        checkStmts(m.body, fnScope, globalScope, functions, narrow, derivedNames, fnWhere, diagnostics);
         break;
       }
       case 'OnMountDecl':
-        checkStmts(m.body, scope, globalScope, narrow, derivedNames, `${where}, on_mount`, diagnostics);
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_mount`, diagnostics);
         break;
       case 'OnChangeDecl':
         for (const w of m.watched) {
           if (!scope.has(w)) diagnostics.push(err(`Undefined identifier '${w}' watched by on_change`, where, m.line));
         }
-        checkStmts(m.body, scope, globalScope, narrow, derivedNames, `${where}, on_change(${m.watched.join(', ')})`, diagnostics);
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_change(${m.watched.join(', ')})`, diagnostics);
         break;
       case 'ViewBlockDecl':
-        for (const node of m.nodes) checkTemplateNode(node, scope, globalScope, narrow, `${where}, view`, diagnostics);
+        for (const node of m.nodes) checkTemplateNode(node, scope, globalScope, functions, narrow, `${where}, view`, diagnostics);
         break;
       case 'StyleBlockDecl':
         for (const rule of m.rules) {
           for (const d of rule.declarations) {
             for (const part of d.parts) {
-              if (part.kind === 'expr') checkExpr(part.expr, scope, globalScope, narrow, `${where}, style`, m.line, diagnostics);
+              if (part.kind === 'expr') checkExpr(part.expr, scope, globalScope, functions, narrow, `${where}, style`, m.line, diagnostics);
             }
           }
         }
