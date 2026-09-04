@@ -14,11 +14,12 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: semantic checker now flags duplicate declarations — two top-level components/
-structs sharing a name in one file, duplicate struct fields, duplicate params in a single
-param list, and duplicate component members (params and state/derived/provide/const/inject/
-function names all share one component-level namespace) — see "Last Completed Work" below.
-Choose the next item from `TODO.md` before beginning new work.
+Just completed: a real `crescent` CLI (`crescent check [path]`, `crescent build [path] --out-dir
+<dir>`) backed by new reusable `checkProject()`/`buildProject()` APIs extracted from
+`src/index.ts` — see "Last Completed Work" below. This was the maintainer's explicit next step
+(CLI first, then VS Code support, then playground, then broader language features like enum/
+match). Choose the next item from `TODO.md` before beginning new work — the maintainer's stated
+plan is VS Code support next.
 
 ---
 
@@ -50,79 +51,127 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-Semantic checker: "Duplicate declaration diagnostics" (`TODO.md`, Semantic Checker → Scope/Names).
-Unlike the last two sessions (literal-shaped type matching), this is a pure name-collision check
-with no type inference involved, and closes a real latent bug: several places in the checker built
-a `Map`/`Set` from a list of declarations keyed by name (`globalScope`, a component's `scope`,
-`declaredFields`), which silently let a later duplicate overwrite an earlier one with zero
-diagnostic. Four collision sites are now checked:
+CLI (`TODO.md` §8 "End-to-End Compiler" CLI items, §10 CLI, and the "Near-Term VS Code
+Enablement" plan's first two bullets). Per the maintainer's stated order (CLI now, VS Code
+support / playground / project-testing later, language features like enum/match after that),
+this session built a real `crescent check` / `crescent build` command that works on **any**
+directory of `.crs` files, not just the hard-coded `examples/` directory `src/index.ts` used to
+run against.
 
-1. **Top-level declarations** — two `component`/`struct` decls sharing a name in the *same file*
-   (`checkFile`). Diagnostic: `Duplicate top-level declaration 'Name' in 'relPath'`.
-2. **Struct fields** — two fields sharing a name within one `struct` (`checkStructDecl`).
-   Diagnostic: `Duplicate field 'name' in struct 'StructName'`.
-3. **Component params + members, combined** — a component's `params` and its
-   `state`/`derived`/`provide`/`const`/`inject`/function members all end up bound in the same
-   `scope: Set<string>`, so a param named `count` and a `state<int> count` (or two functions named
-   the same, or a param shadowing a state, etc.) previously just silently collapsed to one binding.
-   Checked as a single combined list in `checkComponentDecl` (so cross-kind collisions, e.g. param
-   vs. state, are caught, not just same-kind ones). Diagnostic: `'name' is declared more than once
-   in component 'CompName'`.
-4. **Function params** — two params sharing a name within one function's own param list (a
-   `FunctionDecl` member, checked separately from #3 since a function's params are scoped to that
-   function only, not the component). Diagnostic: `Duplicate param 'name' in function 'fnName'`.
+1. **Extracted reusable project APIs** — new `compiler/src/project.ts`:
+   - `checkProject(root)`: loads every `.crs` file under `root`, resolves `use` imports, detects
+     import cycles, then runs `checkFile()` on every file. Returns `{ ok, fatal, files,
+     importsByFile, diagnosticsByFile }`. Unlike the old `index.ts`, a `LexError`/`ParseError`
+     thrown by `loadAllPrograms()` (previously an uncaught crash) is now caught and reported as
+     `fatal: { stage: 'parse', message }`, matching how `ModuleError` (import cycle / missing
+     module) was already turned into `fatal: { stage: 'module', message }`. This does not change
+     any language semantics — it only means a syntax error in an arbitrary user project produces
+     a clean CLI error instead of a raw stack trace, which matters once the CLI runs on projects
+     the AI/compiler didn't author.
+   - `buildProject(root, outDir)`: runs `checkProject()`, then for every file with zero semantic
+     errors, generates JS into `<outDir>/gen/<relPath>.js` (mirroring the source tree, same as
+     before) and copies the compiler's own compiled `runtime.js` to `<outDir>/runtime.js` (skipped
+     if source and destination are already the same file — this matters for `src/index.ts`'s own
+     use, see below). This makes a build's `<outDir>` fully self-contained: previously the
+     generated `require('../runtime')` path only resolved correctly because `examples/` builds
+     always happened to land in `dist/gen` next to a `dist/runtime.js` that `tsc` produced as a
+     side effect of compiling the compiler itself; an arbitrary external `--out-dir` has no such
+     side effect, so the runtime now travels with the build output.
+   - Per-file build results (`FileBuildResult`) distinguish `outFile` (success), `skippedReason`
+     (semantic errors, or an expected `CodegenError` — unsupported feature), and
+     `unexpectedError` (anything else, e.g. a compiler bug) — preserving the existing three-way
+     distinction between semantic errors / unsupported codegen / a genuine crash that `AGENTS.md`
+     §10 requires, now expressed as data instead of only as console output.
 
-### What changed
+2. **`src/index.ts` rewritten on top of `project.ts`** — same console output format and same
+   `dist/gen` output location as before (verified byte-for-byte via `npm test`'s generated-output
+   assertions), just calling `buildProject(examplesDir, distDir)` instead of duplicating the
+   load/resolve/cycle-detect/codegen loop inline. `distDir` here is `dist` itself (not `dist/gen`)
+   since `buildProject` now owns the `gen/` subfolder naming; `runtime.js` copy is skipped in this
+   path because `dist/runtime.js` is already produced directly by `tsc` compiling
+   `src/runtime.ts`, so source and destination resolve to the same file.
 
-`checker.ts`:
+3. **New `src/cli.ts`** — the actual `crescent` command:
+   - `crescent check [path]` — prints one line per diagnostic as
+     `relPath:line [severity] where: message` (line omitted if `<= 0`), then a summary line, exit
+     code 1 if any error (including a fatal parse/module error).
+   - `crescent build [path] --out-dir <dir>` — same check output, then one line per file:
+     `Codegen OK — wrote <path>`, `<relPath>: codegen skipped: <reason>`, or
+     `FAILED: <relPath>: <message>` for an unexpected error. `--out-dir` is required; missing it
+     is a usage error (exit 1) rather than silently defaulting somewhere.
+   - No args / unknown command prints usage (exit 0 for no args, 1 for an unrecognized command).
+   - `path` defaults to `.` (current directory) when omitted.
+   - Has a `#!/usr/bin/env node` shebang; verified `tsc` preserves shebang lines in its output
+     (compiled `dist/cli.js` starts with the shebang, confirmed by hand).
 
-- Added a small generic helper, `checkDuplicateNames<T>(items, getName, getLine, message, where,
-  diagnostics)`, used at all four call sites above rather than writing the same "seen-set" loop
-  four times.
-- `checkFile`: builds `topLevelDecls` from `file.program.declarations` and runs the duplicate check
-  on it *before* populating `globalScope`, so a duplicate declaration is reported once and the
-  (necessarily somewhat arbitrary) "last one wins" `globalScope.set()` behavior for subsequent
-  checking of the rest of the file is unchanged.
-- `checkStructDecl`: runs the duplicate check on `decl.fields` before the existing per-field
-  existence check.
-- `checkComponentDecl`: builds a combined `namedItems` list (`decl.params` + the filtered
-  name-bearing `decl.members`) and runs the duplicate check on it, before the existing view-count
-  checks and the `functions`/`derivedNames` map construction.
-- The `FunctionDecl` case (inside `checkComponentDecl`'s member loop): runs the duplicate check on
-  `m.params` before the existing per-param existence check.
+4. **`package.json`**: added `"bin": { "crescent": "dist/cli.js" }` (so `npm link` exposes a real
+   `crescent` command once built) and a `"cli": "ts-node src/cli.ts"` script for running the CLI
+   directly against source during development, without a prior `tsc` build.
 
-Note: only the *first* occurrence of a repeated name is silently accepted as "seen"; every later
-occurrence gets its own diagnostic (so three declarations sharing a name produce two diagnostics,
-not one) — this matches the natural reading of "each additional occurrence is itself a duplicate."
+5. **`compiler/README.md`**: added a "CLI" section under "Running" documenting both commands, the
+   `<out-dir>/gen/` + `<out-dir>/runtime.js` output layout, and the `bin`/`npm run cli` entries.
+   Also fixed two pre-existing doc/implementation mismatches while in the file (per the maintainer's
+   follow-up request to clean up docs alongside this patch — verified against actual behavior, not
+   guessed):
+   - "Running" said `npm start` "prints their ASTs as JSON" — it does not and never has in this
+     session's testing; it prints `Parsed OK — N top-level declaration(s)` plus semantic-check
+     results. Corrected to describe what actually happens.
+   - The "Semantic Checker" section's "What it checks" bullet list predated two later sessions'
+     work and didn't mention **duplicate-declaration diagnostics** (`checkDuplicateNames()`) or
+     **function-call-argument checking** (`checkCallArgs()`), even though both exist in
+     `checker.ts` and are checked off `[x]` in `TODO.md`. Added bullets for both. This is exactly
+     the "Documentation consistency" issue flagged under "Known Problems" below, scoped to what I
+     could verify by reading `checker.ts` directly rather than guessing.
+   Did not touch the compiler README's title ("Lexer/Parser/Codegen Scaffold (v0.1)") — terse but
+   not factually wrong — nor `docs/Crescent_Design.md`/`docs/Crescent_Grammar.md`: checked their
+   section numbering against every `§N.N` cross-reference in `compiler/README.md` (all resolve
+   correctly) and scanned both for duplicated-word typos/placeholder markers (`TODO`, `TBD`,
+   `XXX`, `not implemented`) — found none. No changes needed there.
 
-Added five new fixtures under `compiler/scripts/fixtures/checker/`:
+6. **`TODO.md`**: checked off the CLI-related boxes this closes (§8 "Improve CLI" through "Add
+   clear exit codes"; §10 "Friendly `crescent` command", "`crescent check`", "`crescent build`";
+   the VS Code-enablement plan's "Extract reusable project APIs" and "Make `crescent check
+   <path>`/`crescent build ...` work on arbitrary projects" bullets — marked the "machine-readable
+   diagnostics" bullet `[~]` since file+line+severity+message exist but column and stable error
+   codes do not yet).
 
-- `duplicate-top-level.crs` — negative, two `component Greeting { ... }` decls in one file.
-- `duplicate-struct-field.crs` — negative, a struct with two fields both named `name`.
-- `duplicate-component-member.crs` — negative, a `state<int> count` and a `void count()` in the
-  same component (cross-kind collision, confirming the combined check).
-- `duplicate-function-param.crs` — negative, `int add(int a, int a)`.
-- `no-duplicates-ok.crs` — positive, a struct and a component with entirely distinct names
-  everywhere (top-level, fields, params, members) — zero diagnostics.
+### Manual verification (beyond the automated suite)
 
-Added matching cases/assertions to `compiler/scripts/test-checker.js`.
+Built a throwaway project under `/tmp` (not committed, already deleted) and ran the compiled
+`dist/cli.js` by hand to confirm real-world behavior beyond what `npm test` exercises (which only
+runs the `examples/`-driven `index.ts`, not `cli.ts`, directly):
 
-Did not touch `docs/Crescent_Design.md` or `docs/Crescent_Grammar.md`: no syntax or semantics
-changed — Crescent's grammar already disallows nothing about repeating a name (the parser
-correctly accepts all of the negative fixtures above as syntactically valid programs); this only
-adds a diagnostic for something that was previously silently accepted and silently wrong.
+- `crescent check <dir>` on a single valid file → `OK — 1 file(s) checked, no problems found.`,
+  exit 0.
+- `crescent build <dir> --out-dir <outdir>` on the same → same OK line, then
+  `Codegen OK — wrote <outdir>/gen/main.js`, and `<outdir>/runtime.js` + `<outdir>/gen/main.js`
+  both present on disk, exit 0.
+- `crescent check <dir>` on a file with a real semantic error (`state<int> count = "not a
+  number";`) → `main.crs:2 [error] component 'Broken', 'count': Type mismatch: ...`, exit 1.
+- `crescent check <dir>` on a file with a genuine parse error (unterminated `view {` block) →
+  `error: Expected token SEMI but got VIEW ('view') at line 3`, exit 1 (previously this would have
+  been an uncaught `ParseError` crashing the process with a raw stack trace).
+- `crescent build <dir>` with no `--out-dir` → `error: crescent build requires --out-dir <dir>`,
+  exit 1.
+- `crescent` with no arguments → usage text, exit 0.
+
+No automated test currently exercises `cli.ts` itself (it's a thin argv-parsing/printing wrapper
+around `project.ts`, which the existing test suite exercises indirectly through
+`src/index.ts`/`npm test`). Adding a small script-based smoke test for `cli.ts` directly (e.g.
+under `compiler/scripts/`, following the existing `test-*.js` convention) would be a reasonable
+follow-up — see "Recommended Next Step".
 
 ### Files changed
 
-- `compiler/src/checker.ts`
-- `compiler/scripts/test-checker.js`
-- `compiler/scripts/fixtures/checker/duplicate-top-level.crs` (new)
-- `compiler/scripts/fixtures/checker/duplicate-struct-field.crs` (new)
-- `compiler/scripts/fixtures/checker/duplicate-component-member.crs` (new)
-- `compiler/scripts/fixtures/checker/duplicate-function-param.crs` (new)
-- `compiler/scripts/fixtures/checker/no-duplicates-ok.crs` (new)
-- `TODO.md` (checked off "Duplicate declaration diagnostics")
-- `HANDOFF.md`
+- `compiler/src/project.ts` (new) — `checkProject()`, `buildProject()`.
+- `compiler/src/cli.ts` (new) — the `crescent` command.
+- `compiler/src/index.ts` (rewritten to use `project.ts`; same observable behavior/output).
+- `compiler/package.json` (`bin` field, `cli` script).
+- `compiler/package-lock.json` (regenerated by `npm install` after the `bin` field was added; the
+  only diff is that field being mirrored into the lockfile's root-package entry).
+- `compiler/README.md` (new "CLI" section).
+- `TODO.md` (checked off the CLI items listed above).
+- `HANDOFF.md`.
 
 ---
 
@@ -136,9 +185,13 @@ npx tsc --noEmit
 
 npm test
 -> 145 PASS, 0 FAIL, exit code 0
-(build, npm start over examples/, test-checker.js with the five new fixtures above plus all
-prior checker cases, all other script tests, build-web, and test-web.js)
+(build, npm start over examples/ via the rewritten index.ts/project.ts, test-checker.js and all
+prior fixtures, all other script tests, build-web, and test-web.js — identical pass count and
+generated-output locations to before this session, confirming index.ts's behavior is unchanged)
 ```
+
+Additionally, `dist/cli.js` was exercised by hand against throwaway `/tmp` projects — see "Manual
+verification" above. This is not part of `npm test`.
 
 ---
 
@@ -168,9 +221,10 @@ Keep only currently relevant problems here.
 
 ### Documentation consistency
 
-The compiler README's introductory text may describe the project as having no semantic/type checker even though `compiler/src/checker.ts` exists and is documented later in the same README.
-
-Do not blindly "fix" this without checking the current implementation and intended wording.
+Resolved this session: `compiler/README.md`'s "Running" section and "Semantic Checker" → "What it
+checks" list were out of sync with the implementation (see "Last Completed Work" above for the
+specific fixes). Re-check this periodically as the checker grows — it's easy for a new check to
+land in `checker.ts` without a matching README bullet.
 
 ### Other
 
@@ -208,52 +262,102 @@ Do not blindly "fix" this without checking the current implementation and intend
 
 ## Unfinished Work
 
-_No active unfinished implementation. The duplicate-declaration-diagnostics task above is complete
-and tested._
+_No active unfinished implementation. The CLI task above (`checkProject`/`buildProject` +
+`crescent check`/`crescent build`) is complete and tested. `crescent run`/development mode and a
+config file (`TODO.md` §10 CLI) remain unstarted — deliberately out of scope for this session per
+the maintainer's stated plan (CLI → VS Code support → playground → project testing → language
+features), which was scoped as "the CLI" rather than every CLI subcommand ever planned._
 
 ---
 
 ## Recommended Next Step
 
 1. Read `TODO.md`.
-2. The maintainer wants an early, usable VS Code feedback loop rather than waiting for a complete
-   language implementation. A detailed staged plan is recorded in `TODO.md` under
-   "Near-Term VS Code Enablement (v0.x)".
-3. A reasonable first implementation unit there is to extract reusable `checkProject()` and
-   `buildProject()` APIs from `compiler/src/index.ts`, then expose them through path-based
-   `crescent check` / `crescent build` commands. This unlocks both editor diagnostics and preview
-   without coupling the initial VS Code extension to the current `examples/` demo entry point.
-4. Alternatively, continue strengthening the semantic checker per `TODO.md`'s "Current Priority
-   Order" (§16):
+2. **The maintainer's explicit stated order is: CLI (done this session) → VS Code support →
+   playground → then real project testing → then broader language features (enum, match, etc).**
+   The natural next unit is VS Code support, per `TODO.md`'s "Near-Term VS Code Enablement (v0.x)":
+   - The reusable `checkProject()`/`buildProject()` APIs and the `crescent check`/`crescent build`
+     commands this session added are the foundation that section's remaining bullets build on.
+   - Next bullets there: a minimal VS Code extension (`.crs` file association, TextMate syntax
+     highlighting, comment/bracket/indent configuration, `Crescent: Check` / `Crescent: Build`
+     commands), publishing parser/module/semantic/codegen diagnostics on save (and later on
+     document changes), and a `Crescent: Preview` command that builds and opens/reloads the
+     browser output (likely reusing `build:web`-style bundling, but pointed at a real project's
+     build output rather than `examples/`).
+   - `crescent check`/`crescent build` are currently process-based (spawn `dist/cli.js`, parse its
+     stdout/exit code); the plan explicitly defers replacing that with a real LSP server until the
+     extension and diagnostic model have stabilized — don't jump straight to an LSP.
+3. A worthwhile small addition first: a script-based smoke test for `cli.ts` itself (see "Manual
+   verification" above — currently only verified by hand). Following the existing
+   `compiler/scripts/test-*.js` convention, spawn `node dist/cli.js check/build <fixture-dir>
+   --out-dir <tmp>` via `child_process` and assert on stdout/exit code for a valid project, a
+   semantic-error project, and a parse-error project. This would need to be wired into the `test`
+   script in `package.json` and should probably use a temp directory (e.g. under `os.tmpdir()`)
+   rather than adding new fixtures under version control, since it's exercising the CLI's
+   filesystem I/O, not checker behavior.
+4. If VS Code work is deferred, the semantic checker (`TODO.md` §16 "Current Priority Order") is
+   the other standing priority:
    - **"Undefined-name diagnostics"** (Scope/Names) is worth checking against the current
      implementation before assuming it's unstarted — `checkExpr`'s `Identifier` case already
      reports `Undefined identifier 'name'` for unresolved identifiers in expressions, and
      `OnChangeDecl` separately checks its watched names. It's plausible this TODO item is already
-     substantially done and mostly needs verification/regression tests rather than new code; don't
-     assume it's a blank slate.
+     substantially done and mostly needs verification/regression tests rather than new code.
    - Extending duplicate-declaration checking to local `VarDecl`s within a single block (see "Known
-     Problems" above) would be a small, coherent follow-on to this session.
+     Problems" below) would be a small, coherent follow-on.
    - The remaining Types-section items (assignment compatibility, array elements, function-type
-     compatibility) all fundamentally need a real expression type-inference helper, not just more
-     literal-only special cases — consider scoping that inference helper as its own small unit
-     before building more callers on top of it.
-5. Other candidates: "Function return-type checking" (verify a `return <expr>`'s literal-shaped
-   type against the function's declared, non-`void` return type), or the Reactivity subsection
-   (e.g. "Reactive collection mutation validation").
-6. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
+     compatibility) all fundamentally need a real expression type-inference helper — consider
+     scoping that inference helper as its own small unit before building more callers on top of it.
+5. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
    from semantic diagnostics, and incomplete checking must not be presented as full type safety.
-7. Read the relevant design/grammar sections.
-8. Inspect the existing implementation.
-9. Implement the task.
-10. Run tests.
-11. Update this file.
-12. Commit the completed unit if appropriate.
+6. Read the relevant design/grammar sections.
+7. Inspect the existing implementation.
+8. Implement the task.
+9. Run tests.
+10. Update this file.
+11. Commit the completed unit if appropriate.
 
 ---
 
 ## Session Log
 
 ### Latest session
+
+**AI:** Claude
+
+**Task:** Build the `crescent` CLI (`TODO.md` §8/§10, "Near-Term VS Code Enablement" plan's first
+two bullets) — the maintainer's explicit next step before VS Code support, a playground, and
+broader language features (enum, match, etc).
+
+**Result:** Done. Extracted `checkProject(root)` / `buildProject(root, outDir)` into new
+`src/project.ts` from the logic previously inlined in `src/index.ts`. Added `src/cli.ts`
+implementing `crescent check [path]` and `crescent build [path] --out-dir <dir>`, with per-file
+`file:line [severity] where: message` diagnostics, clear exit codes (0 clean, 1 on any error or
+usage mistake), and a self-contained build output (`<out-dir>/gen/*.js` + `<out-dir>/runtime.js`).
+Rewrote `src/index.ts` to call `buildProject()` instead of duplicating the load/check/codegen
+loop; verified identical console output and `dist/gen` file locations via `npm test`. Added a
+`bin` entry and `cli` npm script to `package.json`, and a "CLI" section to `compiler/README.md`.
+Manually exercised the compiled `dist/cli.js` against throwaway `/tmp` projects covering the
+clean/semantic-error/parse-error/missing-flag/no-args cases (see "Manual verification" above) —
+no automated test yet exercises `cli.ts` directly, only `index.ts`/`project.ts` via `npm test`.
+
+**Commit:** Not committed — working tree contains the diff described above (new
+`compiler/src/project.ts`, `compiler/src/cli.ts`; modified `compiler/src/index.ts`,
+`compiler/package.json`, `compiler/package-lock.json` (bin field sync only), `compiler/README.md`,
+`TODO.md`, `HANDOFF.md`).
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (145 PASS, 0 FAIL, exit 0 — same count as
+before this session). `dist/cli.js` manually exercised against `/tmp` fixtures (not part of
+`npm test`; see "Manual verification" and "Recommended Next Step" #3 for adding this as a real
+script-based test).
+
+**Next:** VS Code support is the maintainer's explicitly stated next phase — see "Recommended
+Next Step" above for the specific `TODO.md` bullets that build on this session's APIs/commands. A
+`cli.ts` smoke test (script-based, following the `compiler/scripts/test-*.js` convention) would
+also be a good small unit if VS Code work isn't picked up immediately.
+
+---
+
+### Previous session
 
 **AI:** Claude
 
@@ -277,7 +381,7 @@ in this session's own work.
 
 ---
 
-### Previous session
+### Older session
 
 **AI:** Claude
 

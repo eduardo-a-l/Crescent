@@ -1,37 +1,9 @@
-import * as fs from 'fs';
 import * as path from 'path';
-import { CodegenError, generateProgram, ImportBinding } from './codegen';
-import { checkFile, Diagnostic } from './checker';
-import {
-  detectCycles,
-  FileImports,
-  jsRequirePath,
-  loadAllPrograms,
-  ModuleError,
-  resolveFileImports,
-  runtimeRequirePathFor,
-} from './modules';
+import { Diagnostic } from './checker';
+import { buildProject } from './project';
 
 const examplesDir = path.join(__dirname, '..', 'examples');
-const outDir = path.join(__dirname, '..', 'dist', 'gen');
-fs.mkdirSync(outDir, { recursive: true });
-
-const files = loadAllPrograms(examplesDir);
-
-const importsByFile = new Map<string, FileImports[]>();
-let cycleError: Error | null = null;
-try {
-  for (const [relPath, file] of files) {
-    importsByFile.set(relPath, resolveFileImports(file, files));
-  }
-  detectCycles(files, importsByFile);
-} catch (e) {
-  if (e instanceof ModuleError) {
-    cycleError = e;
-  } else {
-    throw e;
-  }
-}
+const distDir = path.join(__dirname, '..', 'dist');
 
 function printDiagnostics(diagnostics: Diagnostic[]): void {
   for (const d of diagnostics) {
@@ -41,16 +13,17 @@ function printDiagnostics(diagnostics: Diagnostic[]): void {
   }
 }
 
-if (cycleError) {
-  console.error(`\nFAILED: ${cycleError.message}`);
+const result = buildProject(examplesDir, distDir);
+
+if (result.check.fatal) {
+  console.error(`\nFAILED: ${result.check.fatal.message}`);
   process.exitCode = 1;
 } else {
-  for (const [relPath, file] of files) {
+  for (const [relPath, file] of result.check.files) {
     console.log(`\n=== ${relPath} ===`);
     console.log(`Parsed OK — ${file.program.declarations.length} top-level declaration(s)`);
 
-    const fileImports = importsByFile.get(relPath) ?? [];
-    const diagnostics = checkFile(file, files, fileImports);
+    const diagnostics = result.check.diagnosticsByFile.get(relPath) ?? [];
     const errors = diagnostics.filter((d) => d.severity === 'error');
     const warnings = diagnostics.filter((d) => d.severity === 'warning');
 
@@ -66,35 +39,14 @@ if (cycleError) {
       continue;
     }
 
-    try {
-      const bindingsByTarget = new Map<string, ImportBinding>();
-      for (const imp of fileImports) {
-        const componentNames = imp.names.filter((n) => n.kind === 'component');
-        if (componentNames.length === 0) continue;
-        const requirePath = jsRequirePath(relPath, imp.targetRelPath);
-        const existing = bindingsByTarget.get(requirePath);
-        if (existing) {
-          existing.names.push(...componentNames.map((n) => ({ local: n.local, imported: n.imported })));
-        } else {
-          bindingsByTarget.set(requirePath, {
-            requirePath,
-            names: componentNames.map((n) => ({ local: n.local, imported: n.imported })),
-          });
-        }
-      }
-
-      const js = generateProgram(file.program, runtimeRequirePathFor(relPath), Array.from(bindingsByTarget.values()));
-      const outFile = path.join(outDir, relPath.replace(/\.crs$/, '.js'));
-      fs.mkdirSync(path.dirname(outFile), { recursive: true });
-      fs.writeFileSync(outFile, js, 'utf-8');
-      console.log(`Codegen OK — wrote ${path.relative(process.cwd(), outFile)}`);
-    } catch (e) {
-      if (e instanceof CodegenError) {
-        console.log(`Codegen skipped: ${e.message}`);
-      } else {
-        console.error(`FAILED: ${(e as Error).message}`);
-        process.exitCode = 1;
-      }
+    const build = result.builds.find((b) => b.relPath === relPath);
+    if (build?.outFile) {
+      console.log(`Codegen OK — wrote ${path.relative(process.cwd(), build.outFile)}`);
+    } else if (build?.unexpectedError) {
+      console.error(`FAILED: ${build.unexpectedError}`);
+      process.exitCode = 1;
+    } else if (build?.skippedReason) {
+      console.log(`Codegen skipped: ${build.skippedReason}`);
     }
   }
 }

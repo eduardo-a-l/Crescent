@@ -40,9 +40,10 @@ npm install
 npm start
 ```
 
-This parses all files in `examples/`, prints their ASTs as JSON, and writes generated JS for any
-component whose members are fully supported by codegen (see below). Files using unsupported
-features print a clear "Codegen skipped: ..." message rather than emitting incorrect output.
+This parses every file in `examples/`, runs the semantic checker on each one and prints its
+diagnostics (if any), and writes generated JS to `dist/gen/` for any component whose members are
+fully supported by codegen (see below). Files using unsupported features print a clear "Codegen
+skipped: ..." message rather than emitting incorrect output.
 
 To type-check without running:
 
@@ -65,6 +66,32 @@ npm run build:web
 
 Then open `web/index.html` directly in a browser (no server required — the bundle is fully
 self-contained). `npm test` also runs this bundling step and a `jsdom`-based check that it works.
+
+## CLI
+
+Once built (`npm run build`), a `crescent` CLI is available at `dist/cli.js` for checking and
+building arbitrary Crescent projects (not just `examples/`):
+
+```
+node dist/cli.js check [path]
+node dist/cli.js build [path] --out-dir <dir>
+```
+
+`[path]` defaults to the current directory. `crescent check` parses, resolves modules, and runs
+the semantic checker over every `.crs` file under `path`, printing one line per diagnostic
+(`file:line [severity] where: message`) and exiting non-zero if any error was found.
+`crescent build` does the same and, for every file with no semantic errors, writes generated
+JavaScript to `<out-dir>/gen/`, alongside a copy of the runtime at `<out-dir>/runtime.js` so the
+output directory is self-contained.
+
+`npm run cli -- check <path>` runs the same commands directly against `src/cli.ts` via `ts-node`,
+without a prior build.
+
+`crescent check`/`crescent build` are process-based today; a `package.json` `bin` entry
+(`crescent`) points at `dist/cli.js` so `npm link` exposes a real `crescent` command once built.
+This is the first step of the CLI/editor-tooling plan in `TODO.md` (§10) — see there for the VS
+Code extension and LSP work this unlocks. The underlying `checkProject()`/`buildProject()` APIs
+live in `compiler/src/project.ts` and are also used by the `examples/`-driven `npm start` runner.
 
 ## Codegen
 
@@ -232,6 +259,13 @@ What it checks:
   `Math`, `Date`, `JSON`, `Promise`, timers, `window`, `document`, storage) — the design doc's own
   `async`/`await` example (§13.4) uses `fetch(...)`, so that had to be recognized rather than
   flagged.
+- **Duplicate declarations** — two top-level `component`/`struct` decls sharing a name in one
+  file, two fields sharing a name within one `struct`, two params sharing a name within one
+  function's param list, and a component's params/`state`/`derived`/`provide`/`const`/`inject`/
+  function names colliding with each other (they all share one component-level namespace, so a
+  param shadowing a `state` of the same name is also a collision, not just same-kind repeats).
+- **Function call arguments** — a call to a function declared in the same component is checked for
+  argument count, plus (for literal-shaped arguments) type, against the callee's declared params.
 - **Struct literals** — every field the struct declares must be provided, and every field provided
   must be declared (missing/unknown field errors), plus a literal-shaped field value's type is
   checked against the field's declared type.

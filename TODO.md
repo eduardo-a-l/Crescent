@@ -291,12 +291,12 @@
 - [x] Skip codegen for files with semantic errors
 - [x] Generate JavaScript
 - [x] Mirror source tree in generated output
-- [ ] Improve CLI
-- [ ] Add compiler arguments
-- [ ] Add explicit input/output paths
-- [ ] Add build mode
-- [ ] Add check-only mode
-- [ ] Add clear exit codes
+- [x] Improve CLI
+- [x] Add compiler arguments
+- [x] Add explicit input/output paths
+- [x] Add build mode
+- [x] Add check-only mode
+- [x] Add clear exit codes
 - [ ] Add production/development modes
 
 ---
@@ -348,11 +348,11 @@ Every important compiler bug should ideally become a regression test.
 
 ## CLI
 
-- [ ] Friendly `crescent` command
-- [ ] `crescent check`
-- [ ] `crescent build`
+- [x] Friendly `crescent` command
+- [x] `crescent check`
+- [x] `crescent build`
 - [ ] `crescent run` / development mode
-- [ ] Clear compiler diagnostics
+- [~] Clear compiler diagnostics
 - [ ] Config file
 
 ## Near-Term VS Code Enablement (v0.x)
@@ -361,12 +361,15 @@ Every important compiler bug should ideally become a regression test.
 > semantic checker and full LSP are complete. Early tooling must report the compiler's current
 > behavior faithfully; it must not invent type-system guarantees that the compiler does not have.
 
-- [ ] Extract reusable project APIs from `src/index.ts`:
-  `checkProject(root, inMemoryFiles?)` and `buildProject(root, outDir)`.
-- [ ] Make `crescent check <path>` and `crescent build <path> --out-dir <path>` work on arbitrary
+- [x] Extract reusable project APIs from `src/index.ts`:
+  `checkProject(root)` and `buildProject(root, outDir)` (see `src/project.ts`). `inMemoryFiles?`
+  was not added — `loadAllPrograms()` is disk-based only; an in-memory-files variant is still
+  open if a future LSP needs to check unsaved editor buffers.
+- [x] Make `crescent check <path>` and `crescent build <path> --out-dir <path>` work on arbitrary
   projects rather than the hard-coded `examples/` directory.
-- [ ] Define machine-readable diagnostics with file, line, column (line-only temporarily if
-  necessary), severity, message, and a stable error code when available.
+- [~] Define machine-readable diagnostics with file, line, column (line-only temporarily if
+  necessary), severity, message, and a stable error code when available. Diagnostics now carry
+  file + line (no column yet) + severity + message; no stable error codes yet.
 - [ ] Create a minimal VS Code extension: `.crs` file association, TextMate syntax highlighting,
   comment/bracket/indent configuration, and `Crescent: Check` / `Crescent: Build` commands.
 - [ ] Publish parser, module, semantic, and codegen diagnostics in VS Code on save, then on document
