@@ -134,7 +134,7 @@
 
 - [x] Basic scope resolution
 - [ ] Comprehensive symbol resolution
-- [ ] Duplicate declaration diagnostics
+- [x] Duplicate declaration diagnostics
 - [ ] Undefined-name diagnostics
 - [ ] Cross-module symbol resolution
 

@@ -1,0 +1,11 @@
+component Greeting {
+    view {
+        <p>"Hello"</p>
+    }
+}
+
+component Greeting {
+    view {
+        <p>"Hello again"</p>
+    }
+}

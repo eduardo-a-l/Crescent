@@ -14,9 +14,10 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: semantic checker now validates component prop *types* (not just prop names) for
-literal-shaped values — both `attr="string"` attributes and `attr={literal}` expr attributes are
-compared against the target component's declared param types (see "Last Completed Work" below).
+Just completed: semantic checker now flags duplicate declarations — two top-level components/
+structs sharing a name in one file, duplicate struct fields, duplicate params in a single
+param list, and duplicate component members (params and state/derived/provide/const/inject/
+function names all share one component-level namespace) — see "Last Completed Work" below.
 Choose the next item from `TODO.md` before beginning new work.
 
 ---
@@ -49,63 +50,78 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-Semantic checker: "Component prop type checking" (`TODO.md`, Semantic Checker → Types). The
-existing `<Tag prop={...}>`/`<Tag prop="...">` check in `checkTemplateNode`'s `Element` case
-already validated prop *names* (`Missing prop '...'` / `Unknown prop '...'` diagnostics); it now
-also validates prop *types* for literal-shaped values, the same class of check this and the prior
-session added for struct-literal fields and function-call arguments.
+Semantic checker: "Duplicate declaration diagnostics" (`TODO.md`, Semantic Checker → Scope/Names).
+Unlike the last two sessions (literal-shaped type matching), this is a pure name-collision check
+with no type inference involved, and closes a real latent bug: several places in the checker built
+a `Map`/`Set` from a list of declarations keyed by name (`globalScope`, a component's `scope`,
+`declaredFields`), which silently let a later duplicate overwrite an earlier one with zero
+diagnostic. Four collision sites are now checked:
 
-Two attribute shapes are handled:
-
-1. **Plain string attributes** (`name="World"`, parsed as `{ isExpr: false, stringValue }`) — these
-   are always a `string` value; checked directly against the declared param type (e.g. `int value`
-   receiving `value="5"` is now flagged).
-2. **Expr attributes** (`name={expr}`, parsed as `{ isExpr: true, exprValue }`) — `null` is checked
-   against nullability, and literal-shaped exprs (`IntLiteral`, `StringLiteral`, etc., via the
-   existing `inferLiteralType`) are compared against the declared type. A non-literal expr (an
-   identifier, a call, a member access — e.g. the very common `<UserCard user={user}/>` pattern) is
-   not type-checked, matching the checker's pre-existing "literal-shaped only" limitation.
+1. **Top-level declarations** — two `component`/`struct` decls sharing a name in the *same file*
+   (`checkFile`). Diagnostic: `Duplicate top-level declaration 'Name' in 'relPath'`.
+2. **Struct fields** — two fields sharing a name within one `struct` (`checkStructDecl`).
+   Diagnostic: `Duplicate field 'name' in struct 'StructName'`.
+3. **Component params + members, combined** — a component's `params` and its
+   `state`/`derived`/`provide`/`const`/`inject`/function members all end up bound in the same
+   `scope: Set<string>`, so a param named `count` and a `state<int> count` (or two functions named
+   the same, or a param shadowing a state, etc.) previously just silently collapsed to one binding.
+   Checked as a single combined list in `checkComponentDecl` (so cross-kind collisions, e.g. param
+   vs. state, are caught, not just same-kind ones). Diagnostic: `'name' is declared more than once
+   in component 'CompName'`.
+4. **Function params** — two params sharing a name within one function's own param list (a
+   `FunctionDecl` member, checked separately from #3 since a function's params are scoped to that
+   function only, not the component). Diagnostic: `Duplicate param 'name' in function 'fnName'`.
 
 ### What changed
 
 `checker.ts`:
 
-- Added `checkAttributeTypeMatch(declared, attr, where, line, diagnostics)`, mirroring
-  `checkCallArgs`'s per-argument logic but adapted for `AST.Attribute`'s two shapes (plain-string
-  vs expr).
-- In `checkTemplateNode`'s `Element` case, `declaredParams` changed from a `Set<string>` (name
-  existence only) to a `Map<string, AST.CrescentType>` (name → declared type), and the "Unknown
-  prop" loop now calls `checkAttributeTypeMatch` for every attribute whose name *does* match a
-  declared param (the `on*` event-handler skip for unknown-name attributes is unchanged).
+- Added a small generic helper, `checkDuplicateNames<T>(items, getName, getLine, message, where,
+  diagnostics)`, used at all four call sites above rather than writing the same "seen-set" loop
+  four times.
+- `checkFile`: builds `topLevelDecls` from `file.program.declarations` and runs the duplicate check
+  on it *before* populating `globalScope`, so a duplicate declaration is reported once and the
+  (necessarily somewhat arbitrary) "last one wins" `globalScope.set()` behavior for subsequent
+  checking of the rest of the file is unchanged.
+- `checkStructDecl`: runs the duplicate check on `decl.fields` before the existing per-field
+  existence check.
+- `checkComponentDecl`: builds a combined `namedItems` list (`decl.params` + the filtered
+  name-bearing `decl.members`) and runs the duplicate check on it, before the existing view-count
+  checks and the `functions`/`derivedNames` map construction.
+- The `FunctionDecl` case (inside `checkComponentDecl`'s member loop): runs the duplicate check on
+  `m.params` before the existing per-param existence check.
 
-Added three new fixtures under `compiler/scripts/fixtures/checker/`:
+Note: only the *first* occurrence of a repeated name is silently accepted as "seen"; every later
+occurrence gets its own diagnostic (so three declarations sharing a name produce two diagnostics,
+not one) — this matches the natural reading of "each additional occurrence is itself a duplicate."
 
-- `wrong-prop-type.crs` — negative, an expr-attribute literal mismatch (`name={42}` where
-  `Greeting` declares `string name`).
-- `wrong-prop-type-string-attr.crs` — negative, a plain string attribute against a non-string
-  param (`value="5"` where `Age` declares `int value`).
-- `correct-prop-type-ok.crs` — positive, both a non-literal expr prop (`name={username}`, a
-  `state<string>`, skipped as non-literal) and a correctly-typed string-literal prop
-  (`name="Bob"`) produce zero diagnostics — regression coverage for the very common "pass a
-  variable as a prop" pattern already used throughout `examples/` (e.g.
-  `structs_and_generics.crs`'s `<UserCard user={user}/>`), confirming it's still not (incorrectly)
-  flagged.
+Added five new fixtures under `compiler/scripts/fixtures/checker/`:
+
+- `duplicate-top-level.crs` — negative, two `component Greeting { ... }` decls in one file.
+- `duplicate-struct-field.crs` — negative, a struct with two fields both named `name`.
+- `duplicate-component-member.crs` — negative, a `state<int> count` and a `void count()` in the
+  same component (cross-kind collision, confirming the combined check).
+- `duplicate-function-param.crs` — negative, `int add(int a, int a)`.
+- `no-duplicates-ok.crs` — positive, a struct and a component with entirely distinct names
+  everywhere (top-level, fields, params, members) — zero diagnostics.
 
 Added matching cases/assertions to `compiler/scripts/test-checker.js`.
 
-Did not touch `docs/Crescent_Design.md` or `docs/Crescent_Grammar.md`: same reasoning as the prior
-session — this closes a semantic-checker TODO item using syntax/semantics that are already fully
-documented (components, params, element attributes); no syntax or design changed, only what the
-checker now verifies about already-legal programs.
+Did not touch `docs/Crescent_Design.md` or `docs/Crescent_Grammar.md`: no syntax or semantics
+changed — Crescent's grammar already disallows nothing about repeating a name (the parser
+correctly accepts all of the negative fixtures above as syntactically valid programs); this only
+adds a diagnostic for something that was previously silently accepted and silently wrong.
 
 ### Files changed
 
 - `compiler/src/checker.ts`
 - `compiler/scripts/test-checker.js`
-- `compiler/scripts/fixtures/checker/wrong-prop-type.crs` (new)
-- `compiler/scripts/fixtures/checker/wrong-prop-type-string-attr.crs` (new)
-- `compiler/scripts/fixtures/checker/correct-prop-type-ok.crs` (new)
-- `TODO.md` (checked off "Component prop type checking")
+- `compiler/scripts/fixtures/checker/duplicate-top-level.crs` (new)
+- `compiler/scripts/fixtures/checker/duplicate-struct-field.crs` (new)
+- `compiler/scripts/fixtures/checker/duplicate-component-member.crs` (new)
+- `compiler/scripts/fixtures/checker/duplicate-function-param.crs` (new)
+- `compiler/scripts/fixtures/checker/no-duplicates-ok.crs` (new)
+- `TODO.md` (checked off "Duplicate declaration diagnostics")
 - `HANDOFF.md`
 
 ---
@@ -119,8 +135,8 @@ npx tsc --noEmit
 -> no errors
 
 npm test
--> 140 PASS, 0 FAIL, exit code 0
-(build, npm start over examples/, test-checker.js with the three new fixtures above plus all
+-> 145 PASS, 0 FAIL, exit code 0
+(build, npm start over examples/, test-checker.js with the five new fixtures above plus all
 prior checker cases, all other script tests, build-web, and test-web.js)
 ```
 
@@ -165,13 +181,7 @@ Do not blindly "fix" this without checking the current implementation and intend
   no grammar production for it, and no support for callback shapes with parameters or return
   values (e.g. `void(int)`). Formalizing function types as a real `CrescentType` variant (rather
   than a magic-string `NamedType`) is a larger, separate design task, not attempted here.
-- Function-argument checking (prior session) is intentionally scoped: only same-component calls to
-  a bare-identifier callee are resolved against a known `FunctionDecl`; calls where the checker
-  cannot otherwise resolve the callee (e.g. an expression callee) are silently skipped rather than
-  flagged, since Crescent has no other call form yet. If component-to-component method-style calls
-  or top-level functions are ever added, `checkCallArgs`'s call site in the `Call` case of
-  `checkExpr` is where resolution would need to be extended.
-- Component prop type checking (this session) has the identical literal-shaped-only limitation:
+- Component prop type checking (prior session) has the identical literal-shaped-only limitation:
   `checkAttributeTypeMatch` only flags a mismatch when the attribute is a plain string or an
   expr-attribute whose value is a literal; a variable, call, or arithmetic-expression prop value
   (by far the most common case — e.g. `<UserCard user={user}/>`) is not type-checked.
@@ -183,13 +193,23 @@ Do not blindly "fix" this without checking the current implementation and intend
   pass (tracking declared types for identifiers/derived/state through `scope`, not just literals),
   which is a materially bigger task than any single session so far and should be scoped
   deliberately rather than folded into the next narrow fixture-driven task.
+- Duplicate declaration diagnostics (this session) checks name collisions in four specific
+  positions (top-level decls within one file, struct fields, component params+members combined,
+  and function params). It does *not* yet cover: duplicate names across module boundaries (e.g.
+  two `use`-imported names colliding with each other or with a local declaration — "Cross-module
+  symbol resolution" is a separate, still-open `TODO.md` item); duplicate `for`-loop item names
+  shadowing an outer binding (shadowing is allowed by design in most languages and wasn't treated
+  as an error here); or duplicate local `VarDecl` names within a function body (not attempted this
+  session — would need `checkStmts` to track declared-so-far names per block, which the current
+  `localScope: Set<string>` passed to `checkStmts` doesn't distinguish from "declared in an outer
+  scope" vs. "declared earlier in this exact block").
 
 ---
 
 ## Unfinished Work
 
-_No active unfinished implementation. The component-prop-type-checking task above is complete and
-tested._
+_No active unfinished implementation. The duplicate-declaration-diagnostics task above is complete
+and tested._
 
 ---
 
@@ -204,18 +224,22 @@ tested._
    `crescent check` / `crescent build` commands. This unlocks both editor diagnostics and preview
    without coupling the initial VS Code extension to the current `examples/` demo entry point.
 4. Alternatively, continue strengthening the semantic checker per `TODO.md`'s "Current Priority
-   Order" (§16). The narrow, literal-shaped-value checks in the Types section
-   (arg/prop/struct-field/`VarDecl` type matching) are now largely done; remaining Types items —
-   "Complete assignment compatibility", "Array element type checking", "Function-type
-   compatibility" — all fundamentally need the same thing: a real expression type-inference helper
-   that can determine the type of an arbitrary expression (an identifier's declared type from
-   scope, a derived's type, a binary expression's result type), not just a literal's type. Consider
-   scoping that inference helper as its own small unit before building more callers on top of it,
-   rather than deepening literal-only special cases further.
-5. Other reasonable next candidates: "Function return-type checking" (verify a `return <expr>`'s
-   literal-shaped type against the function's declared, non-`void` return type — distinct from the
-   already-completed return-type *existence* check), or moving into the Scope/Names or Reactivity
-   subsections of `TODO.md`'s Semantic Checker section (e.g. "Duplicate declaration diagnostics").
+   Order" (§16):
+   - **"Undefined-name diagnostics"** (Scope/Names) is worth checking against the current
+     implementation before assuming it's unstarted — `checkExpr`'s `Identifier` case already
+     reports `Undefined identifier 'name'` for unresolved identifiers in expressions, and
+     `OnChangeDecl` separately checks its watched names. It's plausible this TODO item is already
+     substantially done and mostly needs verification/regression tests rather than new code; don't
+     assume it's a blank slate.
+   - Extending duplicate-declaration checking to local `VarDecl`s within a single block (see "Known
+     Problems" above) would be a small, coherent follow-on to this session.
+   - The remaining Types-section items (assignment compatibility, array elements, function-type
+     compatibility) all fundamentally need a real expression type-inference helper, not just more
+     literal-only special cases — consider scoping that inference helper as its own small unit
+     before building more callers on top of it.
+5. Other candidates: "Function return-type checking" (verify a `return <expr>`'s literal-shaped
+   type against the function's declared, non-`void` return type), or the Reactivity subsection
+   (e.g. "Reactive collection mutation validation").
 6. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
    from semantic diagnostics, and incomplete checking must not be presented as full type safety.
 7. Read the relevant design/grammar sections.
@@ -233,6 +257,30 @@ tested._
 
 **AI:** Claude
 
+**Task:** Duplicate declaration diagnostics (`TODO.md`, Semantic Checker → Scope/Names) — flag
+name collisions in top-level declarations, struct fields, component params+members, and function
+params, all of which previously silently overwrote in a `Map`/`Set` with no diagnostic.
+
+**Result:** Done. Added a small generic `checkDuplicateNames()` helper used at all four call sites.
+Component params and members are checked as one combined list so cross-kind collisions (a param
+shadowing a state, etc.) are caught too, not just same-kind ones. Added four negative fixtures and
+one positive regression fixture.
+
+**Commit:** Not committed — working tree contains the focused diff described above.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (145 PASS, 0 FAIL, exit 0).
+
+**Next:** See "Recommended Next Step" above. Flagged that "Undefined-name diagnostics" may already
+be substantially implemented (`checkExpr`'s `Identifier` case) and worth verifying before assuming
+it's unstarted; also noted local-`VarDecl`-within-a-block duplicate checking as an unaddressed gap
+in this session's own work.
+
+---
+
+### Previous session
+
+**AI:** Claude
+
 **Task:** Component prop type checking (`TODO.md`, Semantic Checker → Types) — compare
 literal-shaped prop values passed to component elements against the target component's declared
 param types, extending the existing prop *name* check (`Missing prop`/`Unknown prop`).
@@ -243,7 +291,8 @@ param types, extending the existing prop *name* check (`Missing prop`/`Unknown p
 limitation. Added two negative fixtures and one positive regression fixture, plus matching
 `test-checker.js` cases.
 
-**Commit:** Not committed — working tree contains the focused diff described above.
+**Commit:** Not committed at the time; pushed to `develop` by the maintainer as commit
+`59ac055 feat: add component prop type checking`.
 
 **Tests:** `npx tsc --noEmit` (clean); `npm test` (140 PASS, 0 FAIL, exit 0).
 
@@ -253,7 +302,7 @@ function-type compatibility) can go beyond literal-only checking.
 
 ---
 
-### Previous session
+### Older session
 
 **AI:** Claude
 

@@ -1,0 +1,11 @@
+component Broken {
+    state<int> count = 0;
+
+    void count() {
+        return;
+    }
+
+    view {
+        <p>{count}</p>
+    }
+}

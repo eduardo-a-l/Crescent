@@ -1,0 +1,10 @@
+struct User {
+    string name;
+    int name;
+}
+
+component Broken {
+    view {
+        <p>"static"</p>
+    }
+}

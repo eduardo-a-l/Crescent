@@ -115,6 +115,30 @@ const cases = [
     pattern: /prop 'value' expects 'int' but received a 'string' value/,
     label: 'a component prop passed a plain string attribute for a non-string param',
   },
+  {
+    file: 'duplicate-top-level.crs',
+    severity: 'error',
+    pattern: /Duplicate top-level declaration 'Greeting'/,
+    label: 'two top-level declarations sharing a name in the same file',
+  },
+  {
+    file: 'duplicate-struct-field.crs',
+    severity: 'error',
+    pattern: /Duplicate field 'name' in struct 'User'/,
+    label: 'a struct with two fields sharing a name',
+  },
+  {
+    file: 'duplicate-component-member.crs',
+    severity: 'error',
+    pattern: /'count' is declared more than once in component 'Broken'/,
+    label: 'a component with two members (a state and a function) sharing a name',
+  },
+  {
+    file: 'duplicate-function-param.crs',
+    severity: 'error',
+    pattern: /Duplicate param 'a' in function 'add'/,
+    label: 'a function with two params sharing a name',
+  },
 ];
 
 for (const c of cases) {
@@ -130,6 +154,9 @@ assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with th
 
 const correctPropDiagnostics = diagnosticsFor('correct-prop-type-ok.crs');
 assert(correctPropDiagnostics.length === 0, `correct-prop-type-ok.crs: correctly-typed literal and non-literal props produce no diagnostics, got ${JSON.stringify(correctPropDiagnostics)}`);
+
+const noDuplicatesDiagnostics = diagnosticsFor('no-duplicates-ok.crs');
+assert(noDuplicatesDiagnostics.length === 0, `no-duplicates-ok.crs: unique names across params, members, struct fields, and top-level decls produce no diagnostics, got ${JSON.stringify(noDuplicatesDiagnostics)}`);
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
 let totalExampleDiagnostics = 0;

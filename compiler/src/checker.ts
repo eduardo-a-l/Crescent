@@ -466,8 +466,35 @@ function checkTemplateNode(
   }
 }
 
+function checkDuplicateNames<T>(
+  items: T[],
+  getName: (item: T) => string,
+  getLine: (item: T) => number,
+  message: (name: string) => string,
+  where: string,
+  diagnostics: Diagnostic[]
+): void {
+  const seen = new Set<string>();
+  for (const item of items) {
+    const name = getName(item);
+    if (seen.has(name)) {
+      diagnostics.push(err(message(name), where, getLine(item)));
+    } else {
+      seen.add(name);
+    }
+  }
+}
+
 function checkStructDecl(decl: AST.StructDecl, globalScope: Map<string, SymbolInfo>, diagnostics: Diagnostic[]): void {
   const where = `struct '${decl.name}'`;
+  checkDuplicateNames(
+    decl.fields,
+    (f) => f.name,
+    () => decl.line,
+    (name) => `Duplicate field '${name}' in struct '${decl.name}'`,
+    where,
+    diagnostics
+  );
   for (const f of decl.fields) {
     if (!typeIsResolvable(f.type, globalScope)) {
       diagnostics.push(err(`Unknown type '${typeToString(f.type)}' referenced by field '${f.name}'`, where, decl.line));
@@ -511,6 +538,28 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
   if (viewCount === 0) diagnostics.push(err(`Component has no 'view' block`, where, decl.line));
   if (viewCount > 1) diagnostics.push(err(`Component has more than one 'view' block`, where, decl.line));
 
+  const namedMembers = decl.members.filter(
+    (m): m is AST.StateDecl | AST.DerivedDecl | AST.ProvideDecl | AST.ConstDecl | AST.InjectDecl | AST.FunctionDecl =>
+      m.kind === 'StateDecl' ||
+      m.kind === 'DerivedDecl' ||
+      m.kind === 'ProvideDecl' ||
+      m.kind === 'ConstDecl' ||
+      m.kind === 'InjectDecl' ||
+      m.kind === 'FunctionDecl'
+  );
+  const namedItems: { name: string; line: number }[] = [
+    ...decl.params.map((p) => ({ name: p.name, line: decl.line })),
+    ...namedMembers.map((m) => ({ name: m.name, line: m.line })),
+  ];
+  checkDuplicateNames(
+    namedItems,
+    (item) => item.name,
+    (item) => item.line,
+    (name) => `'${name}' is declared more than once in component '${decl.name}'`,
+    where,
+    diagnostics
+  );
+
   const functions = new Map(
     decl.members.filter((m): m is AST.FunctionDecl => m.kind === 'FunctionDecl').map((m) => [m.name, m])
   );
@@ -538,6 +587,14 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         const fnScope = new Set(scope);
         for (const p of m.params) fnScope.add(p.name);
         const fnWhere = `${where}, function '${m.name}'`;
+        checkDuplicateNames(
+          m.params,
+          (p) => p.name,
+          () => m.line,
+          (name) => `Duplicate param '${name}' in function '${m.name}'`,
+          fnWhere,
+          diagnostics
+        );
         for (const p of m.params) {
           if (!typeIsResolvable(p.type, globalScope)) {
             diagnostics.push(err(`Unknown type '${typeToString(p.type)}' referenced by param '${p.name}'`, fnWhere, m.line));
@@ -577,6 +634,18 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
 export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, imports: FileImports[]): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const globalScope = new Map<string, SymbolInfo>();
+
+  const topLevelDecls = file.program.declarations.filter(
+    (d): d is AST.ComponentDecl | AST.StructDecl => d.kind === 'ComponentDecl' || d.kind === 'StructDecl'
+  );
+  checkDuplicateNames(
+    topLevelDecls,
+    (d) => d.name,
+    (d) => d.line,
+    (name) => `Duplicate top-level declaration '${name}' in '${file.relPath}'`,
+    `file '${file.relPath}'`,
+    diagnostics
+  );
 
   for (const decl of file.program.declarations) {
     if (decl.kind === 'ComponentDecl') globalScope.set(decl.name, { kind: 'component', decl });
