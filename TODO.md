@@ -370,8 +370,10 @@ Every important compiler bug should ideally become a regression test.
 - [~] Define machine-readable diagnostics with file, line, column (line-only temporarily if
   necessary), severity, message, and a stable error code when available. Diagnostics now carry
   file + line (no column yet) + severity + message; no stable error codes yet.
-- [ ] Create a minimal VS Code extension: `.crs` file association, TextMate syntax highlighting,
-  comment/bracket/indent configuration, and `Crescent: Check` / `Crescent: Build` commands.
+- [x] Create a minimal VS Code extension: `.crs` file association, TextMate syntax highlighting,
+  comment/bracket/indent configuration, and `Crescent: Check` / `Crescent: Build` commands. See
+  `editors/vscode/` (`editors/vscode/README.md` documents what the grammar does and does not
+  attempt, and the remaining limitations below).
 - [ ] Publish parser, module, semantic, and codegen diagnostics in VS Code on save, then on document
   changes; a full incremental checker is not required for this first version.
 - [ ] Add a `Crescent: Preview` command that builds the project and opens/reloads the browser output.

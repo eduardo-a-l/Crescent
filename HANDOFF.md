@@ -14,12 +14,13 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: a real `crescent` CLI (`crescent check [path]`, `crescent build [path] --out-dir
-<dir>`) backed by new reusable `checkProject()`/`buildProject()` APIs extracted from
-`src/index.ts` — see "Last Completed Work" below. This was the maintainer's explicit next step
-(CLI first, then VS Code support, then playground, then broader language features like enum/
-match). Choose the next item from `TODO.md` before beginning new work — the maintainer's stated
-plan is VS Code support next.
+Just completed: a minimal VS Code extension (`editors/vscode/`) — `.crs` file association,
+TextMate syntax highlighting, comment/bracket/indent configuration, and `Crescent: Check`/
+`Crescent: Build` commands that shell out to the `crescent` CLI built last session. See "Last
+Completed Work" below. Choose the next item from `TODO.md` before beginning new work — the
+maintainer's stated plan is a playground next, then real project testing, then broader language
+features (enum, match, etc). Diagnostics-in-editor and a `Crescent: Preview` command (`TODO.md`
+§10) are also still open if the maintainer wants more VS Code work first.
 
 ---
 
@@ -51,127 +52,97 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-CLI (`TODO.md` §8 "End-to-End Compiler" CLI items, §10 CLI, and the "Near-Term VS Code
-Enablement" plan's first two bullets). Per the maintainer's stated order (CLI now, VS Code
-support / playground / project-testing later, language features like enum/match after that),
-this session built a real `crescent check` / `crescent build` command that works on **any**
-directory of `.crs` files, not just the hard-coded `examples/` directory `src/index.ts` used to
-run against.
+Minimal VS Code extension (`TODO.md` §10 "Near-Term VS Code Enablement", first bullet only — the
+maintainer's stated next step after last session's CLI). New `editors/vscode/` directory:
 
-1. **Extracted reusable project APIs** — new `compiler/src/project.ts`:
-   - `checkProject(root)`: loads every `.crs` file under `root`, resolves `use` imports, detects
-     import cycles, then runs `checkFile()` on every file. Returns `{ ok, fatal, files,
-     importsByFile, diagnosticsByFile }`. Unlike the old `index.ts`, a `LexError`/`ParseError`
-     thrown by `loadAllPrograms()` (previously an uncaught crash) is now caught and reported as
-     `fatal: { stage: 'parse', message }`, matching how `ModuleError` (import cycle / missing
-     module) was already turned into `fatal: { stage: 'module', message }`. This does not change
-     any language semantics — it only means a syntax error in an arbitrary user project produces
-     a clean CLI error instead of a raw stack trace, which matters once the CLI runs on projects
-     the AI/compiler didn't author.
-   - `buildProject(root, outDir)`: runs `checkProject()`, then for every file with zero semantic
-     errors, generates JS into `<outDir>/gen/<relPath>.js` (mirroring the source tree, same as
-     before) and copies the compiler's own compiled `runtime.js` to `<outDir>/runtime.js` (skipped
-     if source and destination are already the same file — this matters for `src/index.ts`'s own
-     use, see below). This makes a build's `<outDir>` fully self-contained: previously the
-     generated `require('../runtime')` path only resolved correctly because `examples/` builds
-     always happened to land in `dist/gen` next to a `dist/runtime.js` that `tsc` produced as a
-     side effect of compiling the compiler itself; an arbitrary external `--out-dir` has no such
-     side effect, so the runtime now travels with the build output.
-   - Per-file build results (`FileBuildResult`) distinguish `outFile` (success), `skippedReason`
-     (semantic errors, or an expected `CodegenError` — unsupported feature), and
-     `unexpectedError` (anything else, e.g. a compiler bug) — preserving the existing three-way
-     distinction between semantic errors / unsupported codegen / a genuine crash that `AGENTS.md`
-     §10 requires, now expressed as data instead of only as console output.
+1. **`package.json`** — extension manifest. `.crs` → language id `crescent`. Two commands,
+   `crescent.check` / `crescent.build` (titled "Crescent: Check" / "Crescent: Build"). Two
+   settings: `crescent.cliPath` (explicit path to `compiler/dist/cli.js`, or a bare command such
+   as `crescent` after `npm link`) and `crescent.outDir` (default `"dist"`, relative to the
+   project root, used by **Build**). `engines.vscode": "^1.75.0"` — modern enough that VS Code
+   auto-infers `onCommand:*` activation from the `commands` contribution, so only
+   `onLanguage:crescent` needed to be declared explicitly.
+2. **`language-configuration.json`** — line/block comments (`//`, `/* */`, matching
+   `compiler/src/lexer.ts`'s `skipWhitespaceAndComments()` exactly), bracket matching/auto-closing
+   for `{}`/`[]`/`()`, and a brace-based indent heuristic. **Deliberately excludes `<`/`>`** from
+   bracket matching/auto-closing — `compiler/README.md`'s "Key implementation decisions" section
+   documents that the lexer always emits a plain `LT`/`GT` token and the *parser* disambiguates
+   generic-vs-comparison-vs-tag-open by which production is currently being parsed; a flat
+   editor-side config has no such context, so auto-closing `<` would misfire on every `a < b`.
+3. **`syntaxes/crescent.tmLanguage.json`** — a flat (no `view`/`style` sub-grammar embedding)
+   TextMate grammar covering: comments, double-quoted strings with `\`-escapes (including that a
+   string may legally span multiple lines, matching the lexer), the full keyword table from
+   `compiler/src/tokens.ts` (split into declaration/control/literal groups for reasonable default
+   theme coloring), the four primitive types, the name after `component`/`struct`, template tag
+   names (`<div`, `</div`, `<UserCard`), operators, and punctuation.
+   - **Verified by actually tokenizing, not just visual inspection**: installed `vscode-textmate`/
+     `vscode-oniguruma` in a scratch directory and ran the real grammar against
+     `compiler/examples/*.crs` through `Registry.loadGrammar()` / `tokenizeLine()`. This caught a
+     real bug before it shipped: the tag-name pattern (`<` or `</` followed by an identifier)
+     initially also matched the `<` in `state<int>`, `derived<T>`, etc. — misclassifying `<int>`
+     as a tag instead of an operator + primitive type. Fixed with a negative lookbehind
+     (`(?<![A-Za-z0-9_])` before the `<`/`</`), since a real tag's `<` is always preceded by
+     whitespace/`{`/newline/another `>`, never glued directly onto an identifier the way a generic
+     type's `<` is. Re-verified against `counter.crs`, `theme_toggle.crs` (style block — no CSS-
+     aware highlighting attempted, by design), and `structs_and_generics.crs` after the fix.
+4. **`src/extension.js`** — plain CommonJS (no bundler/build step). `findCliPath()` honors
+   `crescent.cliPath` first, then walks up from the open project root looking for a sibling
+   `compiler/dist/cli.js` (this monorepo's own layout) as a development-time convenience default.
+   Both commands resolve a project root from the active editor's workspace folder (falling back to
+   the first workspace folder), spawn the CLI via `child_process.spawn`, and stream stdout/stderr
+   into a "Crescent" `OutputChannel`. **No diagnostics are published to the editor** (no
+   `DiagnosticCollection`) — that's the plan's next bullet, deliberately not started this session
+   per `AGENTS.md` §15 ("do not begin a second major feature").
+5. **`editors/vscode/README.md`** — dev instructions (`F5` / Extension Development Host, no build
+   step needed), settings reference, and an explicit "what the grammar highlights, and what it
+   deliberately doesn't" section so the next session (or a user) doesn't mistake the flat grammar
+   for something it isn't.
+6. Root `README.md`: added a fourth documentation-index bullet linking to
+   `editors/vscode/README.md`, alongside the design doc, grammar spec, and compiler README.
+7. `TODO.md`: checked off the "Create a minimal VS Code extension: ..." bullet under §10 (with a
+   short note on what it points to); left the next three bullets (diagnostics-on-save, `Crescent:
+   Preview`, LSP replacement) unchecked.
 
-2. **`src/index.ts` rewritten on top of `project.ts`** — same console output format and same
-   `dist/gen` output location as before (verified byte-for-byte via `npm test`'s generated-output
-   assertions), just calling `buildProject(examplesDir, distDir)` instead of duplicating the
-   load/resolve/cycle-detect/codegen loop inline. `distDir` here is `dist` itself (not `dist/gen`)
-   since `buildProject` now owns the `gen/` subfolder naming; `runtime.js` copy is skipped in this
-   path because `dist/runtime.js` is already produced directly by `tsc` compiling
-   `src/runtime.ts`, so source and destination resolve to the same file.
+### Manual verification
 
-3. **New `src/cli.ts`** — the actual `crescent` command:
-   - `crescent check [path]` — prints one line per diagnostic as
-     `relPath:line [severity] where: message` (line omitted if `<= 0`), then a summary line, exit
-     code 1 if any error (including a fatal parse/module error).
-   - `crescent build [path] --out-dir <dir>` — same check output, then one line per file:
-     `Codegen OK — wrote <path>`, `<relPath>: codegen skipped: <reason>`, or
-     `FAILED: <relPath>: <message>` for an unexpected error. `--out-dir` is required; missing it
-     is a usage error (exit 1) rather than silently defaulting somewhere.
-   - No args / unknown command prints usage (exit 0 for no args, 1 for an unrecognized command).
-   - `path` defaults to `.` (current directory) when omitted.
-   - Has a `#!/usr/bin/env node` shebang; verified `tsc` preserves shebang lines in its output
-     (compiled `dist/cli.js` starts with the shebang, confirmed by hand).
+No automated test suite covers a VS Code extension (there's no VS Code test harness in this
+repo, and none was added — see "Known Problems"/"Recommended Next Step"). Verified by hand:
 
-4. **`package.json`**: added `"bin": { "crescent": "dist/cli.js" }` (so `npm link` exposes a real
-   `crescent` command once built) and a `"cli": "ts-node src/cli.ts"` script for running the CLI
-   directly against source during development, without a prior `tsc` build.
-
-5. **`compiler/README.md`**: added a "CLI" section under "Running" documenting both commands, the
-   `<out-dir>/gen/` + `<out-dir>/runtime.js` output layout, and the `bin`/`npm run cli` entries.
-   Also fixed two pre-existing doc/implementation mismatches while in the file (per the maintainer's
-   follow-up request to clean up docs alongside this patch — verified against actual behavior, not
-   guessed):
-   - "Running" said `npm start` "prints their ASTs as JSON" — it does not and never has in this
-     session's testing; it prints `Parsed OK — N top-level declaration(s)` plus semantic-check
-     results. Corrected to describe what actually happens.
-   - The "Semantic Checker" section's "What it checks" bullet list predated two later sessions'
-     work and didn't mention **duplicate-declaration diagnostics** (`checkDuplicateNames()`) or
-     **function-call-argument checking** (`checkCallArgs()`), even though both exist in
-     `checker.ts` and are checked off `[x]` in `TODO.md`. Added bullets for both. This is exactly
-     the "Documentation consistency" issue flagged under "Known Problems" below, scoped to what I
-     could verify by reading `checker.ts` directly rather than guessing.
-   Did not touch the compiler README's title ("Lexer/Parser/Codegen Scaffold (v0.1)") — terse but
-   not factually wrong — nor `docs/Crescent_Design.md`/`docs/Crescent_Grammar.md`: checked their
-   section numbering against every `§N.N` cross-reference in `compiler/README.md` (all resolve
-   correctly) and scanned both for duplicated-word typos/placeholder markers (`TODO`, `TBD`,
-   `XXX`, `not implemented`) — found none. No changes needed there.
-
-6. **`TODO.md`**: checked off the CLI-related boxes this closes (§8 "Improve CLI" through "Add
-   clear exit codes"; §10 "Friendly `crescent` command", "`crescent check`", "`crescent build`";
-   the VS Code-enablement plan's "Extract reusable project APIs" and "Make `crescent check
-   <path>`/`crescent build ...` work on arbitrary projects" bullets — marked the "machine-readable
-   diagnostics" bullet `[~]` since file+line+severity+message exist but column and stable error
-   codes do not yet).
-
-### Manual verification (beyond the automated suite)
-
-Built a throwaway project under `/tmp` (not committed, already deleted) and ran the compiled
-`dist/cli.js` by hand to confirm real-world behavior beyond what `npm test` exercises (which only
-runs the `examples/`-driven `index.ts`, not `cli.ts`, directly):
-
-- `crescent check <dir>` on a single valid file → `OK — 1 file(s) checked, no problems found.`,
-  exit 0.
-- `crescent build <dir> --out-dir <outdir>` on the same → same OK line, then
-  `Codegen OK — wrote <outdir>/gen/main.js`, and `<outdir>/runtime.js` + `<outdir>/gen/main.js`
-  both present on disk, exit 0.
-- `crescent check <dir>` on a file with a real semantic error (`state<int> count = "not a
-  number";`) → `main.crs:2 [error] component 'Broken', 'count': Type mismatch: ...`, exit 1.
-- `crescent check <dir>` on a file with a genuine parse error (unterminated `view {` block) →
-  `error: Expected token SEMI but got VIEW ('view') at line 3`, exit 1 (previously this would have
-  been an uncaught `ParseError` crashing the process with a raw stack trace).
-- `crescent build <dir>` with no `--out-dir` → `error: crescent build requires --out-dir <dir>`,
-  exit 1.
-- `crescent` with no arguments → usage text, exit 0.
-
-No automated test currently exercises `cli.ts` itself (it's a thin argv-parsing/printing wrapper
-around `project.ts`, which the existing test suite exercises indirectly through
-`src/index.ts`/`npm test`). Adding a small script-based smoke test for `cli.ts` directly (e.g.
-under `compiler/scripts/`, following the existing `test-*.js` convention) would be a reasonable
-follow-up — see "Recommended Next Step".
+- **Grammar**: tokenized `compiler/examples/counter.crs`, `theme_toggle.crs`, and
+  `structs_and_generics.crs` with the real `vscode-textmate` engine (see above) — correct scopes
+  for keywords, primitive types, tag names, `state<int>`-style generics (post-fix), comments,
+  strings, and numbers throughout; style-block content intentionally gets only flat
+  comment/string/number/punctuation treatment, no CSS awareness.
+- **Extension logic**: since `vscode` isn't installable outside a real VS Code host, wrote a
+  throwaway mock of the small slice of the `vscode` API `extension.js` actually calls
+  (`workspace.getConfiguration`/`getWorkspaceFolder`/`workspaceFolders`, `window.activeTextEditor`/
+  `createOutputChannel`/`showErrorMessage`, `commands.registerCommand`) in a scratch directory
+  (not committed), loaded `extension.js` against it via `NODE_PATH`, called `activate()`, then
+  invoked the registered `crescent.check`/`crescent.build` handlers directly:
+  - Against the whole repo root: `findCliPath()` correctly located
+    `compiler/dist/cli.js` (already built from last session) and correctly surfaced a real error
+    from one of `compiler/scripts/fixtures/missing-export/`'s intentionally-broken checker
+    fixtures — confirming end-to-end wiring, not just that it runs without throwing.
+  - Against `compiler/examples/`: **Check** printed `OK — 17 file(s) checked, no problems found.`,
+    exit 0. **Build** (with `crescent.outDir` left at its default `"dist"`) generated
+    `compiler/examples/dist/gen/*.js` (mirroring the source tree, including the nested
+    `modules/` subtree) plus `compiler/examples/dist/runtime.js`, exit 0 — confirming the
+    `outDir` setting is joined onto the project root correctly. Both throwaway output directories
+    were deleted after the check.
+- `node --check editors/vscode/src/extension.js` — no syntax errors.
+- Confirmed all three JSON files (`package.json`, `language-configuration.json`,
+  `syntaxes/crescent.tmLanguage.json`) parse as valid JSON.
 
 ### Files changed
 
-- `compiler/src/project.ts` (new) — `checkProject()`, `buildProject()`.
-- `compiler/src/cli.ts` (new) — the `crescent` command.
-- `compiler/src/index.ts` (rewritten to use `project.ts`; same observable behavior/output).
-- `compiler/package.json` (`bin` field, `cli` script).
-- `compiler/package-lock.json` (regenerated by `npm install` after the `bin` field was added; the
-  only diff is that field being mirrored into the lockfile's root-package entry).
-- `compiler/README.md` (new "CLI" section).
-- `TODO.md` (checked off the CLI items listed above).
-- `HANDOFF.md`.
+- `editors/vscode/package.json` (new)
+- `editors/vscode/language-configuration.json` (new)
+- `editors/vscode/syntaxes/crescent.tmLanguage.json` (new)
+- `editors/vscode/src/extension.js` (new)
+- `editors/vscode/README.md` (new)
+- `README.md` (doc index bullet)
+- `TODO.md` (checked off the relevant §10 bullet)
+- `HANDOFF.md`
 
 ---
 
@@ -180,18 +151,17 @@ follow-up — see "Recommended Next Step".
 ### Last type-check and full suite
 
 ```text
-npx tsc --noEmit
--> no errors
+cd compiler && npx tsc --noEmit
+-> no errors (this session touched no compiler .ts files, so this is an unchanged-behavior check)
 
-npm test
--> 145 PASS, 0 FAIL, exit code 0
-(build, npm start over examples/ via the rewritten index.ts/project.ts, test-checker.js and all
-prior fixtures, all other script tests, build-web, and test-web.js — identical pass count and
-generated-output locations to before this session, confirming index.ts's behavior is unchanged)
+cd compiler && npm test
+-> 145 PASS, 0 FAIL, exit code 0 (unchanged from last session — this session's changes are
+entirely under editors/vscode/, outside the compiler's own test suite)
 ```
 
-Additionally, `dist/cli.js` was exercised by hand against throwaway `/tmp` projects — see "Manual
-verification" above. This is not part of `npm test`.
+No automated suite exercises `editors/vscode/` — see "Manual verification" above for what was
+checked by hand instead, and "Recommended Next Step" for a real, committed test harness as a
+worthwhile follow-up.
 
 ---
 
@@ -262,41 +232,60 @@ land in `checker.ts` without a matching README bullet.
 
 ## Unfinished Work
 
-_No active unfinished implementation. The CLI task above (`checkProject`/`buildProject` +
-`crescent check`/`crescent build`) is complete and tested. `crescent run`/development mode and a
-config file (`TODO.md` §10 CLI) remain unstarted — deliberately out of scope for this session per
-the maintainer's stated plan (CLI → VS Code support → playground → project testing → language
-features), which was scoped as "the CLI" rather than every CLI subcommand ever planned._
+_No active unfinished implementation. This session's VS Code extension task (`.crs` association,
+syntax highlighting, language config, Check/Build commands) is complete and manually verified —
+see "Last Completed Work" above. Diagnostics-in-editor, `Crescent: Preview`, and the LSP
+replacement (`TODO.md` §10) remain unstarted — deliberately out of scope this session per
+`AGENTS.md` §15 ("do not begin a second major feature")._
 
 ---
 
 ## Recommended Next Step
 
 1. Read `TODO.md`.
-2. **The maintainer's explicit stated order is: CLI (done this session) → VS Code support →
-   playground → then real project testing → then broader language features (enum, match, etc).**
-   The natural next unit is VS Code support, per `TODO.md`'s "Near-Term VS Code Enablement (v0.x)":
-   - The reusable `checkProject()`/`buildProject()` APIs and the `crescent check`/`crescent build`
-     commands this session added are the foundation that section's remaining bullets build on.
-   - Next bullets there: a minimal VS Code extension (`.crs` file association, TextMate syntax
-     highlighting, comment/bracket/indent configuration, `Crescent: Check` / `Crescent: Build`
-     commands), publishing parser/module/semantic/codegen diagnostics on save (and later on
-     document changes), and a `Crescent: Preview` command that builds and opens/reloads the
-     browser output (likely reusing `build:web`-style bundling, but pointed at a real project's
-     build output rather than `examples/`).
-   - `crescent check`/`crescent build` are currently process-based (spawn `dist/cli.js`, parse its
-     stdout/exit code); the plan explicitly defers replacing that with a real LSP server until the
-     extension and diagnostic model have stabilized — don't jump straight to an LSP.
-3. A worthwhile small addition first: a script-based smoke test for `cli.ts` itself (see "Manual
-   verification" above — currently only verified by hand). Following the existing
-   `compiler/scripts/test-*.js` convention, spawn `node dist/cli.js check/build <fixture-dir>
-   --out-dir <tmp>` via `child_process` and assert on stdout/exit code for a valid project, a
-   semantic-error project, and a parse-error project. This would need to be wired into the `test`
-   script in `package.json` and should probably use a temp directory (e.g. under `os.tmpdir()`)
-   rather than adding new fixtures under version control, since it's exercising the CLI's
-   filesystem I/O, not checker behavior.
-4. If VS Code work is deferred, the semantic checker (`TODO.md` §16 "Current Priority Order") is
-   the other standing priority:
+2. **The maintainer's stated order was: CLI → VS Code support → playground → real project testing
+   → broader language features (enum, match, etc).** CLI and a first VS Code extension are both
+   done now (see "Last Completed Work" above and the previous session's entry below). The next
+   unstarted bullet in `TODO.md`'s "Near-Term VS Code Enablement (v0.x)" is:
+   - **Publish diagnostics in the editor.** Wire `checkProject()` (`compiler/src/project.ts`) into
+     a `vscode.languages.createDiagnosticCollection('crescent')`, run on save (a
+     `workspace.onDidSaveTextDocument` listener is enough for v1; "on document changes" /
+     incremental checking is explicitly deferred by the plan). Map each `Diagnostic` from
+     `checker.ts` (`{ severity, message, where, line }`, no column yet) onto a
+     `vscode.Diagnostic` at `new vscode.Range(line - 1, 0, line - 1, <big number>)` (whole-line,
+     since there's no column) with `severity === 'error' ? vscode.DiagnosticSeverity.Error :
+     vscode.DiagnosticSeverity.Warning`. Also surface a `fatal` (parse/module) result as a single
+     diagnostic on the file that actually failed if you can attribute it to one, or as a
+     `showErrorMessage` if not (checker.ts's `CheckProjectResult.fatal` doesn't currently carry a
+     file, since `LexError`/`ParseError`/`ModuleError` messages are just strings — check whether
+     that's worth improving as part of this work, per `AGENTS.md`'s "identify the disagreement,
+     don't silently choose" principle, rather than guessing at a file to attribute it to).
+     `checkProject()` is disk-based only (rereads files from disk, not the editor's unsaved
+     buffer) — that's fine for an on-save trigger, but means diagnostics will be stale for unsaved
+     edits, which is an acceptable, documented v0.x limitation, not a bug to silently work around.
+   - After that: `Crescent: Preview` (build + open/reload `build:web`-style bundled output, but
+     pointed at a real project rather than `compiler/examples/`), then the LSP replacement.
+3. A worthwhile small addition, independent of the above: a real, committed test harness for
+   `editors/vscode/` and/or `cli.ts` (both currently only verified by hand — see "Manual
+   verification" in "Last Completed Work" above for both sessions). Options, roughly in order of
+   effort:
+   - A script-based smoke test for `cli.ts` itself, following the existing
+     `compiler/scripts/test-*.js` convention: spawn `node dist/cli.js check/build <fixture-dir>
+     --out-dir <tmp>` via `child_process` and assert on stdout/exit code for a valid project, a
+     semantic-error project, and a parse-error project (use a temp dir under `os.tmpdir()`, not a
+     committed fixture, since this is exercising filesystem I/O, not checker behavior).
+   - A grammar-tokenization test for `editors/vscode/syntaxes/crescent.tmLanguage.json`, using
+     `vscode-textmate`/`vscode-oniguruma` (not currently a dependency anywhere in this repo — would
+     need adding, presumably as a devDependency of a new `editors/vscode/package.json` "test"
+     script) to tokenize `compiler/examples/*.crs` and assert on a few key scopes. This is exactly
+     the manual check this session did by hand in a scratch directory; committing it as a real test
+     would catch a regression like the `state<int>`-mistaken-for-a-tag bug this session found and
+     fixed, before it ships next time.
+   - A real VS Code extension test (`@vscode/test-electron`) is the most thorough option but the
+     heaviest to set up; probably not worth it before the diagnostics-on-save feature above exists,
+     since there's more to test once that lands.
+4. If VS Code/testing work is deferred, the semantic checker (`TODO.md` §16 "Current Priority
+   Order") is the other standing priority:
    - **"Undefined-name diagnostics"** (Scope/Names) is worth checking against the current
      implementation before assuming it's unstarted — `checkExpr`'s `Identifier` case already
      reports `Undefined identifier 'name'` for unresolved identifiers in expressions, and
@@ -324,6 +313,44 @@ features), which was scoped as "the CLI" rather than every CLI subcommand ever p
 
 **AI:** Claude
 
+**Task:** Minimal VS Code extension (`TODO.md` §10, "Near-Term VS Code Enablement" plan's first
+bullet) — the maintainer's explicit next step after last session's CLI.
+
+**Result:** Done. New `editors/vscode/`: `package.json` (language `crescent`, `.crs` association,
+`crescent.check`/`crescent.build` commands, `crescent.cliPath`/`crescent.outDir` settings),
+`language-configuration.json` (comments, bracket matching — deliberately excluding `<`/`>`, see
+"Last Completed Work" for why), `syntaxes/crescent.tmLanguage.json` (flat TextMate grammar,
+verified by actually tokenizing `compiler/examples/*.crs` with `vscode-textmate` in a scratch
+directory — caught and fixed a real bug where `state<int>` was misread as a tag), and
+`src/extension.js` (plain CommonJS, no build step; auto-detects `compiler/dist/cli.js` in this
+monorepo, spawns it, streams output to a "Crescent" output channel). No in-editor diagnostics yet
+— that's the plan's next bullet, deliberately not started this session. Verified the extension
+logic end-to-end (not just `node --check`) by mocking the slice of the `vscode` API it uses and
+invoking the real command handlers against this actual repo — both **Check** and **Build**
+correctly found the compiler, ran it, and produced correct output (see "Manual verification").
+
+**Commit:** Not committed — working tree contains the diff described above (new `editors/vscode/`
+directory; modified `README.md`, `TODO.md`, `HANDOFF.md`), on top of last session's uncommitted
+CLI diff (`compiler/src/project.ts`, `compiler/src/cli.ts`, modified `compiler/src/index.ts`,
+`compiler/package.json`, `compiler/package-lock.json`, `compiler/README.md`).
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean, unchanged); `npm test` (145 PASS, 0 FAIL,
+exit 0, unchanged — this session touched nothing under `compiler/`). No automated suite covers
+`editors/vscode/`; see "Manual verification" in "Last Completed Work" for what was checked by hand,
+and "Recommended Next Step" #3 for options to make that a real, committed test.
+
+**Next:** Diagnostics-in-editor is the maintainer's stated next VS Code bullet — see "Recommended
+Next Step" #2 above for a concrete plan (map `checker.ts` `Diagnostic`s onto
+`vscode.Diagnostic`s via a `DiagnosticCollection`, triggered `onDidSaveTextDocument`). A committed
+test harness for either `cli.ts` or the TextMate grammar (see "Recommended Next Step" #3) would
+also be a good small unit if VS Code work isn't picked up immediately.
+
+---
+
+### Previous session
+
+**AI:** Claude
+
 **Task:** Build the `crescent` CLI (`TODO.md` §8/§10, "Near-Term VS Code Enablement" plan's first
 two bullets) — the maintainer's explicit next step before VS Code support, a playground, and
 broader language features (enum, match, etc).
@@ -339,6 +366,10 @@ loop; verified identical console output and `dist/gen` file locations via `npm t
 Manually exercised the compiled `dist/cli.js` against throwaway `/tmp` projects covering the
 clean/semantic-error/parse-error/missing-flag/no-args cases (see "Manual verification" above) —
 no automated test yet exercises `cli.ts` directly, only `index.ts`/`project.ts` via `npm test`.
+A follow-up request in the same conversation asked for docs to be cleaned up alongside the CLI
+patch: fixed `compiler/README.md`'s stale "prints their ASTs as JSON" line and its "What it
+checks" list missing two later-added checks (see the CLI patch's own follow-up note, folded into
+this entry since it was the same session/task from the maintainer's perspective).
 
 **Commit:** Not committed — working tree contains the diff described above (new
 `compiler/src/project.ts`, `compiler/src/cli.ts`; modified `compiler/src/index.ts`,
@@ -347,17 +378,13 @@ no automated test yet exercises `cli.ts` directly, only `index.ts`/`project.ts` 
 
 **Tests:** `npx tsc --noEmit` (clean); `npm test` (145 PASS, 0 FAIL, exit 0 — same count as
 before this session). `dist/cli.js` manually exercised against `/tmp` fixtures (not part of
-`npm test`; see "Manual verification" and "Recommended Next Step" #3 for adding this as a real
-script-based test).
+`npm test`; see "Recommended Next Step" #3 for adding this as a real script-based test).
 
-**Next:** VS Code support is the maintainer's explicitly stated next phase — see "Recommended
-Next Step" above for the specific `TODO.md` bullets that build on this session's APIs/commands. A
-`cli.ts` smoke test (script-based, following the `compiler/scripts/test-*.js` convention) would
-also be a good small unit if VS Code work isn't picked up immediately.
+**Next:** VS Code support (done next session — see "Latest session" above).
 
 ---
 
-### Previous session
+### Older session
 
 **AI:** Claude
 

@@ -1,0 +1,67 @@
+{
+  "name": "crescent-language",
+  "displayName": "Crescent Language",
+  "description": "Syntax highlighting and Check/Build commands for the Crescent language (.crs files).",
+  "version": "0.1.0",
+  "publisher": "crescent-lang",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onLanguage:crescent"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "crescent",
+        "aliases": [
+          "Crescent",
+          "crescent"
+        ],
+        "extensions": [
+          ".crs"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "crescent",
+        "scopeName": "source.crescent",
+        "path": "./syntaxes/crescent.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "crescent.check",
+        "title": "Crescent: Check",
+        "category": "Crescent"
+      },
+      {
+        "command": "crescent.build",
+        "title": "Crescent: Build",
+        "category": "Crescent"
+      }
+    ],
+    "configuration": {
+      "title": "Crescent",
+      "properties": {
+        "crescent.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the compiled crescent CLI (compiler/dist/cli.js), or a command available on PATH (e.g. \"crescent\" after running `npm link` inside compiler/). Leave empty to auto-detect a compiler/dist/cli.js above the open folder."
+        },
+        "crescent.outDir": {
+          "type": "string",
+          "default": "dist",
+          "description": "Output directory (relative to the project root) used by \"Crescent: Build\"."
+        }
+      }
+    }
+  }
+}

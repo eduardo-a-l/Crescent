@@ -1,0 +1,112 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Crescent",
+  "scopeName": "source.crescent",
+  "fileTypes": ["crs"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords-literal" },
+    { "include": "#keywords-declaration" },
+    { "include": "#keywords-control" },
+    { "include": "#types-primitive" },
+    { "include": "#entity-declaration-name" },
+    { "include": "#numbers" },
+    { "include": "#tags" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.crescent",
+          "begin": "/\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.line.double-slash.crescent",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.crescent",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.crescent",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.crescent",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.crescent",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "keywords-literal": {
+      "name": "constant.language.crescent",
+      "match": "\\b(true|false|null)\\b"
+    },
+    "keywords-declaration": {
+      "name": "keyword.other.declaration.crescent",
+      "match": "\\b(component|struct|state|derived|provide|inject|const|view|style|slot|use|super|as|async|await|void)\\b"
+    },
+    "keywords-control": {
+      "name": "keyword.control.crescent",
+      "match": "\\b(if|else|for|in|key|return|on_mount|on_change)\\b"
+    },
+    "types-primitive": {
+      "name": "storage.type.primitive.crescent",
+      "match": "\\b(int|float|string|bool)\\b"
+    },
+    "entity-declaration-name": {
+      "name": "entity.name.type.crescent",
+      "match": "(?<=\\b(?:component|struct)\\s)[A-Za-z_][A-Za-z0-9_]*\\b"
+    },
+    "tags": {
+      "match": "(?<![A-Za-z0-9_])(</?)([A-Za-z_][A-Za-z0-9_-]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.crescent" },
+        "2": { "name": "entity.name.tag.crescent" }
+      }
+    },
+    "operators": {
+      "name": "keyword.operator.crescent",
+      "match": "\\+\\+|--|\\+=|-=|\\*=|/=|==|!=|<=|>=|&&|\\|\\||[+\\-*/%!=<>?]"
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.block.crescent",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.section.brackets.crescent",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.parens.crescent",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.separator.crescent",
+          "match": "[.,;:]"
+        },
+        {
+          "name": "punctuation.terminator.tag.crescent",
+          "match": "/>"
+        }
+      ]
+    }
+  }
+}
