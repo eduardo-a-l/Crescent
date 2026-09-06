@@ -384,7 +384,12 @@ Every important compiler bug should ideally become a regression test.
   limitation).
 - [ ] Publish diagnostics on document changes too (continuous/incremental checking), not just on
   save/open.
-- [ ] Add a `Crescent: Preview` command that builds the project and opens/reloads the browser output.
+- [x] Add a `Crescent: Preview` command that builds the project and opens/reloads the browser
+  output. See `compiler/src/webPreview.ts` (`buildPreviewHtml()`) and `editors/vscode/src/
+  extension.js`'s `crescent.preview` command — `editors/vscode/README.md`'s "Preview" section
+  documents exactly what gets mounted (top-level, zero-parameter components only), how mount
+  failures are isolated, and the known trade-off that a reload replaces the whole webview rather
+  than doing a real hot-module-reload (so previewed component state resets on every save).
 - [ ] Replace process-based checking with a small LSP server once the shared project API and
   diagnostic model are stable.
 

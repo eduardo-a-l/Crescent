@@ -22,11 +22,22 @@ supported subset of the language.
   (including nested directories), resolves imports and checks for cycles across the whole project,
   runs the semantic checker per file (skipping codegen for that file if it reports any errors),
   then attempts codegen, mirroring the source tree under `dist/gen/`
+- `src/project.ts` — reusable `checkProject()`/`buildProject()`, used by the CLI, the VS Code
+  extension's diagnostics, and `src/webPreview.ts` below, so all three agree on exactly what
+  counts as a per-file error vs. a project-wide fatal one
+- `src/webPreview.ts` — `buildPreviewHtml()`: runs `buildProject()`, bundles each compiled file with
+  `esbuild`, and mounts every top-level zero-parameter component into a single preview HTML page —
+  the engine behind the VS Code extension's `Crescent: Preview` command (see
+  `editors/vscode/README.md`'s "Preview" section for exactly what gets mounted and why)
 - `scripts/build-web.js` — bundles generated components (via `esbuild`) into a single
   self-contained `web/index.html` you can open directly in a browser
 - `scripts/test-counter.js`, `scripts/test-day-picker.js` — headless-DOM smoke tests (via
   `jsdom`) that mount the generated components, simulate clicks, and assert the DOM updates
   correctly
+- `scripts/test-preview.js` — exercises `buildPreviewHtml()` against `examples/`: asserts the
+  expected zero-param roots are mounted and prop-taking components aren't, mounts one into `jsdom`
+  and simulates a real click, and checks a project with only semantic errors still produces a
+  (empty, not crashed) preview
 - `scripts/test-web.js` — loads the real `web/index.html` into `jsdom` with script execution
   enabled and simulates clicks through actual DOM events, as a closer proxy for real-browser
   behavior than requiring the generated modules directly

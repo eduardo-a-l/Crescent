@@ -46,6 +46,11 @@
         "command": "crescent.build",
         "title": "Crescent: Build",
         "category": "Crescent"
+      },
+      {
+        "command": "crescent.preview",
+        "title": "Crescent: Preview",
+        "category": "Crescent"
       }
     ],
     "configuration": {

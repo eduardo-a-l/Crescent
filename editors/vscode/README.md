@@ -1,12 +1,12 @@
 # Crescent for VS Code (v0.2)
 
 A VS Code extension for the Crescent language: `.crs` file association, syntax highlighting,
-comment/bracket/indentation configuration, in-editor diagnostics on save/open, and two commands
-that shell out to the `crescent` CLI (`compiler/src/cli.ts` — see `compiler/README.md`).
+comment/bracket/indentation configuration, in-editor diagnostics on save/open, and three commands
+that work with the `crescent` compiler (`compiler/src/cli.ts` — see `compiler/README.md`).
 
-This covers the first two bullets of the "Near-Term VS Code Enablement (v0.x)" plan in the
-repository root's `TODO.md` (§10). There is still no language server — see "Known limitations /
-next steps" below. What you get today:
+This covers the first two bullets, plus the `Crescent: Preview` bullet, of the "Near-Term VS Code
+Enablement (v0.x)" plan in the repository root's `TODO.md` (§10). There is still no language
+server — see "Known limitations / next steps" below. What you get today:
 
 - `.crs` files are recognized as the "Crescent" language.
 - Syntax highlighting (see "What the grammar highlights, and what it deliberately doesn't" below).
@@ -19,11 +19,13 @@ next steps" below. What you get today:
   summary line, exit code) to a "Crescent" output channel.
 - **Crescent: Build** — runs `crescent build <project root> --out-dir <root>/<crescent.outDir>`
   the same way.
+- **Crescent: Preview** — builds the project and bundles every previewable component into a live
+  webview panel (see "Preview" below for exactly what gets mounted and when it reloads).
 
 ## Running it during development
 
 There's no build step for the extension itself (plain JS, no bundler) — but diagnostics and
-**Check**/**Build** both need the *compiler* built first:
+**Check**/**Build**/**Preview** all need the *compiler* built first:
 
 ```
 cd ../../compiler && npm run build
@@ -44,12 +46,15 @@ without the debugger attached.)
   — this matches this monorepo's own layout, so **Check**/**Build**/diagnostics all work out of
   the box when developing Crescent itself (after `cd compiler && npm run build`). Consumers outside
   this monorepo will need to set this explicitly until the compiler is published as an npm package.
-  Diagnostics specifically need a *path* here (or the auto-detected one) — a bare command on `PATH`
-  gives the extension no directory to find `project.js` next to, so diagnostics fall back to
-  reporting that the compiler couldn't be loaded rather than guessing a location; **Check**/
-  **Build** still work fine with a bare command, since those just spawn it.
+  Diagnostics and **Preview** specifically need a *path* here (or the auto-detected one) — both
+  `require()` the compiler in-process (`project.js`/`webPreview.js`), so a bare command on `PATH`
+  gives the extension no directory to find those next to, and they fall back to reporting that the
+  compiler couldn't be loaded rather than guessing a location; **Check**/**Build** still work fine
+  with a bare command, since those just spawn it.
 - `crescent.outDir` (string, default `"dist"`) — output directory for **Crescent: Build**, relative
-  to the project root passed to the CLI.
+  to the project root passed to the CLI. **Preview** compiles into a `preview/` subdirectory of
+  this same setting (`<root>/<crescent.outDir>/preview`), so it never clobbers a **Build** run's
+  own `gen/`/`runtime.js`.
 
 ## Diagnostics
 
@@ -78,6 +83,42 @@ checking yet — that's still open, see "Known limitations" below.
 - If the compiler is rebuilt while an Extension Development Host window is still running, Node's
   module cache keeps using the old `project.js` until that window is reloaded — a normal
   edit-the-extension-itself dev-loop wrinkle, not something an end user would hit.
+
+## Preview
+
+**Crescent: Preview** builds the project (`buildProject()`, same as **Build**) and then bundles
+each successfully-compiled file with `esbuild` (`compiler/src/webPreview.ts`'s `buildPreviewHtml()`,
+`require()`d in-process the same way diagnostics `require()`s `project.js`) into a webview panel
+titled "Crescent Preview".
+
+- Only **top-level components declared with zero parameters** are mounted as preview roots — a
+  component that takes parameters (e.g. `component Card(Point origin)`) exists to be used as
+  `<Card origin={...}>` inside another component's view, and the preview has no way to invent a
+  value for `origin`. This matches, component-for-component, the hand-picked target list
+  `compiler/scripts/build-web.js` already used for `compiler/examples/`.
+- A zero-param component can still fail once mounted standalone — most commonly `inject<T>`
+  (design doc §12) with no ancestor `provide<T>` in the mounted subtree, since a preview root has
+  no ancestors. Each mount is wrapped individually, so a failing root shows an inline "Preview
+  error: ..." message in its own section instead of taking down the rest of the page.
+- A file that fails semantic checking is skipped for codegen the same way **Build** skips it (see
+  `compiler/README.md`), and listed under a "Skipped files" section at the top of the preview page
+  instead of silently disappearing.
+- A **fatal** error (a parse/lexer error, or a module-level error like an import cycle) has no
+  partial output to show, same as diagnostics' `FatalDiagnostic` case — it's reported as a popup
+  error instead of opening an empty panel.
+- Running the command again re-runs the build and replaces the existing panel's content in place
+  (it does not open a second panel) and brings it to the front. Saving or opening a `.crs` file
+  also triggers this same rebuild-and-replace *without* bringing the panel to the front, so it
+  doesn't steal focus from the editor while you're actively working — but only for the project the
+  currently-open panel was itself built from, so a save in a different open project (multi-root
+  workspace) doesn't silently swap out what the panel is showing.
+- Like diagnostics, this reflects what's **on disk**, and a compiler rebuilt mid-session needs an
+  Extension Development Host reload to be picked up (same module-cache caveat as above).
+- There's no CSS/HMR-style partial reload — each refresh replaces the entire webview HTML, so any
+  local UI state inside a previewed component (e.g. a `Counter`'s current count) resets on every
+  save. That's a real trade-off of the panel-replace approach, not an oversight; a persistent dev
+  server with real hot-module-reload is a larger, separate piece of work (see "Known limitations"
+  below).
 
 ## What the grammar highlights, and what it deliberately doesn't
 
@@ -120,7 +161,9 @@ Tracked in the root `TODO.md` (§10, "Near-Term VS Code Enablement"):
 - No continuous/on-document-change checking — only on save and on open (see "Diagnostics" above).
 - No per-workspace-folder diagnostic partitioning in a multi-root workspace (see "Diagnostics"
   above).
-- No `Crescent: Preview` command yet.
+- **Crescent: Preview** replaces the whole webview on every reload rather than doing a real
+  hot-module-reload, so previewed components lose their local state on every save (see "Preview"
+  above).
 - No LSP — this extension is intentionally process/in-process-`require()`-based, not a language
   server, per the plan's own note that a full LSP is a later v0.x/v1.0 concern once the diagnostic
   model has stabilized.

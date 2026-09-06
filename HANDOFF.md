@@ -14,14 +14,15 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: in-editor diagnostics for the VS Code extension (`editors/vscode/`) — `crescent
-check`'s underlying `checkProject()` is now called in-process on save/open and published as real
-`vscode.Diagnostic`s, plus a small compiler-side improvement (fatal parse/lex errors now carry the
-file that failed). See "Last Completed Work" below. Choose the next item from `TODO.md` before
-beginning new work — the maintainer's stated plan is a playground next, then real project
-testing, then broader language features (enum, match, etc). Continuous/on-change diagnostics,
-`Crescent: Preview`, and the LSP replacement (`TODO.md` §10) are also still open if the maintainer
-wants more VS Code work first.
+Just completed: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a new
+`compiler/src/webPreview.ts` builds a project and bundles its previewable components (via
+`esbuild`) into a single HTML page, `require()`d in-process by a new `crescent.preview` command
+that opens/reloads a webview panel. See "Last Completed Work" below. Choose the next item from
+`TODO.md` before beginning new work — the maintainer's stated plan was CLI → VS Code support →
+real project testing → broader language features (enum, match, etc); there is no "playground"
+step (an earlier session's summary of this plan mentioned one, which was inaccurate — corrected
+here). Continuous/on-change diagnostics, multi-root diagnostic partitioning, and the LSP
+replacement (`TODO.md` §10) are also still open if the maintainer wants more VS Code work first.
 
 ---
 
@@ -53,122 +54,130 @@ The design and grammar documents should be consulted before changing language be
 
 ### Feature
 
-In-editor diagnostics for the VS Code extension (`TODO.md` §10 "Near-Term VS Code Enablement",
-the "Publish parser, module, and semantic-checker diagnostics ... on save" bullet — the
-maintainer's stated next step after last session's minimal extension). Two parts:
+`Crescent: Preview` for the VS Code extension (`TODO.md` §10 "Near-Term VS Code Enablement", the
+last unstarted bullet besides continuous diagnostics and the LSP replacement — the maintainer's
+explicit next step, requested via a plain "continue"). Two parts:
 
-**1. A small, targeted compiler-side fix, done first because the diagnostics feature needed it:**
-`FatalDiagnostic` (`project.ts`) previously had no way to say *which file* a parse/lex error came
-from — `loadAllPrograms()` (`modules.ts`) threw `LexError`/`ParseError` straight out of its
-directory-walk loop with no chance to attach the file first, so `checkProject()`'s `fatal` result
-carried only a message string. Fixed by:
-- Adding an optional `file?: string` field to both `LexError` (`lexer.ts`) and `ParseError`
-  (`parser.ts`) — set by the *caller*, not the lexer/parser themselves, since neither has any
-  notion of which file on disk it's scanning.
-- `loadAllPrograms()` now wraps its `parseCrescent(source)` call in a `try`/`catch` per file,
-  attaching `relPath` to a caught `LexError`/`ParseError` before rethrowing it.
-- `FatalDiagnostic` gained a `file: string | null` field; `checkProject()` populates it from the
-  caught error's `.file` for the `'parse'` stage. Left `null` for the `'module'` stage
-  (`ModuleError`) deliberately — an import cycle or a missing `use`-d export inherently involves
-  *at least two* files, and the thrown message already names both (e.g. "... in 'lib.crs'
-  (imported from 'main.crs')"), so picking one to call "the" file would be a guess, not a fact.
-  This follows `AGENTS.md`'s "identify the disagreement, don't silently choose" principle — it was
-  flagged as an open question in this file's own "Recommended Next Step" last session rather than
-  silently resolved either way.
-- `cli.ts`'s `reportCheck()`/`reportBuild()` and `index.ts`'s fatal-error branch both now print
-  `<file>: <message>` instead of a bare `error: <message>` when a file is known.
-- This is not a language-semantics change — it only affects which file a syntax error is
-  *attributed to* for tooling purposes, exactly the kind of deviation from strict fail-fast
-  behavior last session's `checkProject()` already established a precedent for.
+**1. `compiler/src/webPreview.ts` — the compiler-side build/bundle engine, kept independent of the
+extension so it's directly unit-testable:**
+- `buildPreviewHtml(root, outDir)` calls `buildProject()` (the same `project.ts` API `cli.ts` and
+  the diagnostics feature already use), then bundles each successfully-compiled file with
+  `esbuild` (`bundle: true, format: 'iife'`, one unique `globalName` per file) — the same approach
+  `scripts/build-web.js` already used for `compiler/examples/`, generalized to an arbitrary
+  project root instead of a hard-coded target list.
+- **Which components get mounted:** only top-level components declared with **zero parameters**.
+  A component that takes parameters (e.g. `component Card(Point origin)`, `component
+  Greeting(string name)`) exists to be used as `<Card origin={...}>`/`<Greeting name="...">` inside
+  another component's view — the preview has no value to supply for `origin`/`name`. This isn't a
+  guess: it was verified against every `.crs` file in `compiler/examples/` to match, component-for-
+  component, the hand-picked target list `scripts/build-web.js` already used (`Counter`,
+  `DayPicker`, `ThemeToggle`, the composition/provide_inject/modules `App`s, `TaskBoard`, `Cart`,
+  `TodoList`, `TaskList`, `NumberList`, `Header` all have zero params; `Greeting` and the
+  `modules/components/card.crs` `Card(Point origin)` are the only excluded ones).
+- **Mount-time failure isolation:** a zero-param component can still fail once mounted standalone —
+  most notably `inject<T>` (design doc §12) with no ancestor `provide<T>`, since a preview root by
+  definition has no ancestors (`provide_inject.crs`'s `DeepNestedWidget` and `Dashboard` both hit
+  this). Detecting that *transitively* — including through components nested arbitrarily deep in
+  the view tree — is a real dataflow analysis, not something to bolt onto a preview-bundling tool
+  in the same session. Instead, each mount call in the generated HTML is wrapped in its own
+  try/catch: a failing root shows an inline "Preview error: ..." message in its own section,
+  console-logs the real error, and does not prevent any other root on the page from rendering.
+  This was a real bug caught by testing, not a decision made up front — see "Manual verification".
+- A file that fails semantic checking is skipped for codegen exactly the way `buildProject()`
+  already skips it for **Build**; skipped files are listed under a "Skipped files" section at the
+  top of the preview page (with the checker's own message) instead of silently vanishing. If
+  *every* file fails, the result is a valid, empty preview page saying so — not a thrown error.
+- A **fatal** error (parse/lex, or a module-level error like an import cycle) has no partial output
+  to bundle, same as `FatalDiagnostic` in the diagnostics feature — `buildPreviewHtml()` returns
+  `{ ok: false }` in that case rather than throwing or producing broken HTML.
 
-**2. The actual diagnostics feature, in `editors/vscode/src/extension.js`:**
-- Refactored the existing `findCliPath()` to share a new `findDistDir()` helper (walks up from the
-  project root looking for `compiler/dist/cli.js`, same logic as before, now reusable) and added
-  `findProjectModulePath()`, which resolves to `compiler/dist/project.js` — either next to a
-  configured `crescent.cliPath` that ends in `.js`, or via the auto-detected `findDistDir()`. A
-  bare-command `crescent.cliPath` (e.g. `crescent` after `npm link`) gives diagnostics no
-  directory to find `project.js` next to, so that case falls back to a clear "couldn't load the
-  compiler" message in the output channel rather than guessing a location — **Check**/**Build**
-  still work fine with a bare command, since those only need to spawn it, not `require()` it.
-- Added `loadProjectModule()` — `require()`s the compiled `project.js` **in-process** (not
-  spawning the CLI and parsing its text output — keeps the mapping to `vscode.Diagnostic` exact).
-  Node's module cache means a mid-session compiler rebuild needs an Extension Development Host
-  reload to pick up — documented as an acceptable, narrow dev-loop wrinkle, not something to
-  engineer around (e.g. with cache-busting) for how rarely it'd matter.
-- Added a `vscode.DiagnosticCollection` (`'crescent'`), created and disposed alongside the existing
-  output channel. `refreshDiagnostics(root)` calls `checkProject(root)` and republishes the
-  **entire** collection from its result every time — correct, since a diagnostic like a duplicate
-  declaration or an undefined name can depend on another file via `use` imports, so re-checking
-  only the saved file wouldn't be enough. Documented trade-off: in a multi-root workspace, saving
-  in one project's folder clears diagnostics for a *different* open project until that one is
-  itself saved/opened again — there's no per-root partitioning yet.
-- `wholeLineRange()` maps `checker.ts`'s 1-based `Diagnostic.line` (no column — nothing more
-  precise to underline) to a 0-based `vscode.Range` spanning the whole line.
-- A `fatal` result with a `file` becomes a single-line diagnostic on that file; a `fatal` without
-  one (a `ModuleError`) becomes a `showErrorMessage` popup instead of a guessed-file diagnostic —
-  directly exercising the compiler-side fix above.
-- Wired to `vscode.workspace.onDidSaveTextDocument` and `onDidOpenTextDocument` (both filtered to
-  `document.languageId === 'crescent'`), plus a one-time pass over `vscode.workspace.textDocuments`
-  during `activate()` so a `.crs` file that's already open when the extension starts doesn't sit
-  there looking clean until the user happens to save it. Deliberately **not** wired to
-  `onDidChangeTextDocument` (continuous checking) — that's its own separate, still-open `TODO.md`
-  bullet, per `AGENTS.md` §15's "don't begin a second major feature" in one session.
-- `getProjectRootForDocument()`: the saved/opened document's workspace folder, or (if there isn't
-  one — e.g. a single file opened without a folder) the file's own directory, treated as the
-  project root. A documented, reasonable fallback, not a silent gap.
-- `editors/vscode/README.md`: added a "Diagnostics" section covering all of the above (in-process
-  vs. process-based, whole-project re-check semantics and the multi-root trade-off, whole-line-only
-  underlines, file-attributed vs. popup fatal errors, on-disk-not-buffer staleness, and the
-  dev-loop module-cache note), updated the intro bullet list and version to `0.2.0`, and replaced
-  the "press F5" instruction (which didn't actually work without a `launch.json`) with a reference
-  to the root `.vscode/launch.json` the maintainer committed between sessions.
-- `TODO.md`: checked off the diagnostics-on-save/open bullet under §10 with a pointer to what it
-  covers; split out "on document changes too" as its own still-open bullet rather than leaving it
-  bundled with (and looking like it blocks) the now-done save/open work; expanded the
-  machine-readable-diagnostics note to mention `FatalDiagnostic.file`.
+**2. The `crescent.preview` command, in `editors/vscode/src/extension.js`:**
+- `findWebPreviewModulePath()`/`loadWebPreviewModule()` mirror the existing
+  `findProjectModulePath()`/`loadProjectModule()` pattern exactly (same `crescent.cliPath`/
+  `findDistDir()` resolution, same in-process `require()` rationale, same bare-command limitation
+  and same Node module-cache dev-loop caveat) — resolving to `webPreview.js` instead of
+  `project.js`.
+- Compiles into `<root>/<crescent.outDir>/preview` — nested under the existing `crescent.outDir`
+  setting rather than a new setting, so it never collides with a **Build** run's own `gen/`/
+  `runtime.js` in the same directory.
+- On first run, opens a `vscode.WebviewPanel` (`enableScripts: true`); on subsequent runs, replaces
+  that panel's `webview.html` in place and reveals it, rather than opening a second panel —
+  verified with a mock-`vscode` harness (see "Manual verification").
+- Saving or opening a `.crs` file also triggers this same rebuild-and-replace, but with
+  `reveal=false` (doesn't steal focus from the editor while typing) and **only** when a preview
+  panel is already open **and** was built from the same project root as the saved/opened document
+  — so a save in a different open project (multi-root workspace) can't silently swap out what an
+  unrelated open preview panel is showing.
+- The `crescent.preview` command handler and the save/open-triggered refresh both call (and, for
+  the command, `return` — see "Manual verification" for why this mattered) the same
+  `refreshPreview(root, reveal)` helper, keeping the "open" and "reload" paths from drifting apart.
+- `editors/vscode/README.md`: added a "Preview" section covering all of the above (what gets
+  mounted and why, mount-failure isolation, skipped-files/fatal-error reporting, panel reuse and
+  the save-triggered reload's scoping, and the honest limitation that a reload replaces the whole
+  webview rather than doing a real hot-module-reload — so a previewed component's local state, like
+  a `Counter`'s count, resets on every save); updated the intro bullet list, the `cliPath`/`outDir`
+  settings notes, and "Known limitations" (removed the now-stale "no `Crescent: Preview` command
+  yet" bullet, added the HMR/state-reset one in its place).
+- `compiler/README.md`: added `src/project.ts`, `src/webPreview.ts`, and
+  `scripts/test-preview.js` to the structure list (the first was previously undocumented there
+  despite already existing; the other two are new this session).
+- `TODO.md`: checked off the `Crescent: Preview` bullet under §10 with a pointer to what it covers
+  and its known HMR/state-reset trade-off.
 
 ### Manual verification
 
-Still no automated test suite covers a VS Code extension (see "Known Problems"/"Recommended Next
-Step" — unchanged from last session). Verified by hand, extending last session's mock-`vscode`
-approach with a `DiagnosticCollection`/`Diagnostic`/`Range`/`Uri` mock:
+Extended the existing mock-`vscode` approach (from the diagnostics session) with a minimal
+`WebviewPanel`/`createWebviewPanel` mock, plus a real, committed automated test
+(`compiler/scripts/test-preview.js`, wired into `npm test`) for the compiler-side half:
 
-- **Compiler-side fix**: rebuilt (`npm run build`), then ran `node dist/cli.js check <dir>` against
-  a throwaway project with an unterminated `view {` block — output changed from a bare
-  `error: Expected a template node...` to `broken.crs: Expected a template node...`, confirming the
-  file is now attached and printed.
-- **Diagnostics, semantic error**: mocked `vscode`, pointed `crescent.cliPath` at the real built
-  `compiler/dist/cli.js`, opened a throwaway file with a real type-mismatch error (`state<int>
-  count = "not a number";`) via the activation-time `textDocuments` pass — the mock's
-  `DiagnosticCollection.set()` was called with the correct file URI, `severity=0` (Error),
-  `line=1` (0-based, i.e. source line 2 — correct), and the exact expected message.
-- **Diagnostics, clean project**: same setup against the real `compiler/examples/` (auto-detected
-  `compiler/dist`, no `crescent.cliPath` override) — zero diagnostic entries set, confirming a
-  clean project doesn't spuriously flag anything and the auto-detect path works end-to-end, not
-  just the explicit-path one.
-- **Diagnostics, fatal parse error with file attribution**: same setup against a throwaway project
-  with an unterminated `view {` block — a single diagnostic set on the correct file
-  (`broken.crs`), `severity=0`, with the parser's exact message — confirming the new
-  `FatalDiagnostic.file` threads all the way through to a real `vscode.Diagnostic`, not just the
-  CLI's text output.
+- **`buildPreviewHtml()` against `compiler/examples/`**: asserts every expected zero-param root
+  (`Counter`, `DayPicker`, `ThemeToggle`, `App` ×3, `TaskBoard`, `Cart`, `TodoList`, `TaskList`,
+  `NumberList`, `Header`) is mounted, the two prop-taking components are not, there are zero
+  bundling errors, and — via `jsdom` with real script execution — that `Counter` actually renders
+  ("Current Count: 0") and increments on a simulated click ("Current Count: 1") inside the *actual
+  generated preview page*, not just the underlying component module directly.
+- **The inject-without-provider case**: the same `jsdom` page asserts `DeepNestedWidget`'s mount
+  shows the `crs-preview-mount-error` class (confirming the try/catch path fires) **and** that
+  `Counter` still incremented correctly on the same page — proving one failing root doesn't take
+  down the others. This test is what caught the crash in the first place: the initial
+  implementation had no try/catch, so `provide_inject.crs`'s `DeepNestedWidget`/`Dashboard` roots
+  threw during mount and crashed the whole page's `DOMContentLoaded` handler, silently breaking
+  every other mount call queued after them.
+- **All-semantic-errors project**: a throwaway project with a single type-mismatch-only file still
+  produces `{ ok: true }` with zero mounts and the broken file listed under `builds` with
+  `outFile === null` — not a thrown exception.
+- **The VS Code command, via mock-`vscode`**: ran `crescent.preview` against the real
+  `compiler/examples/` — a webview panel was created with the expected title, its HTML contained
+  the expected mount IDs for both `Counter` and the composition example's `App`; running the
+  command a **second** time confirmed exactly one panel exists (not two) and `reveal()` was called
+  on it. This surfaced a real bug: the command handler didn't `return` the promise from
+  `refreshPreview()`, so `await`ing the command resolved before the build actually finished —
+  harmless in real VS Code (which doesn't wait on a void-returning command either way) but flagged
+  as worth fixing anyway, since a command handler that *can* return its promise should, for any
+  caller (including a future test) that does want to await completion. Fixed by returning it.
+- **The fatal-error path**: ran the command against a project with an unterminated `view {` block
+  — zero panels created, `showErrorMessage` called with the parser's real message
+  (`Expected a template node inside view block at line 3 (got EOF '')`), not a bare "unknown
+  error". This caught a second real bug: the code originally read `result.build.fatal` instead of
+  the correctly-nested `result.build.check.fatal`, which silently produced "unknown error" for
+  every fatal case. Fixed, then re-verified.
 - `node --check editors/vscode/src/extension.js` — no syntax errors.
-- Full compiler regression: `npx tsc --noEmit` and `npm test` (145 PASS) after the `lexer.ts`/
-  `parser.ts`/`modules.ts`/`project.ts`/`cli.ts`/`index.ts` changes — unchanged pass count,
-  confirming the fatal-error-attribution change didn't alter any other observable behavior.
+- Full compiler regression: `npx tsc --noEmit` and `npm test` (168 PASS, up from 145 — the 23 new
+  assertions are `test-preview.js`; every pre-existing assertion still passes unchanged).
 
 ### Files changed
 
-- `compiler/src/lexer.ts` (`LexError.file?`)
-- `compiler/src/parser.ts` (`ParseError.file?`)
-- `compiler/src/modules.ts` (`loadAllPrograms()` attaches `file` before rethrowing)
-- `compiler/src/project.ts` (`FatalDiagnostic.file`)
-- `compiler/src/cli.ts` (prints `file:` prefix when known)
-- `compiler/src/index.ts` (same, for the `examples/`-driven runner)
-- `editors/vscode/src/extension.js` (diagnostics collection, in-process `checkProject()` calls,
-  `findDistDir()`/`findProjectModulePath()`, save/open listeners)
-- `editors/vscode/README.md` ("Diagnostics" section, updated intro/version/dev instructions)
-- `editors/vscode/package.json` (version bump to `0.2.0`)
-- `TODO.md` (checked off the diagnostics bullet; split out "on document changes" as its own item)
+- `compiler/src/webPreview.ts` (new — `buildPreviewHtml()`)
+- `compiler/scripts/test-preview.js` (new — wired into `npm test`)
+- `compiler/package.json` (`test` script now runs `test-preview.js`)
+- `compiler/README.md` (structure list: `src/project.ts`, `src/webPreview.ts`,
+  `scripts/test-preview.js`)
+- `editors/vscode/src/extension.js` (`crescent.preview` command, `refreshPreview()`,
+  `findWebPreviewModulePath()`/`loadWebPreviewModule()`, webview panel state, save/open-triggered
+  reload)
+- `editors/vscode/package.json` (registered the `crescent.preview` command)
+- `editors/vscode/README.md` ("Preview" section, updated intro/settings/"Known limitations")
+- `TODO.md` (checked off the `Crescent: Preview` bullet)
 - `HANDOFF.md`
 
 ---
@@ -182,14 +191,15 @@ cd compiler && npx tsc --noEmit
 -> no errors
 
 cd compiler && npm test
--> 145 PASS, 0 FAIL, exit code 0 (unchanged count — the lexer.ts/parser.ts/modules.ts/project.ts/
-cli.ts/index.ts changes this session are additive (an optional field, a try/catch that only
-changes what's attached to an already-thrown error) and don't alter any check's pass/fail outcome)
+-> 168 PASS, 0 FAIL, exit code 0 (up from 145 — 23 new assertions from
+compiler/scripts/test-preview.js, added this session; every pre-existing assertion still passes
+unchanged)
 ```
 
 No automated suite exercises `editors/vscode/` — see "Manual verification" above for what was
-checked by hand instead (now covering diagnostics too, not just Check/Build), and "Recommended
-Next Step" for a real, committed test harness as a worthwhile follow-up.
+checked by hand instead (now covering the `Crescent: Preview` command too, not just Check/Build/
+diagnostics), and "Recommended Next Step" for a real, committed test harness as a worthwhile
+follow-up.
 
 ---
 
@@ -226,6 +236,16 @@ land in `checker.ts` without a matching README bullet.
 
 ### Other
 
+- `Crescent: Preview` (this session) mounts a zero-param component standalone even when it (or
+  something nested inside its view, arbitrarily deep) declares `inject<T>` with no ancestor
+  `provide<T>` — a preview root has no ancestors by construction, so this always fails at mount
+  time. It's caught per-mount (an inline "Preview error" instead of crashing the page — see "Last
+  Completed Work"), not prevented; detecting it statically would need to trace `provide`/`inject`
+  through the whole component-nesting graph, which is a real, separate analysis task, not
+  something to fold into a preview-bundling tool. Also: a preview reload replaces the entire
+  webview HTML rather than doing a real hot-module-reload, so a previewed component's own local
+  `state<T>` (e.g. a counter's current count) resets on every save — a real, documented trade-off
+  of the "just replace the panel" approach, not an oversight.
 - `callback_param.crs` isn't wired into `build-web.js`/`test-web.js`, so `void()` callback params
   are checked and code-generated (verified by hand) but not yet exercised by a real-browser DOM
   click test. Would be a reasonable small follow-up if `void()` params become more widely used.
@@ -260,42 +280,49 @@ land in `checker.ts` without a matching README bullet.
 
 ## Unfinished Work
 
-_No active unfinished implementation. This session's diagnostics task (compiler-side fatal-file
-attribution + the VS Code extension's on-save/on-open `DiagnosticCollection`) is complete and
-manually verified — see "Last Completed Work" above. Continuous/on-change diagnostics,
-`Crescent: Preview`, and the LSP replacement (`TODO.md` §10) remain unstarted — deliberately out
-of scope this session per `AGENTS.md` §15 ("do not begin a second major feature")._
+_No active unfinished implementation. This session's `Crescent: Preview` command
+(`compiler/src/webPreview.ts` + `editors/vscode/src/extension.js`'s `crescent.preview`) is
+complete, covered by a new committed automated test (`compiler/scripts/test-preview.js`, in
+`npm test`) for its compiler-side half, and manually verified end-to-end for the extension half —
+see "Last Completed Work" above. Continuous/on-change diagnostics, multi-root diagnostic
+partitioning, and the LSP replacement (`TODO.md` §10) remain unstarted — deliberately out of scope
+this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 ---
 
 ## Recommended Next Step
 
 1. Read `TODO.md`.
-2. **The maintainer's stated order was: CLI → VS Code support → playground → real project testing
-   → broader language features (enum, match, etc).** CLI, a first VS Code extension, and
-   in-editor diagnostics are all done now (see "Last Completed Work" above and the session log
-   below). Remaining unstarted bullets in `TODO.md`'s "Near-Term VS Code Enablement (v0.x)":
+2. **The maintainer's stated order was: CLI → VS Code support → real project testing → broader
+   language features (enum, match, etc)** (there is no "playground" step — an earlier session's
+   summary of this plan mentioned one, which was inaccurate; corrected here and in "Current
+   State" above). CLI, a first VS Code extension, in-editor diagnostics, and now
+   `Crescent: Preview` are all done (see "Last Completed Work" above and the session log below).
+   Remaining unstarted bullets in `TODO.md`'s "Near-Term VS Code Enablement (v0.x)":
    - **Diagnostics on document changes** (continuous/incremental checking), not just save/open.
      Would need debouncing (don't re-run `checkProject()` on every keystroke) and, since
      `checkProject()` currently only reads from disk, either writing changed buffers to a temp
      location before checking or teaching `loadAllPrograms()`/`checkProject()` to accept in-memory
      file contents for the currently-edited document(s) — the latter is more invasive and was
-     explicitly *not* attempted this session (see "Last Completed Work"'s in-process `project.js`
+     explicitly *not* attempted in the diagnostics session (see its in-process `project.js`
      approach, which still shells out to disk).
-   - **`Crescent: Preview`** — build + open/reload `build:web`-style bundled output, pointed at a
-     real project rather than `compiler/examples/`.
    - **LSP replacement** — the plan's own note is to defer this until the diagnostic model has
-     stabilized; two sessions of hand-verified diagnostics is a reasonable point to start
-     considering it, but there's no urgency while the extension's current process/in-process-
-     `require()` approach still works.
+     stabilized; three sessions of hand-verified/tested VS Code tooling (diagnostics, then preview)
+     is a reasonable point to start considering it, but there's no urgency while the extension's
+     current process/in-process-`require()` approach still works.
    - **Multi-root workspace diagnostic partitioning** (see `editors/vscode/README.md`'s
      "Diagnostics" section) — currently, saving in one project's folder clears diagnostics for a
      different open project until it's re-saved. Scope the `DiagnosticCollection` per project root
      (e.g. key entries by root, or run `checkProject()` for every currently-open root on each save)
-     rather than doing one global clear-and-repopulate.
+     rather than doing one global clear-and-repopulate. Note this session's `crescent.preview`
+     command has the analogous scoping already (a save only reloads a preview panel built from the
+     *same* root) — the diagnostics fix could follow the same pattern.
 3. A worthwhile small addition, independent of the above: a real, committed test harness for
-   `editors/vscode/` and/or `cli.ts` (both still only verified by hand across two sessions now —
-   see "Manual verification" in "Last Completed Work" above). Options, roughly in order of effort:
+   `cli.ts` and the rest of `editors/vscode/` (this session added one for the compiler-side half of
+   `Crescent: Preview` — `compiler/scripts/test-preview.js` — but `cli.ts` itself and the
+   extension's diagnostics/command-wiring logic are still only verified by hand across three
+   sessions now — see "Manual verification" in "Last Completed Work" above). Options, roughly in
+   order of effort:
    - A script-based smoke test for `cli.ts` itself, following the existing
      `compiler/scripts/test-*.js` convention: spawn `node dist/cli.js check/build <fixture-dir>
      --out-dir <tmp>` via `child_process` and assert on stdout/exit code for a valid project, a
@@ -306,16 +333,17 @@ of scope this session per `AGENTS.md` §15 ("do not begin a second major feature
      `vscode-textmate`/`vscode-oniguruma` (not currently a dependency anywhere in this repo — would
      need adding, presumably as a devDependency of a new `editors/vscode/package.json` "test"
      script) to tokenize `compiler/examples/*.crs` and assert on a few key scopes. This is exactly
-     the manual check the previous session did by hand in a scratch directory; committing it as a
+     the manual check a previous session did by hand in a scratch directory; committing it as a
      real test would catch a regression like the `state<int>`-mistaken-for-a-tag bug that session
      found and fixed, before it ships next time.
-   - A script-based smoke test for `extension.js`'s diagnostics logic, reusing this session's
-     mock-`vscode` approach (a small `DiagnosticCollection`/`Diagnostic`/`Range`/`Uri` mock plus the
-     existing command-related mock from last session) as a committed fixture rather than a
-     throwaway scratch directory.
+   - A script-based smoke test for `extension.js`'s diagnostics **and** preview command logic,
+     committing the mock-`vscode` approach both sessions have built up by hand
+     (`DiagnosticCollection`/`Diagnostic`/`Range`/`Uri`/`WebviewPanel` mocks) as a real fixture
+     rather than a throwaway scratch directory each time.
    - A real VS Code extension test (`@vscode/test-electron`) is the most thorough option but the
-     heaviest to set up; consider it once the extension's feature set has settled more (e.g. after
-     `Crescent: Preview`), rather than now.
+     heaviest to set up; now that the extension's feature set has settled more (Check, Build,
+     diagnostics, and Preview are all in), this is a reasonable point to consider it if VS Code
+     work continues being the priority.
 4. If VS Code/testing work is deferred, the semantic checker (`TODO.md` §16 "Current Priority
    Order") is the other standing priority:
    - **"Undefined-name diagnostics"** (Scope/Names) is worth checking against the current
@@ -345,6 +373,63 @@ of scope this session per `AGENTS.md` §15 ("do not begin a second major feature
 
 **AI:** Claude
 
+**Task:** `Crescent: Preview` for the VS Code extension (`TODO.md` §10, "Near-Term VS Code
+Enablement" plan's last unstarted feature bullet besides continuous diagnostics and the LSP
+replacement) — the maintainer's explicit next step, requested via a plain "continue" after
+reading `AGENTS.md`/`HANDOFF.md`/`TODO.md`.
+
+**Result:** Done. New `compiler/src/webPreview.ts` exports `buildPreviewHtml(root, outDir)`:
+builds the project via the existing `buildProject()`, bundles each compiled file with `esbuild`
+(same technique `scripts/build-web.js` already used, generalized off a hard-coded target list),
+and mounts every top-level **zero-parameter** component (verified to exactly match
+`build-web.js`'s hand-picked target list across all of `compiler/examples/`) into one HTML page.
+Each mount is wrapped in its own try/catch so a component that needs an ancestor `provide<T>` it
+doesn't have (`inject<T>` with nothing providing it — a preview root has no ancestors by
+definition) shows an inline error without crashing the rest of the page; a project where every
+file fails semantic checking still produces a valid, empty preview rather than throwing. Wired up
+via a new `crescent.preview` command in `editors/vscode/src/extension.js`, following the exact
+same `findDistDir()`/in-process-`require()` pattern the diagnostics feature already established
+(`findWebPreviewModulePath()`/`loadWebPreviewModule()`) — opens a `WebviewPanel` on first run,
+replaces its HTML and reveals it on later runs, and auto-reloads (without stealing focus) on save/
+open of a `.crs` file, scoped to only affect a preview panel built from the *same* project root.
+Added a real, committed automated test (`compiler/scripts/test-preview.js`, now in `npm test`) for
+the compiler-side half — including a `jsdom` test that actually clicks a real `Counter` inside the
+generated preview page — plus manual verification of the VS Code command with an extended
+mock-`vscode` harness (`WebviewPanel` mock). Testing caught two real bugs before they shipped: (1)
+no try/catch around mount calls, so `provide_inject.crs`'s `DeepNestedWidget`/`Dashboard` crashed
+the whole page; (2) the command handler read `result.build.fatal` instead of the correctly-nested
+`result.build.check.fatal`, so every fatal-error case printed a bare "unknown error" instead of the
+real message — both fixed and re-verified. Updated `editors/vscode/README.md` (new "Preview"
+section, updated intro/settings/"Known limitations"), `compiler/README.md` (structure list), and
+`TODO.md` (checked off the bullet).
+
+**Commit:** Not committed — working tree contains the diff described above (new
+`compiler/src/webPreview.ts`, `compiler/scripts/test-preview.js`; modified
+`compiler/package.json`, `compiler/README.md`, `editors/vscode/src/extension.js`,
+`editors/vscode/package.json`, `editors/vscode/README.md`, `TODO.md`, `HANDOFF.md`), on top of the
+previous sessions' already-committed work (`4e6f485`, `4f51112`, `b57be3f`, `b47d2e9`).
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (168 PASS, 0 FAIL, exit 0 — up
+from 145; the 23 new assertions are `test-preview.js`, every pre-existing assertion unchanged).
+Manually verified the VS Code command end-to-end (panel creation/reuse/reveal, the fatal-error
+popup path with the real parser message, and that a saved `.crs` file in the *same* project
+reloads an already-open panel) via the mock-`vscode` harness — see "Manual verification" in "Last
+Completed Work" for the specific scenarios and the two bugs each one caught. No automated suite
+covers `editors/vscode/` itself yet — see "Recommended Next Step" #3 for making that a real,
+committed test.
+
+**Next:** Continuous/on-change diagnostics, multi-root diagnostic partitioning, and the LSP
+replacement are all still open under `TODO.md` §10 — see "Recommended Next Step" #2 for specifics
+on each. A committed test harness (`cli.ts` itself, the TextMate grammar, or the extension's
+diagnostics/command-wiring logic — see "Recommended Next Step" #3) would also be a good small unit
+if VS Code work isn't picked up immediately.
+
+---
+
+### Previous session
+
+**AI:** Claude
+
 **Task:** In-editor diagnostics for the VS Code extension (`TODO.md` §10, "Near-Term VS Code
 Enablement" plan's diagnostics bullet) — the maintainer's explicit next step after last session's
 minimal extension, requested via a plain "continue".
@@ -371,12 +456,13 @@ text output. Updated `editors/vscode/README.md` (new "Diagnostics" section, vers
 maintainer committed between sessions) and `TODO.md` (checked off the save/open bullet, split
 "on document changes" into its own still-open item).
 
-**Commit:** Not committed — working tree contains the diff described above (modified
+**Commit:** Not committed at the time — working tree contained the diff described above (modified
 `compiler/src/lexer.ts`, `compiler/src/parser.ts`, `compiler/src/modules.ts`,
 `compiler/src/project.ts`, `compiler/src/cli.ts`, `compiler/src/index.ts`,
 `editors/vscode/src/extension.js`, `editors/vscode/README.md`, `editors/vscode/package.json`,
 `TODO.md`, `HANDOFF.md`), on top of the previous two sessions' already-committed CLI and minimal-
 extension work (`4e6f485`, `4f51112`) plus the maintainer's own `b57be3f` (`.vscode/launch.json`).
+Since committed by the maintainer as `b47d2e9` ("feat: Add diagnostics").
 
 **Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (145 PASS, 0 FAIL, exit 0 —
 unchanged count; the compiler-side changes are additive: an optional field plus a try/catch that
@@ -394,7 +480,7 @@ if VS Code work isn't picked up immediately.
 
 ---
 
-### Previous session
+### Older session
 
 **AI:** Claude
 
@@ -423,7 +509,8 @@ exit 0, unchanged — this session touched nothing under `compiler/`). No automa
 `editors/vscode/`; see "Manual verification" in "Last Completed Work" for what was checked by hand,
 and "Recommended Next Step" #3 for options to make that a real, committed test.
 
-**Next:** Diagnostics-in-editor (done next session — see "Latest session" above).
+**Next:** Diagnostics-in-editor (done — see "Older session" below, then superseded by "Previous
+session" and "Latest session" above).
 
 ---
 

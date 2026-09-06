@@ -5,6 +5,10 @@ const { spawn } = require('child_process');
 
 let outputChannel;
 let diagnosticCollection;
+let previewPanel;
+// The project root the currently open preview panel was built from, so a
+// save in a *different* open project doesn't reload this one's preview.
+let previewRoot;
 
 function getConfig() {
   return vscode.workspace.getConfiguration('crescent');
@@ -73,6 +77,17 @@ function findProjectModulePath(startDir) {
   return distDir ? path.join(distDir, 'project.js') : null;
 }
 
+// Same resolution strategy as findProjectModulePath(), for the compiled
+// webPreview.js (buildPreviewHtml()) module used by "Crescent: Preview".
+function findWebPreviewModulePath(startDir) {
+  const configured = getConfig().get('cliPath');
+  if (configured && configured.trim().endsWith('.js')) {
+    return path.join(path.dirname(configured.trim()), 'webPreview.js');
+  }
+  const distDir = findDistDir(startDir);
+  return distDir ? path.join(distDir, 'webPreview.js') : null;
+}
+
 function runCrescentCommand(actionLabel, buildArgs) {
   const root = getProjectRoot();
   if (!root) {
@@ -115,6 +130,21 @@ function runCrescentCommand(actionLabel, buildArgs) {
 // working around (e.g. with cache-busting) for how rarely it matters.
 function loadProjectModule(root) {
   const modulePath = findProjectModulePath(root);
+  if (!modulePath || !fs.existsSync(modulePath)) return null;
+  try {
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    return require(modulePath);
+  } catch (err) {
+    outputChannel?.appendLine(`Crescent: failed to load the compiler from ${modulePath}: ${err.message}`);
+    return null;
+  }
+}
+
+// require()s compiler/dist/webPreview.js. Same Node module-cache caveat as
+// loadProjectModule() above: a mid-session compiler rebuild needs a
+// Development Host reload to be picked up.
+function loadWebPreviewModule(root) {
+  const modulePath = findWebPreviewModulePath(root);
   if (!modulePath || !fs.existsSync(modulePath)) return null;
   try {
     // eslint-disable-next-line global-require, import/no-dynamic-require
@@ -194,6 +224,63 @@ function refreshDiagnostics(root) {
   }
 }
 
+// Builds the project (via the compiled buildPreviewHtml()) and shows the
+// bundled browser output in a webview panel: "opens" it on first run,
+// "reloads" it (replacing its HTML in place) on subsequent runs, matching
+// the TODO.md wording ("builds the project and opens/reloads the browser
+// output"). `reveal` controls whether the panel is brought to the front —
+// true for an explicit "Crescent: Preview" invocation, false for the
+// on-save auto-refresh below, so saving doesn't keep stealing focus from
+// the editor.
+async function refreshPreview(root, reveal) {
+  const webPreviewModule = loadWebPreviewModule(root);
+  if (!webPreviewModule || typeof webPreviewModule.buildPreviewHtml !== 'function') {
+    vscode.window.showErrorMessage(
+      'Crescent: could not load the compiler to build the preview. Build it ' +
+        '(`npm run build` inside compiler/), or set "crescent.cliPath" to a compiled ' +
+        'compiler/dist/cli.js.',
+    );
+    return;
+  }
+
+  const outDirSetting = getConfig().get('outDir') || 'dist';
+  // Nested under a `preview/` subdirectory of the configured build output so
+  // it doesn't collide with a "Crescent: Build" run's own `gen/`/`runtime.js`.
+  const previewOutDir = path.join(root, outDirSetting, 'preview');
+
+  let result;
+  try {
+    result = await webPreviewModule.buildPreviewHtml(root, previewOutDir);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Crescent: preview build failed unexpectedly: ${err.message}`);
+    return;
+  }
+
+  if (!result.ok) {
+    // A fatal parse/module error, same shape as refreshDiagnostics() above —
+    // there is no partial HTML to show in that case.
+    const detail = result.build.check.fatal ? result.build.check.fatal.message : 'unknown error';
+    vscode.window.showErrorMessage(`Crescent: preview build failed: ${detail}`);
+    return;
+  }
+
+  if (!previewPanel) {
+    previewPanel = vscode.window.createWebviewPanel('crescentPreview', 'Crescent Preview', vscode.ViewColumn.Beside, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+    });
+    previewPanel.onDidDispose(() => {
+      previewPanel = undefined;
+      previewRoot = undefined;
+    });
+  } else if (reveal) {
+    previewPanel.reveal(vscode.ViewColumn.Beside, true);
+  }
+
+  previewRoot = root;
+  previewPanel.webview.html = result.html;
+}
+
 function activate(context) {
   outputChannel = vscode.window.createOutputChannel('Crescent');
   context.subscriptions.push(outputChannel);
@@ -216,9 +303,29 @@ function activate(context) {
     }),
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('crescent.preview', () => {
+      const root = getProjectRoot();
+      if (!root) {
+        vscode.window.showErrorMessage('Crescent: open a folder before running this command.');
+        return undefined;
+      }
+      return refreshPreview(root, true);
+    }),
+  );
+
   const handleDocumentEvent = (document) => {
     if (document.languageId !== 'crescent') return;
-    refreshDiagnostics(getProjectRootForDocument(document));
+    const root = getProjectRootForDocument(document);
+    refreshDiagnostics(root);
+    // Only reload an already-open preview, and only when the saved/opened
+    // document belongs to the same project it was built from — otherwise a
+    // save in a different open project would silently rebuild and replace
+    // this one's preview. Not revealed (reveal=false): saving shouldn't
+    // steal focus away from the editor the user is actively working in.
+    if (previewPanel && previewRoot === root) {
+      refreshPreview(root, false);
+    }
   };
 
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(handleDocumentEvent));
