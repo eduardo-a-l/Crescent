@@ -18,6 +18,13 @@ import {
 export interface FatalDiagnostic {
   stage: 'parse' | 'module';
   message: string;
+  // The file that failed, when known. Parse/lex errors carry this (see
+  // loadAllPrograms() in modules.ts); module errors (import cycles, missing
+  // exports) don't have a single canonical file — their message text already
+  // names the files involved (e.g. "... in 'lib.crs' (imported from
+  // 'main.crs')"), so this is left null rather than guessing which one to
+  // surface as *the* file.
+  file: string | null;
 }
 
 export interface CheckProjectResult {
@@ -36,7 +43,7 @@ export function checkProject(root: string): CheckProjectResult {
     if (e instanceof LexError || e instanceof ParseError) {
       return {
         ok: false,
-        fatal: { stage: 'parse', message: e.message },
+        fatal: { stage: 'parse', message: e.message, file: e.file ?? null },
         files: new Map(),
         importsByFile: new Map(),
         diagnosticsByFile: new Map(),
@@ -55,7 +62,7 @@ export function checkProject(root: string): CheckProjectResult {
     if (e instanceof ModuleError) {
       return {
         ok: false,
-        fatal: { stage: 'module', message: e.message },
+        fatal: { stage: 'module', message: e.message, file: null },
         files,
         importsByFile,
         diagnosticsByFile: new Map(),

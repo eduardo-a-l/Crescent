@@ -16,7 +16,8 @@ function printDiagnostics(diagnostics: Diagnostic[]): void {
 const result = buildProject(examplesDir, distDir);
 
 if (result.check.fatal) {
-  console.error(`\nFAILED: ${result.check.fatal.message}`);
+  const prefix = result.check.fatal.file ? `${result.check.fatal.file}: ` : '';
+  console.error(`\nFAILED: ${prefix}${result.check.fatal.message}`);
   process.exitCode = 1;
 } else {
   for (const [relPath, file] of result.check.files) {

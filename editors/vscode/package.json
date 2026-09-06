@@ -2,7 +2,7 @@
   "name": "crescent-language",
   "displayName": "Crescent Language",
   "description": "Syntax highlighting and Check/Build commands for the Crescent language (.crs files).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "crescent-lang",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {

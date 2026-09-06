@@ -2,7 +2,10 @@ import { Lexer } from './lexer';
 import { Token, TokenType, PRIMITIVE_TYPE_TOKENS } from './tokens';
 import * as AST from './ast';
 
-export class ParseError extends Error {}
+export class ParseError extends Error {
+  // See LexError.file — same rationale, set by loadAllPrograms() after catching.
+  file?: string;
+}
 
 interface Snapshot {
   pos: number;

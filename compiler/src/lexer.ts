@@ -1,6 +1,13 @@
 import { KEYWORDS, Token, TokenType } from './tokens';
 
-export class LexError extends Error {}
+export class LexError extends Error {
+  // Set by loadAllPrograms() after catching, since the lexer itself has no
+  // notion of which file it's scanning — only the caller walking the project
+  // directory knows that. Left undefined when a LexError propagates from
+  // somewhere that isn't scanning a specific file on disk (e.g. direct calls
+  // to parseCrescent() from tests).
+  file?: string;
+}
 
 export class Lexer {
   private source: string;

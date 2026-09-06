@@ -369,13 +369,21 @@ Every important compiler bug should ideally become a regression test.
   projects rather than the hard-coded `examples/` directory.
 - [~] Define machine-readable diagnostics with file, line, column (line-only temporarily if
   necessary), severity, message, and a stable error code when available. Diagnostics now carry
-  file + line (no column yet) + severity + message; no stable error codes yet.
+  file + line (no column yet) + severity + message; no stable error codes yet. Fatal parse/lex
+  errors now also carry the offending file (`FatalDiagnostic.file`, via `modules.ts`'s
+  `loadAllPrograms()` attaching it before rethrowing) — module errors (import cycles, missing
+  exports) still don't, since they inherently involve more than one file and their message text
+  already names them.
 - [x] Create a minimal VS Code extension: `.crs` file association, TextMate syntax highlighting,
   comment/bracket/indent configuration, and `Crescent: Check` / `Crescent: Build` commands. See
   `editors/vscode/` (`editors/vscode/README.md` documents what the grammar does and does not
   attempt, and the remaining limitations below).
-- [ ] Publish parser, module, semantic, and codegen diagnostics in VS Code on save, then on document
-  changes; a full incremental checker is not required for this first version.
+- [x] Publish parser, module, and semantic-checker diagnostics in VS Code on save and on open (via
+  `checkProject()`, called in-process — see `editors/vscode/src/extension.js` and its README's
+  "Diagnostics" section for exactly what is and isn't covered, including the multi-root-workspace
+  limitation).
+- [ ] Publish diagnostics on document changes too (continuous/incremental checking), not just on
+  save/open.
 - [ ] Add a `Crescent: Preview` command that builds the project and opens/reloads the browser output.
 - [ ] Replace process-based checking with a small LSP server once the shared project API and
   diagnostic model are stable.

@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as AST from './ast';
-import { parseCrescent } from './parser';
+import { LexError } from './lexer';
+import { parseCrescent, ParseError } from './parser';
 
 export class ModuleError extends Error {}
 
@@ -21,8 +22,15 @@ export function loadAllPrograms(rootDir: string): Map<string, LoadedFile> {
       } else if (entry.name.endsWith('.crs')) {
         const relPath = path.relative(rootDir, full).split(path.sep).join('/');
         const source = fs.readFileSync(full, 'utf-8');
-        const program = parseCrescent(source);
-        files.set(relPath, { relPath, program });
+        try {
+          const program = parseCrescent(source);
+          files.set(relPath, { relPath, program });
+        } catch (e) {
+          if (e instanceof LexError || e instanceof ParseError) {
+            e.file = relPath;
+          }
+          throw e;
+        }
       }
     }
   }
