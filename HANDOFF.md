@@ -475,6 +475,84 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 **AI:** Claude
 
+**Task:** Maintainer-reported preview/editor polish, requested directly: (1) remove the leftover
+"Crescent Preview"/component-name/file-path chrome the maintainer said they were still seeing atop
+the rendered preview; (2) remove an unexplained horizontal rule appearing below their own rendered
+content; (3) fix TextMate syntax highlighting so a tag's closing `>`/`/>` is colored like the rest
+of the tag punctuation (`<`, `</`) instead of like the `>`/`>=` comparison operator.
+
+**Result:**
+- (1) Inspected `compiler/src/webPreview.ts` at HEAD: the `<h1>Crescent Preview</h1>` and per-mount
+  `<h2>{name}</h2>`/`<p>{file}</p>` chrome the maintainer described was already removed in the
+  prior session's commit `db5b3c0` ("feat: Add Icon and Polish Preview") — confirmed by `grep`ing
+  the whole repo for that literal markup (none found) and by reading the commit's diff. No further
+  compiler-side change was needed for this part; the maintainer's screenshot most likely reflects a
+  stale local build (an unrebuilt `compiler/dist/` and/or a cached VS Code webview panel HTML from
+  before pulling `db5b3c0`) rather than a regression at HEAD. Flagged this to the maintainer rather
+  than silently assuming it — see `AGENTS.md` §4 ("Do not invent language semantics"/verify before
+  changing) and §18 (inspect actual repo state, not a summary).
+- (2) Found the real, still-open bug behind the horizontal rule: `webPreview.ts`'s page stylesheet
+  had a bare `section { margin: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; }`
+  rule, originally meant only for the tool's own `<section class="crs-preview-warnings">`/
+  `<section class="crs-preview-empty">` wrapper blocks (skipped-files, bundling-failure, empty-
+  project messages). Because it targeted the bare `section` element rather than a class, it also
+  applied to any `<section>` tag a *user's own* Crescent component renders in its view — exactly
+  the maintainer's case (a `<section>` around their counter's UI), which is why only their content
+  showed the rule and not a `<div>`-based layout. Fixed by renaming the rule to a
+  `.crs-preview-box` class added to the tool's own wrapper `<section>` elements only, leaving a
+  user's own `<section>` (or any other tag) with no injected default page styling.
+- (3) Root cause: `editors/vscode/syntaxes/crescent.tmLanguage.json`'s `tags` rule only tokenized
+  the opening `<`/`</` and the tag name, matching them once and stopping; the closing `>` (and the
+  `/>` of a self-closing tag) was left for the root `operators` rule to pick up, which colors it
+  identically to the `>`/`>=` comparison operator — the actual bug the maintainer's screenshot
+  showed (white, not gray). Fixed by turning `tags` into a `begin`/`end` rule: `begin` still
+  matches `<`/`</` + tag name exactly as before (same negative-lookbehind guard against `state<int>`
+  generics), and `end` matches `/?>`, both captured as `punctuation.definition.tag.crescent` so the
+  whole tag's punctuation is visually consistent. A new `tag-interpolation` sub-rule (a recursive
+  `{`/`}` `begin`/`end`, included inside `tags`) ensures a `>`/`>=` comparison or a nested struct
+  literal inside an attribute's `{...}` expression (e.g. `<HelloPoint p={Point { x: item, y: item }}/>`)
+  is consumed as its own nested region before the outer tag's `end` pattern ever sees it, so it
+  can't prematurely close the tag or get mis-highlighted. The dead standalone
+  `punctuation.terminator.tag.crescent` rule for a bare `/>` (now unreachable, since the tag rule's
+  own `end` consumes it first) was removed to avoid two rules claiming the same token.
+  Verified (scratch-only, not committed — see below) with `vscode-textmate`/`vscode-oniguruma`
+  against: a self-closing component tag with a nested-brace/struct-literal attribute expression
+  (`<HelloPoint p={Point { x: item, y: item }}/>` — confirmed the trailing `/>` and every inner
+  `{`/`}` tokenize correctly, no premature tag close); a text-interpolated child (`<p>...{item}</p>`
+  — confirms plain in-between `{item}` text interpolation, outside any tag's attribute list, is
+  untouched by this change); `state<int>` (confirms the generic-vs-tag guard is unaffected); and
+  two bare comparison lines (`if (count < 5)`, `if (a > b && c >= d)`) confirming ordinary
+  comparison operators outside a tag are still `keyword.operator.crescent`, not tag punctuation.
+
+**Commit:** Not committed at the time — working tree contains the diff described above (modified
+`compiler/src/webPreview.ts`, `editors/vscode/syntaxes/crescent.tmLanguage.json`).
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (168 PASS, 0 FAIL, exit 0 —
+unchanged count; both changes are non-functional-surface — a CSS class rename and a grammar-only
+fix — so no assertion was expected to change). Grammar fix verified with a scratch
+`vscode-textmate`/`vscode-oniguruma` tokenizer script (not committed to the repo — this remains a
+real, standing gap per a previous session's "Recommended Next Step" #3: a committed TextMate
+tokenization test would catch a future regression here automatically instead of relying on manual
+verification each time).
+
+**Problems/Decisions:** The "Crescent Preview" header the maintainer reported is not reproducible
+against the current `develop` HEAD; this is noted rather than silently "fixed" again, since
+re-touching already-correct code without a reproducible cause would risk masking the real issue
+(a stale local build) instead of pointing the maintainer at it.
+
+**Next:** Ask the maintainer to rebuild (`cd compiler && npm run build`) and fully reload/reopen
+the preview panel (or reload the VS Code window) to confirm the header is in fact already gone at
+HEAD; if it still appears after a clean rebuild, that would mean this session's read of the code is
+missing something and needs re-investigation with the maintainer's exact repro steps. Committing a
+real TextMate-tokenization regression test (see "Recommended Next Step" #3 in the previous entries)
+would be a good small follow-up given this session found and fixed a real coloring bug there.
+
+---
+
+### Older session
+
+**AI:** Claude
+
 **Task:** `Crescent: Preview` for the VS Code extension (`TODO.md` §10, "Near-Term VS Code
 Enablement" plan's last unstarted feature bullet besides continuous diagnostics and the LSP
 replacement) — the maintainer's explicit next step, requested via a plain "continue" after

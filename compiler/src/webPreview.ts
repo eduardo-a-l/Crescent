@@ -115,21 +115,21 @@ export async function buildPreviewHtml(root: string, outDir: string): Promise<Bu
   const skipped = build.builds.filter((b) => b.outFile === null);
   const skippedHtml =
     skipped.length > 0
-      ? `    <section class="crs-preview-warnings">\n      <h2>Skipped files</h2>\n      <ul>\n${skipped
+      ? `    <section class="crs-preview-box crs-preview-warnings">\n      <h2>Skipped files</h2>\n      <ul>\n${skipped
           .map((s) => `        <li>${escapeHtml(s.relPath)}: ${escapeHtml(describeSkipped(s))}</li>`)
           .join('\n')}\n      </ul>\n    </section>`
       : '';
 
   const bundleErrorHtml =
     bundleErrors.length > 0
-      ? `    <section class="crs-preview-warnings">\n      <h2>Bundling failed</h2>\n      <ul>\n${bundleErrors
+      ? `    <section class="crs-preview-box crs-preview-warnings">\n      <h2>Bundling failed</h2>\n      <ul>\n${bundleErrors
           .map((e) => `        <li>${escapeHtml(e.relPath)}: ${escapeHtml(e.message)}</li>`)
           .join('\n')}\n      </ul>\n    </section>`
       : '';
 
   const emptyHtml =
     mounts.length === 0
-      ? `    <section class="crs-preview-empty">\n      <p>No previewable components found. A previewable component is declared at the top` +
+      ? `    <section class="crs-preview-box crs-preview-empty">\n      <p>No previewable components found. A previewable component is declared at the top` +
         ` level with no parameters (e.g. <code>component App { ... }</code>).</p>\n    </section>`
       : '';
 
@@ -140,7 +140,7 @@ export async function buildPreviewHtml(root: string, outDir: string): Promise<Bu
     <title>Crescent Preview</title>
     <style>
       body { font-family: sans-serif; margin: 0; }
-      section { margin: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; }
+      .crs-preview-box { margin: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; }
       .crs-preview-warnings { color: #b00; }
       .crs-preview-empty { color: #888; }
       .crs-preview-mount-error { color: #b00; font-style: italic; margin: 1.5rem; }
