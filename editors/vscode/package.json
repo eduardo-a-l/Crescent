@@ -26,7 +26,11 @@
         "extensions": [
           ".crs"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/crescent-logo.svg",
+          "dark": "./icons/crescent-logo.svg"
+        }
       }
     ],
     "grammars": [

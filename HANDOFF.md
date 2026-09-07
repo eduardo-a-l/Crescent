@@ -17,14 +17,20 @@
 Just completed: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a new
 `compiler/src/webPreview.ts` builds a project and bundles its previewable components (via
 `esbuild`) into a single HTML page, `require()`d in-process by a `crescent.preview` command
-that opens/reloads a webview panel, plus a follow-up `crescent.previewInBrowser` command
+that opens/reloads a webview panel, plus a `crescent.previewInBrowser` command
 ("Crescent: Open Preview in Browser") that builds the identical HTML but opens it in a real
-system browser tab instead. See "Last Completed Work" below. Choose the next item from
-`TODO.md` before beginning new work — the maintainer's stated plan was CLI → VS Code support →
-real project testing → broader language features (enum, match, etc); there is no "playground"
-step (an earlier session's summary of this plan mentioned one, which was inaccurate — corrected
-here). Continuous/on-change diagnostics, multi-root diagnostic partitioning, and the LSP
-replacement (`TODO.md` §10) are also still open if the maintainer wants more VS Code work first.
+system browser tab instead (both commands, and the diagnostics/webPreview.ts work behind them,
+are now committed — see "Last Completed Work"/"Session Log"). Two smaller follow-ups on top,
+**not yet committed**: the generated page no longer has visible "Crescent Preview"/component-
+name/file-path chrome above each mounted app, just the rendered component(s); and `.crs` files
+now get a file icon (`editors/vscode/icons/crescent-logo.svg`, via
+`contributes.languages[].icon`). See "Last Completed Work" below for both. Choose the next item
+from `TODO.md` before beginning new work — the maintainer's stated plan was CLI → VS Code
+support → real project testing → broader language features (enum, match, etc); there is no
+"playground" step (an earlier session's summary of this plan mentioned one, which was
+inaccurate — corrected here). Continuous/on-change diagnostics, multi-root diagnostic
+partitioning, and the LSP replacement (`TODO.md` §10) are also still open if the maintainer
+wants more VS Code work first.
 
 ---
 
@@ -153,6 +159,34 @@ with no webview-specific assumptions baked in. In `extension.js`:
   than adding a new bullet, since it's the same TODO item ("opens ... the browser output") — this
   command is arguably a more literal reading of that original wording than the webview panel is.
 
+**4. Two more follow-ups, requested after the maintainer committed and actually looked at the
+rendered output — not yet committed as of this writing:**
+- **Removed the preview page's debug chrome.** The generated page used to open with a visible
+  `<h1>Crescent Preview</h1>`, then a `<h2>{ComponentName}</h2>` and a `<p>{file path}</p>` above
+  every mounted component — useful while eyeballing a dozen unrelated `compiler/examples/`
+  components at once, but wrong for a single real project: it just reads as clutter above your
+  actual app. `compiler/src/webPreview.ts` now emits a bare `<div id=... data-crescent-component=
+  "..." data-crescent-file="...">` for each mount instead — the component/file mapping survives
+  (visible in devtools, or `grep`-able in the HTML source) but isn't printed on the page.
+  `<title>Crescent Preview</title>` (the browser **tab** title, not on-page text) was left as-is.
+  Skipped-files/bundling-failure/empty-project messaging is untouched — those are real diagnostics,
+  not decorative chrome, and only ever render when actually relevant. `body`'s margin dropped to
+  `0` so a single mounted app isn't padded away from the page edge the way a real deployment
+  wouldn't be either.
+- **A file icon for `.crs` files**: `assets/crescent-logo.svg` (repo root) copied into
+  `editors/vscode/icons/crescent-logo.svg` — copied rather than referenced via a `../../` path so
+  the extension stays self-contained if it's ever packaged/published standalone outside this
+  monorepo — and wired up via `contributes.languages[0].icon` (`{ light, dark }`, both pointing at
+  the same file) in `package.json`. This is VS Code's own documented mechanism for exactly this
+  (https://code.visualstudio.com/api/extension-guides/file-icon-theme), present well before this
+  extension's `engines.vscode: ^1.75.0` floor, so no version bump was needed. One real caveat,
+  from that same doc, recorded in `editors/vscode/README.md`'s new "File icon" section: a
+  language's `icon` is only a **fallback** — it's shown only when the person's active File Icon
+  Theme doesn't already define its own icon for that file (by extension/filename/language ID). In
+  practice this means it'll show for effectively everyone, since no theme has ever heard of `.crs`
+  — but there's no VS Code API to force it to win over an active theme's own choice if one is ever
+  added, and that's deliberate on VS Code's end, not a gap here.
+
 ### Manual verification
 
 Extended the existing mock-`vscode` approach (from the diagnostics session) with a minimal
@@ -205,11 +239,29 @@ Extended the existing mock-`vscode` approach (from the diagnostics session) with
   automated test was added for this follow-up (only manual verification, as above) — the extracted
   `buildPreviewResult()` has no new *compiler-side* logic to unit-test; it's a thin VS Code-side
   wrapper around the already-tested `buildPreviewHtml()`.
+- **Chrome removal**: inspected `buildPreviewHtml()`'s actual output against `compiler/examples/`
+  directly (not through the mock-`vscode` harness) — confirmed no literal `<h1>Crescent
+  Preview</h1>` or any `<h2>` remains anywhere in the generated HTML, and that
+  `data-crescent-component="Counter"` is present on its mount `<div>`. Re-ran the full
+  `test-preview.js` suite unmodified — still 168 PASS, since its `Counter` assertions query
+  `counterRoot.querySelector('h1')` for the `<h1>` the *component itself* renders inside its own
+  view, which is unrelated to (and unaffected by) the page-chrome `<h1>` that was removed. Re-ran
+  both the panel and browser-open verifications end-to-end against the new HTML shape — both still
+  create/write correctly.
+- **File icon**: `python3 -c "import json; json.load(...)"` confirmed `package.json` is still valid
+  JSON after the `icon` addition; confirmed `editors/vscode/icons/crescent-logo.svg` is byte-
+  identical to `assets/crescent-logo.svg`. Could not visually confirm the icon actually renders in
+  a live VS Code Explorer pane — that needs an actual VS Code window (or `@vscode/test-electron`),
+  neither of which this environment can run; this is a real, documented gap in verification, not
+  something resolved silently. The mechanism itself (`contributes.languages[].icon`) is confirmed
+  against VS Code's own extension API documentation, not assumed from general knowledge.
 
 ### Files changed
 
-- `compiler/src/webPreview.ts` (new — `buildPreviewHtml()`)
-- `compiler/scripts/test-preview.js` (new — wired into `npm test`)
+- `compiler/src/webPreview.ts` (`buildPreviewHtml()`; this round removed its page-chrome
+  `<h1>`/`<h2>`/path-paragraph output, replacing it with invisible `data-*` attributes on each
+  mount `<div>`)
+- `compiler/scripts/test-preview.js` (wired into `npm test`)
 - `compiler/package.json` (`test` script now runs `test-preview.js`)
 - `compiler/README.md` (structure list: `src/project.ts`, `src/webPreview.ts`,
   `scripts/test-preview.js`)
@@ -217,9 +269,12 @@ Extended the existing mock-`vscode` approach (from the diagnostics session) with
   `refreshPreview()`/`openPreviewInBrowser()`/`buildPreviewResult()`,
   `findWebPreviewModulePath()`/`loadWebPreviewModule()`, webview panel state, save/open-triggered
   reload)
-- `editors/vscode/package.json` (registered both preview commands)
+- `editors/vscode/package.json` (registered both preview commands; this round added
+  `contributes.languages[0].icon` pointing at the new `icons/crescent-logo.svg`)
+- `editors/vscode/icons/crescent-logo.svg` (new this round — copy of `assets/crescent-logo.svg`)
 - `editors/vscode/README.md` ("Preview" section plus its "Opening it in a real browser"
-  subsection, updated intro/settings/"Known limitations")
+  subsection, a new "File icon" section, updated intro/settings/"Known limitations", and a
+  "three commands" → "four commands" count fix left stale by the previous round)
 - `TODO.md` (checked off the `Crescent: Preview` bullet, noting the browser-open follow-up)
 - `HANDOFF.md`
 
@@ -423,9 +478,11 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 **Task:** `Crescent: Preview` for the VS Code extension (`TODO.md` §10, "Near-Term VS Code
 Enablement" plan's last unstarted feature bullet besides continuous diagnostics and the LSP
 replacement) — the maintainer's explicit next step, requested via a plain "continue" after
-reading `AGENTS.md`/`HANDOFF.md`/`TODO.md`. Followed, in the same sitting after the maintainer
-committed and reviewed it, by a small follow-up: a second command to open the preview in a real
-browser tab instead of only a VS Code webview panel.
+reading `AGENTS.md`/`HANDOFF.md`/`TODO.md`. Followed, across the same sitting after each round
+was committed and reviewed, by three further requests: a second command to open the preview in a
+real browser tab instead of only a VS Code webview panel; removing the preview page's visible
+"Crescent Preview"/component-name/file-path chrome once the maintainer actually looked at the
+rendered output; and a file icon for `.crs` files.
 
 **Result:** Done. New `compiler/src/webPreview.ts` exports `buildPreviewHtml(root, outDir)`:
 builds the project via the existing `buildProject()`, bundles each compiled file with `esbuild`
@@ -451,7 +508,7 @@ the whole page; (2) the command handler read `result.build.fatal` instead of the
 real message — both fixed and re-verified. Updated `editors/vscode/README.md` (new "Preview"
 section, updated intro/settings/"Known limitations"), `compiler/README.md` (structure list), and
 `TODO.md` (checked off the bullet). The maintainer committed this part as `3684f51`
-("feat: Add preview"). The follow-up requested afterward — extracted the shared build/error-
+("feat: Add preview"). The browser-open follow-up — extracted the shared build/error-
 reporting logic into `buildPreviewResult(root)`, added `openPreviewInBrowser(root)` and a
 `crescent.previewInBrowser` command that writes the same HTML to
 `<root>/<crescent.outDir>/preview/index.html` and opens it via `vscode.env.openExternal()` — needed
@@ -459,25 +516,36 @@ no compiler-side changes at all, since `buildPreviewHtml()`'s output was already
 self-contained HTML string with no webview-specific assumptions baked in. Verified the same way
 (mock-`vscode`, now with an `env.openExternal` mock): correct file written, correct URI opened, no
 webview panel created, and the same fatal-error path re-verified through the new shared helper.
+The maintainer committed this part too, as `c51415a` ("feat: Add preview in browser"). Then, once
+the maintainer actually saw the rendered page: removed the page's visible `<h1>Crescent
+Preview</h1>` and per-mount `<h2>{name}</h2>`/`<p>{file}</p>` chrome from `webPreview.ts`,
+replacing them with invisible `data-crescent-component`/`data-crescent-file` attributes on each
+mount `<div>` (kept for debuggability without being printed on the page); and added a file icon
+for `.crs` files — copied `assets/crescent-logo.svg` into `editors/vscode/icons/` and wired it up
+via `contributes.languages[0].icon` in `package.json`, VS Code's own documented mechanism for a
+language-level fallback file icon. This last round is **not yet committed**.
 
-**Commit:** The `Crescent: Preview` panel command (webPreview.ts, crescent.preview, and the
-associated docs/tests) was committed by the maintainer as `3684f51` ("feat: Add preview"), on top
-of `b47d2e9`/`b57be3f`/`4f51112`/`4e6f485`. The `crescent.previewInBrowser` follow-up on top of
-that is **not committed** — working tree contains modified `editors/vscode/src/extension.js`,
-`editors/vscode/package.json`, `editors/vscode/README.md`, `TODO.md`, `HANDOFF.md`; no new files
-this round.
+**Commit:** The panel command (`webPreview.ts`, `crescent.preview`, and the associated docs/tests)
+was committed by the maintainer as `3684f51` ("feat: Add preview"). The browser-open command
+(`crescent.previewInBrowser`, `buildPreviewResult()`, `openPreviewInBrowser()`) was committed as
+`c51415a` ("feat: Add preview in browser"), on top of `3684f51`/`b47d2e9`/`b57be3f`/`4f51112`/
+`4e6f485` — this repo's actual `develop` HEAD as of this writing. The chrome-removal and file-icon
+round on top of `c51415a` is **not committed**: working tree contains modified
+`compiler/src/webPreview.ts`, `editors/vscode/package.json`, `editors/vscode/README.md`,
+`HANDOFF.md`, plus the new `editors/vscode/icons/crescent-logo.svg`.
 
 **Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (168 PASS, 0 FAIL, exit 0 — up
 from 145; the 23 new assertions are `test-preview.js`, every pre-existing assertion unchanged;
-unchanged again after the browser-open follow-up, which touched no compiler code). Manually
-verified the VS Code command end-to-end for both the panel (creation/reuse/reveal, the fatal-error
-popup path with the real parser message, and that a saved `.crs` file in the *same* project
-reloads an already-open panel) and the browser-open follow-up (correct file written, correct URI
-passed to `openExternal`, no panel created, fatal-error path unaffected by the refactor) via the
-mock-`vscode` harness — see "Manual verification" in "Last Completed Work" for the specific
-scenarios and the two bugs each one caught for the panel command. No automated suite covers
-`editors/vscode/` itself yet — see "Recommended Next Step" #3 for making that a real, committed
-test.
+unchanged again after the browser-open command and the chrome removal, neither of which added or
+removed any assertions — `test-preview.js`'s `Counter` checks query the `<h1>` the *component*
+itself renders, not the page chrome that was removed). Manually verified the VS Code command
+end-to-end for both the panel (creation/reuse/reveal, the fatal-error popup path with the real
+parser message, and that a saved `.crs` file in the *same* project reloads an already-open panel)
+and the browser-open command (correct file written, correct URI passed to `openExternal`, no panel
+created, fatal-error path unaffected by the refactor) via the mock-`vscode` harness — see "Manual
+verification" in "Last Completed Work" for the specific scenarios and the two bugs each one caught
+for the panel command. No automated suite covers `editors/vscode/` itself yet — see "Recommended
+Next Step" #3 for making that a real, committed test.
 
 **Next:** Continuous/on-change diagnostics, multi-root diagnostic partitioning, and the LSP
 replacement are all still open under `TODO.md` §10 — see "Recommended Next Step" #2 for specifics
@@ -487,6 +555,10 @@ if VS Code work isn't picked up immediately. If the maintainer likes the browser
 worth considering whether it should also support a lightweight local HTTP server (instead of a
 bare `file://` URL) for cases where `file://` script execution is restricted by browser security
 settings — not attempted here since a plain `file://` page already works for the verified case.
+The maintainer should confirm the `.crs` file icon actually renders correctly in a real VS Code
+Explorer pane (light and dark themes) — this environment can't launch a real VS Code window to
+check that visually, only that the JSON/SVG are well-formed and the mechanism matches VS Code's
+documented API.
 
 ---
 

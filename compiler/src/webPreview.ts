@@ -89,9 +89,8 @@ export async function buildPreviewHtml(root: string, outDir: string): Promise<Bu
       const rootId = `crs-root-${sanitizeIdentifier(fileBuild.relPath)}-${sanitizeIdentifier(componentName)}`;
       mounts.push({ relPath: fileBuild.relPath, componentName, globalName, rootId });
       sections.push(
-        `    <section>\n      <h2>${escapeHtml(componentName)}</h2>\n      <p class="crs-preview-path">${escapeHtml(
-          fileBuild.relPath
-        )}</p>\n      <div id="${rootId}"></div>\n    </section>`
+        `    <div id="${rootId}" data-crescent-component="${escapeHtml(componentName)}" ` +
+          `data-crescent-file="${escapeHtml(fileBuild.relPath)}"></div>`
       );
       // A zero-param component can still fail at mount time — most notably
       // `inject<T>` (design doc §12), which a component can declare without
@@ -140,16 +139,14 @@ export async function buildPreviewHtml(root: string, outDir: string): Promise<Bu
     <meta charset="utf-8" />
     <title>Crescent Preview</title>
     <style>
-      body { font-family: sans-serif; margin: 1.5rem; }
-      section { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; }
-      .crs-preview-path { color: #888; font-size: 0.85em; margin-top: -0.5rem; }
+      body { font-family: sans-serif; margin: 0; }
+      section { margin: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; }
       .crs-preview-warnings { color: #b00; }
       .crs-preview-empty { color: #888; }
-      .crs-preview-mount-error { color: #b00; font-style: italic; }
+      .crs-preview-mount-error { color: #b00; font-style: italic; margin: 1.5rem; }
     </style>
   </head>
   <body>
-    <h1>Crescent Preview</h1>
 ${skippedHtml}
 ${bundleErrorHtml}
 ${emptyHtml}

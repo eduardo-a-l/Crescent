@@ -1,7 +1,7 @@
 # Crescent for VS Code (v0.2)
 
 A VS Code extension for the Crescent language: `.crs` file association, syntax highlighting,
-comment/bracket/indentation configuration, in-editor diagnostics on save/open, and three commands
+comment/bracket/indentation configuration, in-editor diagnostics on save/open, and four commands
 that work with the `crescent` compiler (`compiler/src/cli.ts` — see `compiler/README.md`).
 
 This covers the first two bullets, plus the `Crescent: Preview` bullet, of the "Near-Term VS Code
@@ -9,6 +9,8 @@ Enablement (v0.x)" plan in the repository root's `TODO.md` (§10). There is stil
 server — see "Known limitations / next steps" below. What you get today:
 
 - `.crs` files are recognized as the "Crescent" language.
+- A file icon for `.crs` files (`assets/crescent-logo.svg`, copied to `editors/vscode/icons/` so
+  the extension is self-contained) — see "File icon" below for the one real caveat.
 - Syntax highlighting (see "What the grammar highlights, and what it deliberately doesn't" below).
 - Matching comments (`//`, `/* */`), bracket matching/auto-closing for `{}`, `[]`, `()`, and basic
   brace-based auto-indent.
@@ -24,6 +26,22 @@ server — see "Known limitations / next steps" below. What you get today:
 - **Crescent: Open Preview in Browser** — the same build/bundle, written to a real `index.html`
   file and opened in your actual default browser instead of a VS Code webview panel (see
   "Preview" → "Opening it in a real browser" below).
+
+## File icon
+
+`contributes.languages[0].icon` in `package.json` points `.crs` files at
+`editors/vscode/icons/crescent-logo.svg` (the same file as the repo root's
+`assets/crescent-logo.svg`, copied in rather than referenced by a `../../` path, so the extension
+still works if it's ever packaged/published on its own outside this monorepo). One real caveat,
+straight from [VS Code's own file-icon-theme docs](https://code.visualstudio.com/api/extension-guides/file-icon-theme):
+a language's `icon` is only a **fallback**. If the person's currently-active File Icon Theme (Seti,
+the various "Material Icon Theme"/"vscode-icons" community themes, etc.) already defines its own
+icon for a file — by extension, filename, or language ID — that theme's icon wins; ours is only
+shown when the active theme falls back to a generic icon for the language. In practice this means
+it *will* show up for effectively everyone, since no icon theme has ever heard of `.crs` — but it's
+not an unconditional override, and a future theme update that adds its own `.crs` icon would take
+over from ours. There's no VS Code API to force our icon to win over an active theme's own
+choice — that's deliberate on their end, not a gap here.
 
 ## Running it during development
 
@@ -99,10 +117,15 @@ titled "Crescent Preview".
   `<Card origin={...}>` inside another component's view, and the preview has no way to invent a
   value for `origin`. This matches, component-for-component, the hand-picked target list
   `compiler/scripts/build-web.js` already used for `compiler/examples/`.
+- The page itself has no visible chrome — no "Crescent Preview" title, no per-component heading or
+  file-path label above each mount, just the rendered component(s) as they'd actually look
+  deployed. The component name and source file are still attached to each mount as invisible
+  `data-crescent-component`/`data-crescent-file` attributes (visible in devtools or by viewing the
+  page source) for anyone debugging a multi-component preview, but nothing is printed on the page.
 - A zero-param component can still fail once mounted standalone — most commonly `inject<T>`
   (design doc §12) with no ancestor `provide<T>` in the mounted subtree, since a preview root has
   no ancestors. Each mount is wrapped individually, so a failing root shows an inline "Preview
-  error: ..." message in its own section instead of taking down the rest of the page.
+  error: ..." message in its own place instead of taking down the rest of the page.
 - A file that fails semantic checking is skipped for codegen the same way **Build** skips it (see
   `compiler/README.md`), and listed under a "Skipped files" section at the top of the preview page
   instead of silently disappearing.
