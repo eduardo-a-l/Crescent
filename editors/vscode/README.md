@@ -21,6 +21,9 @@ server — see "Known limitations / next steps" below. What you get today:
   the same way.
 - **Crescent: Preview** — builds the project and bundles every previewable component into a live
   webview panel (see "Preview" below for exactly what gets mounted and when it reloads).
+- **Crescent: Open Preview in Browser** — the same build/bundle, written to a real `index.html`
+  file and opened in your actual default browser instead of a VS Code webview panel (see
+  "Preview" → "Opening it in a real browser" below).
 
 ## Running it during development
 
@@ -120,6 +123,26 @@ titled "Crescent Preview".
   server with real hot-module-reload is a larger, separate piece of work (see "Known limitations"
   below).
 
+### Opening it in a real browser
+
+**Crescent: Open Preview in Browser** builds the exact same HTML as **Crescent: Preview**
+(`buildPreviewResult()` in `extension.js` is the shared build step behind both commands), but
+instead of a VS Code webview panel it:
+
+- Writes it to `<root>/<crescent.outDir>/preview/index.html` on disk.
+- Opens that file in your system's actual default browser via `vscode.env.openExternal` — a real
+  `file://` page outside VS Code's webview sandbox/CSP, so browser devtools, extensions, and
+  responsive-design mode all work on it normally, unlike the embedded panel.
+- Never opens a webview panel itself, and is not wired to save/open auto-reload the way
+  **Crescent: Preview**'s panel is: there's no live connection to an already-open external browser
+  tab to push a reload into. Running the command again just rewrites the same file and re-invokes
+  the OS's "open" on it — most browsers reuse an already-open tab for the same `file://` URL and
+  you'll need to refresh it yourself (or your browser may do so automatically); that's the
+  browser's/OS's behavior, not something this extension controls.
+- Otherwise behaves identically to the panel version for what gets mounted, mount-failure
+  isolation, skipped-files reporting, and the fatal-error popup case — see the rest of this
+  "Preview" section.
+
 ## What the grammar highlights, and what it deliberately doesn't
 
 `syntaxes/crescent.tmLanguage.json` is a flat, whole-file TextMate grammar (no `view`/`style`
@@ -164,6 +187,9 @@ Tracked in the root `TODO.md` (§10, "Near-Term VS Code Enablement"):
 - **Crescent: Preview** replaces the whole webview on every reload rather than doing a real
   hot-module-reload, so previewed components lose their local state on every save (see "Preview"
   above).
+- **Crescent: Open Preview in Browser** has no equivalent of the panel's save-triggered
+  auto-reload — there's no live connection to an already-open external browser tab, so you'll
+  refresh it yourself after re-running the command (see "Opening it in a real browser" above).
 - No LSP — this extension is intentionally process/in-process-`require()`-based, not a language
   server, per the plan's own note that a full LSP is a later v0.x/v1.0 concern once the diagnostic
   model has stabilized.

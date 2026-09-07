@@ -224,15 +224,12 @@ function refreshDiagnostics(root) {
   }
 }
 
-// Builds the project (via the compiled buildPreviewHtml()) and shows the
-// bundled browser output in a webview panel: "opens" it on first run,
-// "reloads" it (replacing its HTML in place) on subsequent runs, matching
-// the TODO.md wording ("builds the project and opens/reloads the browser
-// output"). `reveal` controls whether the panel is brought to the front —
-// true for an explicit "Crescent: Preview" invocation, false for the
-// on-save auto-refresh below, so saving doesn't keep stealing focus from
-// the editor.
-async function refreshPreview(root, reveal) {
+// Runs buildPreviewHtml() and reports any failure via showErrorMessage(),
+// exactly the way it did inline before this was split out — shared by both
+// "show in a webview panel" (refreshPreview) and "open in a real browser
+// tab" (openPreviewInBrowser) below, so both destinations agree on what
+// counts as a build failure and how it's reported.
+async function buildPreviewResult(root) {
   const webPreviewModule = loadWebPreviewModule(root);
   if (!webPreviewModule || typeof webPreviewModule.buildPreviewHtml !== 'function') {
     vscode.window.showErrorMessage(
@@ -240,7 +237,7 @@ async function refreshPreview(root, reveal) {
         '(`npm run build` inside compiler/), or set "crescent.cliPath" to a compiled ' +
         'compiler/dist/cli.js.',
     );
-    return;
+    return null;
   }
 
   const outDirSetting = getConfig().get('outDir') || 'dist';
@@ -253,7 +250,7 @@ async function refreshPreview(root, reveal) {
     result = await webPreviewModule.buildPreviewHtml(root, previewOutDir);
   } catch (err) {
     vscode.window.showErrorMessage(`Crescent: preview build failed unexpectedly: ${err.message}`);
-    return;
+    return null;
   }
 
   if (!result.ok) {
@@ -261,8 +258,22 @@ async function refreshPreview(root, reveal) {
     // there is no partial HTML to show in that case.
     const detail = result.build.check.fatal ? result.build.check.fatal.message : 'unknown error';
     vscode.window.showErrorMessage(`Crescent: preview build failed: ${detail}`);
-    return;
+    return null;
   }
+
+  return { html: result.html, previewOutDir };
+}
+
+// Builds the project and shows the bundled browser output in a webview
+// panel: "opens" it on first run, "reloads" it (replacing its HTML in place)
+// on subsequent runs, matching the TODO.md wording ("builds the project and
+// opens/reloads the browser output"). `reveal` controls whether the panel is
+// brought to the front — true for an explicit "Crescent: Preview" invocation,
+// false for the on-save auto-refresh below, so saving doesn't keep stealing
+// focus from the editor.
+async function refreshPreview(root, reveal) {
+  const built = await buildPreviewResult(root);
+  if (!built) return;
 
   if (!previewPanel) {
     previewPanel = vscode.window.createWebviewPanel('crescentPreview', 'Crescent Preview', vscode.ViewColumn.Beside, {
@@ -278,7 +289,33 @@ async function refreshPreview(root, reveal) {
   }
 
   previewRoot = root;
-  previewPanel.webview.html = result.html;
+  previewPanel.webview.html = built.html;
+}
+
+// Builds the project and writes the same HTML `refreshPreview()` would show
+// in a webview panel to `<root>/<crescent.outDir>/preview/index.html`, then
+// opens it in the system's real default browser via `vscode.env.openExternal`
+// — a genuine `file://` page, not sandboxed inside VS Code's webview CSP, so
+// e.g. browser devtools/extensions work on it normally. Unlike the panel,
+// this is a one-shot "build now, open now": there's no live connection to an
+// already-open browser tab to push a reload into, so running the command
+// again just rewrites the same file and re-invokes the OS's "open" on it —
+// most browsers reuse an already-open tab for the same `file://` URL and
+// pick up the change on their own refresh, but that's the browser's/OS's
+// behavior to control, not something this extension can guarantee.
+async function openPreviewInBrowser(root) {
+  const built = await buildPreviewResult(root);
+  if (!built) return;
+
+  const htmlPath = path.join(built.previewOutDir, 'index.html');
+  try {
+    fs.writeFileSync(htmlPath, built.html, 'utf8');
+  } catch (err) {
+    vscode.window.showErrorMessage(`Crescent: could not write the preview file: ${err.message}`);
+    return;
+  }
+
+  await vscode.env.openExternal(vscode.Uri.file(htmlPath));
 }
 
 function activate(context) {
@@ -311,6 +348,17 @@ function activate(context) {
         return undefined;
       }
       return refreshPreview(root, true);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('crescent.previewInBrowser', () => {
+      const root = getProjectRoot();
+      if (!root) {
+        vscode.window.showErrorMessage('Crescent: open a folder before running this command.');
+        return undefined;
+      }
+      return openPreviewInBrowser(root);
     }),
   );
 

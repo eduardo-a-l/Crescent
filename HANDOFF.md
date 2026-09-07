@@ -16,8 +16,10 @@
 **Current task:**
 Just completed: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a new
 `compiler/src/webPreview.ts` builds a project and bundles its previewable components (via
-`esbuild`) into a single HTML page, `require()`d in-process by a new `crescent.preview` command
-that opens/reloads a webview panel. See "Last Completed Work" below. Choose the next item from
+`esbuild`) into a single HTML page, `require()`d in-process by a `crescent.preview` command
+that opens/reloads a webview panel, plus a follow-up `crescent.previewInBrowser` command
+("Crescent: Open Preview in Browser") that builds the identical HTML but opens it in a real
+system browser tab instead. See "Last Completed Work" below. Choose the next item from
 `TODO.md` before beginning new work — the maintainer's stated plan was CLI → VS Code support →
 real project testing → broader language features (enum, match, etc); there is no "playground"
 step (an earlier session's summary of this plan mentioned one, which was inaccurate — corrected
@@ -56,7 +58,8 @@ The design and grammar documents should be consulted before changing language be
 
 `Crescent: Preview` for the VS Code extension (`TODO.md` §10 "Near-Term VS Code Enablement", the
 last unstarted bullet besides continuous diagnostics and the LSP replacement — the maintainer's
-explicit next step, requested via a plain "continue"). Two parts:
+explicit next step, requested via a plain "continue"), plus a same-session follow-up requested by
+the maintainer after reviewing it. Three parts:
 
 **1. `compiler/src/webPreview.ts` — the compiler-side build/bundle engine, kept independent of the
 extension so it's directly unit-testable:**
@@ -124,6 +127,32 @@ extension so it's directly unit-testable:**
 - `TODO.md`: checked off the `Crescent: Preview` bullet under §10 with a pointer to what it covers
   and its known HMR/state-reset trade-off.
 
+**3. A same-session follow-up, requested directly by the maintainer after reviewing the panel-only
+version:** a second command, `crescent.previewInBrowser` ("Crescent: Open Preview in Browser"),
+for seeing the preview as a genuine browser tab rather than a VS Code webview panel. Required no
+new compiler-side work — `buildPreviewHtml()`'s output was already a self-contained HTML string
+with no webview-specific assumptions baked in. In `extension.js`:
+- Extracted the shared "load `webPreview.js`, call `buildPreviewHtml()`, report any failure via
+  `showErrorMessage()`" logic out of `refreshPreview()` into a new `buildPreviewResult(root)`
+  helper, so both commands agree on exactly what counts as a build failure and how it's reported,
+  instead of duplicating that error-handling.
+- `openPreviewInBrowser(root)`: writes the built HTML to
+  `<root>/<crescent.outDir>/preview/index.html` (same `previewOutDir` `buildProject()` already
+  wrote the compiled `gen/`/`runtime.js` into, so no new directory-creation logic was needed —
+  `fs.mkdirSync(..., { recursive: true })` inside `project.ts` already guarantees it exists by the
+  time this runs) and opens it via `vscode.env.openExternal()` — a real `file://` page outside the
+  webview's sandbox/CSP.
+- Deliberately **not** wired to the save/open auto-reload `refreshPreview()`'s panel gets: there's
+  no live connection to an already-open external browser tab to push a reload into, so it's
+  documented as a one-shot "build now, open now" — rerunning the command rewrites the same file
+  and re-invokes the OS's "open" on it, and whether that refreshes an already-open tab is up to the
+  browser/OS, not something this extension can control.
+- `editors/vscode/README.md`: new "Opening it in a real browser" subsection under "Preview", an
+  intro bullet, and a "Known limitations" bullet for the no-auto-reload trade-off.
+- `TODO.md`: extended the `Crescent: Preview` bullet's note to mention this second command rather
+  than adding a new bullet, since it's the same TODO item ("opens ... the browser output") — this
+  command is arguably a more literal reading of that original wording than the webview panel is.
+
 ### Manual verification
 
 Extended the existing mock-`vscode` approach (from the diagnostics session) with a minimal
@@ -164,6 +193,18 @@ Extended the existing mock-`vscode` approach (from the diagnostics session) with
 - `node --check editors/vscode/src/extension.js` — no syntax errors.
 - Full compiler regression: `npx tsc --noEmit` and `npm test` (168 PASS, up from 145 — the 23 new
   assertions are `test-preview.js`; every pre-existing assertion still passes unchanged).
+- **`crescent.previewInBrowser`, via mock-`vscode`** (extended with an `env.openExternal` mock):
+  ran it against `compiler/examples/` — no webview panel was created, `openExternal` was called
+  exactly once with a `file://` path under `<root>/dist/preview/index.html`, and that file's
+  actual on-disk contents contained the expected `Counter` mount ID, matching what the panel
+  command would have shown. Ran it a second time to confirm it doesn't accumulate a second target
+  or error — same path both times. Ran it again against the same unterminated-`view{`-block
+  project used for the panel's fatal-error check: no file was written, no `openExternal` call was
+  made, and the same real parser message surfaced via `showErrorMessage` — confirming the shared
+  `buildPreviewResult()` extraction didn't change either command's fatal-error behavior. No new
+  automated test was added for this follow-up (only manual verification, as above) — the extracted
+  `buildPreviewResult()` has no new *compiler-side* logic to unit-test; it's a thin VS Code-side
+  wrapper around the already-tested `buildPreviewHtml()`.
 
 ### Files changed
 
@@ -172,12 +213,14 @@ Extended the existing mock-`vscode` approach (from the diagnostics session) with
 - `compiler/package.json` (`test` script now runs `test-preview.js`)
 - `compiler/README.md` (structure list: `src/project.ts`, `src/webPreview.ts`,
   `scripts/test-preview.js`)
-- `editors/vscode/src/extension.js` (`crescent.preview` command, `refreshPreview()`,
+- `editors/vscode/src/extension.js` (`crescent.preview`/`crescent.previewInBrowser` commands,
+  `refreshPreview()`/`openPreviewInBrowser()`/`buildPreviewResult()`,
   `findWebPreviewModulePath()`/`loadWebPreviewModule()`, webview panel state, save/open-triggered
   reload)
-- `editors/vscode/package.json` (registered the `crescent.preview` command)
-- `editors/vscode/README.md` ("Preview" section, updated intro/settings/"Known limitations")
-- `TODO.md` (checked off the `Crescent: Preview` bullet)
+- `editors/vscode/package.json` (registered both preview commands)
+- `editors/vscode/README.md` ("Preview" section plus its "Opening it in a real browser"
+  subsection, updated intro/settings/"Known limitations")
+- `TODO.md` (checked off the `Crescent: Preview` bullet, noting the browser-open follow-up)
 - `HANDOFF.md`
 
 ---
@@ -246,6 +289,10 @@ land in `checker.ts` without a matching README bullet.
   webview HTML rather than doing a real hot-module-reload, so a previewed component's own local
   `state<T>` (e.g. a counter's current count) resets on every save — a real, documented trade-off
   of the "just replace the panel" approach, not an oversight.
+- `Crescent: Open Preview in Browser` (follow-up, this session) has no equivalent of the panel's
+  save-triggered auto-reload — there's no live connection to an already-open external browser tab
+  to push a reload into, so it's a one-shot "build now, open now" and the person has to refresh
+  the tab themselves after re-running the command.
 - `callback_param.crs` isn't wired into `build-web.js`/`test-web.js`, so `void()` callback params
   are checked and code-generated (verified by hand) but not yet exercised by a real-browser DOM
   click test. Would be a reasonable small follow-up if `void()` params become more widely used.
@@ -376,7 +423,9 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 **Task:** `Crescent: Preview` for the VS Code extension (`TODO.md` §10, "Near-Term VS Code
 Enablement" plan's last unstarted feature bullet besides continuous diagnostics and the LSP
 replacement) — the maintainer's explicit next step, requested via a plain "continue" after
-reading `AGENTS.md`/`HANDOFF.md`/`TODO.md`.
+reading `AGENTS.md`/`HANDOFF.md`/`TODO.md`. Followed, in the same sitting after the maintainer
+committed and reviewed it, by a small follow-up: a second command to open the preview in a real
+browser tab instead of only a VS Code webview panel.
 
 **Result:** Done. New `compiler/src/webPreview.ts` exports `buildPreviewHtml(root, outDir)`:
 builds the project via the existing `buildProject()`, bundles each compiled file with `esbuild`
@@ -401,28 +450,43 @@ the whole page; (2) the command handler read `result.build.fatal` instead of the
 `result.build.check.fatal`, so every fatal-error case printed a bare "unknown error" instead of the
 real message — both fixed and re-verified. Updated `editors/vscode/README.md` (new "Preview"
 section, updated intro/settings/"Known limitations"), `compiler/README.md` (structure list), and
-`TODO.md` (checked off the bullet).
+`TODO.md` (checked off the bullet). The maintainer committed this part as `3684f51`
+("feat: Add preview"). The follow-up requested afterward — extracted the shared build/error-
+reporting logic into `buildPreviewResult(root)`, added `openPreviewInBrowser(root)` and a
+`crescent.previewInBrowser` command that writes the same HTML to
+`<root>/<crescent.outDir>/preview/index.html` and opens it via `vscode.env.openExternal()` — needed
+no compiler-side changes at all, since `buildPreviewHtml()`'s output was already a plain,
+self-contained HTML string with no webview-specific assumptions baked in. Verified the same way
+(mock-`vscode`, now with an `env.openExternal` mock): correct file written, correct URI opened, no
+webview panel created, and the same fatal-error path re-verified through the new shared helper.
 
-**Commit:** Not committed — working tree contains the diff described above (new
-`compiler/src/webPreview.ts`, `compiler/scripts/test-preview.js`; modified
-`compiler/package.json`, `compiler/README.md`, `editors/vscode/src/extension.js`,
-`editors/vscode/package.json`, `editors/vscode/README.md`, `TODO.md`, `HANDOFF.md`), on top of the
-previous sessions' already-committed work (`4e6f485`, `4f51112`, `b57be3f`, `b47d2e9`).
+**Commit:** The `Crescent: Preview` panel command (webPreview.ts, crescent.preview, and the
+associated docs/tests) was committed by the maintainer as `3684f51` ("feat: Add preview"), on top
+of `b47d2e9`/`b57be3f`/`4f51112`/`4e6f485`. The `crescent.previewInBrowser` follow-up on top of
+that is **not committed** — working tree contains modified `editors/vscode/src/extension.js`,
+`editors/vscode/package.json`, `editors/vscode/README.md`, `TODO.md`, `HANDOFF.md`; no new files
+this round.
 
 **Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (168 PASS, 0 FAIL, exit 0 — up
-from 145; the 23 new assertions are `test-preview.js`, every pre-existing assertion unchanged).
-Manually verified the VS Code command end-to-end (panel creation/reuse/reveal, the fatal-error
+from 145; the 23 new assertions are `test-preview.js`, every pre-existing assertion unchanged;
+unchanged again after the browser-open follow-up, which touched no compiler code). Manually
+verified the VS Code command end-to-end for both the panel (creation/reuse/reveal, the fatal-error
 popup path with the real parser message, and that a saved `.crs` file in the *same* project
-reloads an already-open panel) via the mock-`vscode` harness — see "Manual verification" in "Last
-Completed Work" for the specific scenarios and the two bugs each one caught. No automated suite
-covers `editors/vscode/` itself yet — see "Recommended Next Step" #3 for making that a real,
-committed test.
+reloads an already-open panel) and the browser-open follow-up (correct file written, correct URI
+passed to `openExternal`, no panel created, fatal-error path unaffected by the refactor) via the
+mock-`vscode` harness — see "Manual verification" in "Last Completed Work" for the specific
+scenarios and the two bugs each one caught for the panel command. No automated suite covers
+`editors/vscode/` itself yet — see "Recommended Next Step" #3 for making that a real, committed
+test.
 
 **Next:** Continuous/on-change diagnostics, multi-root diagnostic partitioning, and the LSP
 replacement are all still open under `TODO.md` §10 — see "Recommended Next Step" #2 for specifics
 on each. A committed test harness (`cli.ts` itself, the TextMate grammar, or the extension's
 diagnostics/command-wiring logic — see "Recommended Next Step" #3) would also be a good small unit
-if VS Code work isn't picked up immediately.
+if VS Code work isn't picked up immediately. If the maintainer likes the browser-open command,
+worth considering whether it should also support a lightweight local HTTP server (instead of a
+bare `file://` URL) for cases where `file://` script execution is restricted by browser security
+settings — not attempted here since a plain `file://` page already works for the verified case.
 
 ---
 

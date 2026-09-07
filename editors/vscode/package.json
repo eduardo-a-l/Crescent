@@ -51,6 +51,11 @@
         "command": "crescent.preview",
         "title": "Crescent: Preview",
         "category": "Crescent"
+      },
+      {
+        "command": "crescent.previewInBrowser",
+        "title": "Crescent: Open Preview in Browser",
+        "category": "Crescent"
       }
     ],
     "configuration": {

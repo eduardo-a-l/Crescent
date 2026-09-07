@@ -389,7 +389,12 @@ Every important compiler bug should ideally become a regression test.
   extension.js`'s `crescent.preview` command — `editors/vscode/README.md`'s "Preview" section
   documents exactly what gets mounted (top-level, zero-parameter components only), how mount
   failures are isolated, and the known trade-off that a reload replaces the whole webview rather
-  than doing a real hot-module-reload (so previewed component state resets on every save).
+  than doing a real hot-module-reload (so previewed component state resets on every save). A
+  second command, `crescent.previewInBrowser` ("Crescent: Open Preview in Browser"), builds the
+  identical HTML but writes it to disk and opens it in the system's real default browser via
+  `vscode.env.openExternal` instead of a VS Code webview panel — see "Opening it in a real
+  browser" in the same README section for its own trade-off (no save-triggered auto-reload, since
+  there's no live connection to an already-open external tab).
 - [ ] Replace process-based checking with a small LSP server once the shared project API and
   diagnostic model are stable.
 
