@@ -14,23 +14,35 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Just completed: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a new
+Latest session was documentation-only (see the top "Latest session" entry in "Session Log"): the
+maintainer shared an external review/brainstorm of Crescent's future direction and asked for it to
+be organized into `TODO.md` alongside the existing roadmap, plus a small fix to the top-level
+`README.md` (its VS Code bullet was enumerating specific current commands and had already gone
+stale — reworded to be as stable as the other three bullets). No compiler/extension code changed
+this session.
+
+Before that: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a
 `compiler/src/webPreview.ts` builds a project and bundles its previewable components (via
 `esbuild`) into a single HTML page, `require()`d in-process by a `crescent.preview` command
 that opens/reloads a webview panel, plus a `crescent.previewInBrowser` command
 ("Crescent: Open Preview in Browser") that builds the identical HTML but opens it in a real
-system browser tab instead (both commands, and the diagnostics/webPreview.ts work behind them,
-are now committed — see "Last Completed Work"/"Session Log"). Two smaller follow-ups on top,
-**not yet committed**: the generated page no longer has visible "Crescent Preview"/component-
-name/file-path chrome above each mounted app, just the rendered component(s); and `.crs` files
-now get a file icon (`editors/vscode/icons/crescent-logo.svg`, via
-`contributes.languages[].icon`). See "Last Completed Work" below for both. Choose the next item
-from `TODO.md` before beginning new work — the maintainer's stated plan was CLI → VS Code
+system browser tab instead. The generated page has no "Crescent Preview"/component-name/file-path
+chrome above each mounted app (just the rendered component(s)), `.crs` files get a file icon
+(`editors/vscode/icons/crescent-logo.svg`), the preview page's own wrapper boxes (skipped-files/
+bundling-failure/empty-project messages) are scoped to a `.crs-preview-box` class instead of a
+bare `section` selector (so a user's own `<section>` in their view no longer picks up an unwanted
+border), and tag punctuation (`>`/`/>`) in the TextMate grammar is now colored consistently with
+`<`/`</` instead of like the `>`/`>=` comparison operator. All of the above is committed — see
+"Last Completed Work"/"Session Log" for exactly which commit introduced which piece. Choose the
+next item from `TODO.md` before beginning new work — the maintainer's stated plan was CLI → VS Code
 support → real project testing → broader language features (enum, match, etc); there is no
 "playground" step (an earlier session's summary of this plan mentioned one, which was
 inaccurate — corrected here). Continuous/on-change diagnostics, multi-root diagnostic
 partitioning, and the LSP replacement (`TODO.md` §10) are also still open if the maintainer
-wants more VS Code work first.
+wants more VS Code work first. `TODO.md` itself grew substantially this session (see below) with
+longer-term items (dev server/HMR/incremental compilation, `Result`/pattern matching, a typed-AST
+architecture note, etc.) — none of it changes near-term priority, which remains the semantic
+checker per `TODO.md` §16.
 
 ---
 
@@ -471,7 +483,96 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 ## Session Log
 
-### Latest session
+### Latest session (documentation only)
+
+**AI:** Claude
+
+**Task:** The maintainer pasted an external review/brainstorm document (someone else's analysis of
+where Crescent could go next — compiler architecture, LSP, dev server/hot-reload, `Result`/pattern
+matching, ecosystem ideas, self-hosting, etc.) and asked for its ideas to be organized into the
+project's existing `TODO.md`/roadmap rather than left as a one-off message, with freedom to adjust
+or complement the ideas rather than transcribe them verbatim. Separately, asked for the top-level
+`README.md`'s VS Code Extension bullet to be reworded: it listed specific current commands
+(`Crescent: Check`/`Crescent: Build`) and was flagged as already out of date (`Crescent: Preview`
+and `Crescent: Open Preview in Browser` exist too, per the last two sessions) — the maintainer's
+point was that the top README should stay static/high-level like its other three bullets, not
+restate implementation details that drift out of sync as commands are added.
+
+**Result:**
+- Read the pasted document and cross-checked every idea against the current implementation
+  (`grep`ed for `on_mount`/`on_change`/`on_destroy` etc. to confirm which lifecycle hooks actually
+  exist, confirmed no `Result`/pattern-matching/router/typed-AST support exists yet) and against
+  `TODO.md`'s existing structure, so nothing was added as a duplicate of something already tracked.
+  Distributed the ideas into the existing numbered sections rather than dumping them as one new
+  block, matching the roadmap's own stated principle ("organized by dependency and maturity rather
+  than cool features first"):
+  - §5 Semantic Checker: new "Architecture" subsection for an eventual typed-AST/IR pass (resolve
+    names → resolve modules → infer/check types → validate reactivity → typed AST → codegen),
+    framed as a foundation for codegen, a future LSP, and future optimizations rather than a
+    feature of its own.
+  - §7 Runtime: a note under "Reactive Core" about evaluating additional primitives (e.g. a
+    `resource`-style async-reactive shape) only once async semantics settle, explicitly requiring
+    justification against `state`/`derived`/`effect`/`watch` rather than copying other frameworks;
+    a new "Lifecycle" subsection recording that only `on_mount`/`on_change` exist today and that
+    `on_destroy`/`before_update`/`after_update` should only be added if a real need shows up.
+  - §9 Testing: new "Compiler Robustness" (fuzzing the lexer/parser so it never crashes on garbage
+    input; a compiler benchmark suite) and "Conformance" (a `tests/valid`/`tests/invalid` fixture
+    suite with declared expected outcomes) subsections.
+  - §10 Developer Experience: new "Project Scaffolding & Dev Server (Later)" subsection —
+    `crescent new`, `crescent.toml`, `crescent dev`, hot-module-reload for the preview/dev loop
+    (explicitly contrasted with today's full-webview-reload `Crescent: Preview`), and incremental
+    compilation — placed *before* the existing "Near-Term VS Code Enablement" block with an
+    explicit warning not to start it before the compiler/CLI/semantic-checker foundations are
+    solid. Also cross-referenced incremental compilation from the existing "Language Server"
+    subsection as a real prerequisite, not parallel work.
+  - §11 Frontend Output: SSR added under "Future," with the same "don't add a second target before
+    semantics stabilize" reasoning already stated there for Wasm.
+  - §12 Language Features to Evaluate: expanded "Pattern matching" and "Better error/result
+    conventions" with a concrete `Result<T, E>` sketch (the two motivate each other); added router,
+    an official component library (framed as a stress test for the language, not a UI-work item),
+    and compiler-assisted accessibility warnings (framed as "helps avoid mistakes," not "solves
+    accessibility"); tightened the existing "Compile-time/meta-programming" bullet to explicitly
+    say post-v1.0 and why. Closed the section with the document's strongest idea verbatim in spirit
+    — every proposal here should answer "why is this especially good *in Crescent*", not "language
+    X has this too" — since it's a good complement to §13's existing "don't add casually" list
+    without duplicating it.
+  - §14 Milestones: new "Someday / Maybe" subsection for self-hosting (rewriting compiler stages in
+    Crescent itself) and a note to revisit the Wasm question alongside it — explicitly framed as
+    not scheduled and not influencing near-term priority.
+  - Deliberately did **not** add: a package manager beyond the existing "module/package ecosystem"
+    bullet (already adequately hedged), or a separate "External Feedback" dump section — the
+    document's ideas belong at the level of the concepts, integrated with what's already tracked,
+    not attributed to a specific external source inside the roadmap itself.
+- `README.md`: reworded the VS Code Extension bullet from enumerating specific commands to
+  "Editor support for `.crs` files — see its README for the current feature set and commands,"
+  matching the descriptive-not-enumerative style the other three bullets already use (design doc:
+  "reactivity model, type system, ..."; grammar doc: "EBNF grammar, lexer modes, ..."; compiler
+  doc: "how to build, test, and run"). This should not need touching again every time a VS Code
+  command is added or renamed — that's exactly the property the maintainer asked for.
+
+**Files changed:** `TODO.md`, `README.md`, `HANDOFF.md`. No compiler, runtime, or extension source
+touched — this was a documentation/roadmap session per the maintainer's explicit request, not a
+code task, so `AGENTS.md` §12's test commands were not applicable; confirmed no source files
+appear in `git diff --stat` for this session beyond the three doc files above.
+
+**Tests:** Not applicable (no code changed). `git diff --check` run to confirm no whitespace issues
+in the modified Markdown files.
+
+**Problems/Decisions:** None — this was integration of already-reasonable external ideas into an
+existing, well-organized roadmap, not a design decision requiring resolution. The one deliberate
+change from the source document: it proposed a single linear "Phase 1–5" plan as a wholesale
+replacement mental model; this was not adopted as a new top-level structure, since `TODO.md`
+already has an equivalent (§14 "Milestones" + §16 "Current Priority Order") and duplicating it
+under a different name would create two competing sources of sequencing truth.
+
+**Next:** No new code work was started or implied by this session. The next AI should still pick up
+`TODO.md` §16's priority order (semantic checker first) unless the maintainer gives an explicit new
+instruction — none of this session's roadmap additions are meant to be picked up next; they are
+long-term context, most of them explicitly gated behind current work.
+
+---
+
+### Older session
 
 **AI:** Claude
 

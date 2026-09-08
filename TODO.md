@@ -130,6 +130,18 @@
 > v1.0 requires a semantic checker that is trustworthy enough to enforce
 > Crescent's language rules.
 
+## Architecture
+
+- [ ] Evaluate introducing an explicit typed-AST/IR pass between semantic
+  analysis and codegen: resolve names → resolve modules → infer/check types →
+  validate reactivity → typed AST → codegen. Today codegen and diagnostics
+  each re-derive type information from the plain AST; a typed AST would let
+  codegen, a future LSP (hover/autocomplete), and future optimizations
+  (constant folding, dead-code elimination) all consume the same
+  already-resolved information instead of duplicating the work.
+- [ ] If a typed-AST layer is introduced, document its invariants next to the
+  AST invariants already tracked in §3, since the two are closely related.
+
 ## Scope / Names
 
 - [x] Basic scope resolution
@@ -255,6 +267,25 @@
 - [ ] Thorough dependency-tracking tests
 - [ ] Better cleanup/disposal semantics
 - [ ] Verify nested effects
+- [ ] Evaluate additional reactive primitives once async semantics (§12) are
+  settled — e.g. a `resource`-style primitive for async reactive data with
+  explicit loading/success/error states, comparable to:
+  `state<User[]?> users = null;` + `on_mount { users = await loadUsers(); }`
+  today, but as a first-class reactive shape instead of a plain nullable
+  `state`. Any new primitive name/semantics need a design discussion first —
+  do not add `computed`/`memo`/`resource` merely because other frameworks
+  have them; justify each against what `state`/`derived`/`effect`/`watch`
+  cannot already express.
+
+## Lifecycle
+
+- [x] `on_mount`
+- [x] `on_change`
+- [ ] Evaluate whether `on_destroy` is worth adding; keep the lifecycle hook
+  set as small as the language can get away with — more hooks make a
+  reactive system harder to reason about, not easier
+- [ ] Only evaluate `before_update`/`after_update` if `on_mount`, `on_change`,
+  and (if added) `on_destroy` prove insufficient for a real use case
 
 ## DOM
 
@@ -342,6 +373,28 @@
 
 Every important compiler bug should ideally become a regression test.
 
+## Compiler Robustness
+
+- [ ] Fuzz the lexer/parser with malformed/random input (e.g. `component {{`,
+  `state<><><>`, unterminated `view {`). The requirement is that the
+  compiler never crashes with an unhandled exception on malformed input —
+  it should always produce a controlled diagnostic instead.
+- [ ] A small compiler benchmark suite (lexer/parser/checker/codegen/full
+  build, at a few representative project sizes), tracked over time. This
+  becomes especially useful once incremental compilation (§10) exists, so
+  regressions in build speed are caught the same way correctness
+  regressions are.
+
+## Conformance
+
+- [ ] A structured `tests/valid/` / `tests/invalid/` fixture suite (with
+  further grouping by area — types, nullability, reactivity, modules,
+  components, codegen — mirroring the semantic-checker categories above),
+  where each fixture declares its expected outcome (compiles cleanly /
+  produces a specific error code once error codes exist, per §5's
+  Diagnostics list). This moves the test suite closer to being an
+  executable language specification rather than a fixed set of assertions.
+
 ---
 
 # 10. Developer Experience
@@ -354,6 +407,34 @@ Every important compiler bug should ideally become a regression test.
 - [ ] `crescent run` / development mode
 - [~] Clear compiler diagnostics
 - [ ] Config file
+
+## Project Scaffolding & Dev Server (Later)
+
+> Do not start this before the compiler/CLI foundations above (and the
+> semantic checker in §5) are solid. An ecosystem and dev-server workflow
+> built on top of unstable language semantics has to be substantially redone
+> once those semantics settle — sequencing matters here.
+
+- [ ] `crescent new <name>` project scaffolding (a conventional
+  `src/App.crs`, `src/components/`, `public/` layout)
+- [ ] `crescent.toml` project configuration (package name/version, build
+  entry point and output dir, dev server port), so the compiler and CLI stop
+  needing everything inferred from command-line arguments or hard-coded
+  paths. This is also the natural place for a future `[dependencies]` table
+  if/when a package ecosystem (§12) is ever pursued.
+- [ ] `crescent dev` — a development server that rebuilds automatically on
+  save, as a natural extension of today's `Crescent: Preview` command
+- [ ] Hot-module-reload for the dev server/preview that preserves component
+  state across edits, instead of a full reload. Today's `Crescent: Preview`
+  (see `editors/vscode/README.md`'s "Preview" section) reloads the whole
+  webview and resets state on every save; a real HMR loop — recompile only
+  the changed component, send it to the running page, patch the DOM, keep
+  state — would make Crescent feel much closer to a modern frontend
+  framework in day-to-day use.
+- [ ] Incremental compilation (file → AST → symbols → dependency graph →
+  invalidate/recompile only what changed) as the shared foundation both the
+  dev server's rebuild step and a future LSP (below) need for reasonable
+  performance on larger projects.
 
 ## Near-Term VS Code Enablement (v0.x)
 
@@ -407,7 +488,9 @@ Every important compiler bug should ideally become a regression test.
 ## Language Server
 
 > A complete, incremental LSP remains a major v1.0 milestone. The minimal VS Code diagnostics and
-> preview loop above are intentionally an earlier v0.x deliverable.
+> preview loop above are intentionally an earlier v0.x deliverable. A trustworthy semantic checker
+> (§5) — ideally producing a typed AST — and the incremental-compilation work under "Project
+> Scaffolding & Dev Server" above are both prerequisites this depends on, not parallel work.
 
 - [ ] LSP architecture
 - [ ] Diagnostics
@@ -439,6 +522,11 @@ Every important compiler bug should ideally become a regression test.
 - [ ] Evaluate WebAssembly/direct-DOM target
 - [ ] Determine whether/when Wasm should become a supported target
 - [ ] Do not implement a second backend until the language semantics are stable enough to justify it
+- [ ] Server-side rendering (SSR), with a hydration step that attaches
+  Crescent's reactive runtime on top of server-rendered HTML. Far future:
+  this depends on codegen/runtime being stable enough to target a
+  non-browser environment first, and on the same "don't add a second target
+  before semantics stabilize" reasoning as Wasm above.
 
 ---
 
@@ -450,15 +538,51 @@ Each should be designed before implementation.
 
 - [ ] More complete generics
 - [ ] Better function types
-- [ ] Pattern matching
-- [ ] Better error/result conventions
-- [ ] Async semantics refinement
-- [ ] Module/package ecosystem
-- [ ] Compile-time/meta-programming possibilities
+- [ ] Pattern matching (e.g. `match result { Ok(value) => ...; Err(error) => ...; }`,
+  or a simpler value-matching form like `match user.role { "admin" => ...; _ => ...; }`)
+  — most compelling once `Result<T, E>` (below) exists, since the two reinforce
+  each other
+- [ ] Better error/result conventions, specifically a `Result<T, E>` type as an
+  explicit alternative to exceptions (e.g. `Result<User, Error> getUser(int id)`
+  paired with `match`/similar above) — fits the "safe, explicitly typed" design
+  goal in `docs/Crescent_Design.md` and could become a distinguishing feature
+  rather than an incidental one
+- [ ] Async semantics refinement, including how `await` composes with reactive
+  state in lifecycle blocks (see the Runtime "Reactive Core" note above about a
+  possible future `resource` primitive)
+- [ ] Module/package ecosystem (a `crescent add <package>` style flow) — do not
+  build this until module/language semantics are stable; an ecosystem built on
+  a moving foundation has to be redone
+- [ ] Compile-time/meta-programming possibilities (e.g. `derive(...)`-style
+  annotations or decorator-like syntax the compiler understands) — explicitly
+  post-v1.0; metaprogramming makes a young language significantly harder to
+  learn and reason about, so it should not be attempted before the core
+  semantics are settled
 - [ ] More expressive collection operations
 - [ ] Destructuring
 - [ ] Spread syntax
 - [ ] Additional primitive types if justified
+- [ ] A standard router (`route "/users/:id" { <User/> }`-style) once module
+  semantics are stable — this is closer to "does Crescent feel like a complete
+  frontend platform" than a core language feature, so treat it as ecosystem
+  work, not compiler work
+- [ ] A small official component library (button, modal, tabs, form, table,
+  tooltip, ...) once the language is mature enough — valuable less as UI work
+  and more as a real-world stress test: if common components are awkward to
+  express in Crescent itself, that awkwardness is a signal about the language,
+  not the components
+- [ ] Compiler-assisted accessibility warnings (e.g. flagging an `<img>`
+  without an accessible-name attribute) as part of the language/framework's
+  philosophy — framed as "the compiler helps developers avoid common frontend
+  accessibility mistakes," not "Crescent automatically solves accessibility"
+
+Every proposal in this section should be able to answer "why is this
+especially good *in Crescent*", not just "language X already has this." For
+example, pattern matching is worth having because it integrates naturally
+with reactive state that has an explicit loading/success/error shape — not
+merely because other typed languages have `match`. This keeps Crescent's
+feature set an intentional identity rather than an accumulation of other
+languages'/frameworks' features.
 
 ---
 
@@ -538,6 +662,24 @@ Prefer:
 - tooling improvements.
 
 Avoid fundamental redesigns of stabilized v1.0 semantics.
+
+---
+
+## Someday / Maybe
+
+Not commitments, not scheduled on any current milestone — recorded here so
+the idea isn't lost, and explicitly gated on the project reaching a much more
+mature state first.
+
+- [ ] Self-hosting: rewrite meaningful parts of the compiler (lexer, parser,
+  checker) in Crescent itself, once the language is mature and expressive
+  enough to comfortably write a compiler in. This would be a strong signal
+  that the language is genuinely capable, not merely a frontend-templating
+  DSL — but it is a large, multi-year-scale idea and should not influence
+  near-term priorities.
+- [ ] Revisit the WebAssembly/direct-DOM question (§11) once/if the above
+  is ever seriously pursued, since a self-hosted compiler and an alternate
+  backend are somewhat related long-term bets.
 
 ---
 
