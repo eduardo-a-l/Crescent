@@ -14,20 +14,28 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session continued the same regression-coverage sweep of `checker.ts`: added checker-level
-tests for the `Cannot assign to derived` and direct-property-write-forbidden diagnostics, which
-previously were only exercised indirectly via `codegen.ts`'s own separate `CodegenError` checks —
-see the top "Latest session" entry in "Session Log". Flagged (but did not fix) that codegen still
-duplicates both rules independently of the checker. No checker/compiler behavior changed, only
-tests and `TODO.md` annotations; 2 new `npm test` cases, 176 total, all passing.
+Latest session finished sweeping every `typeIsResolvable(...)` call site in `checker.ts` for
+fixture coverage, per the previous session's "Next" note. Added tests for three untested paths
+(component-level param type, struct field type, `inject<T>` type) and, along the way, found a real
+but minor diagnostic-quality gap — `state`/`derived`/`provide`/`const` declared types are never
+checked for existence, only compared against their initializer — recorded as a concrete example
+under `TODO.md`'s existing "More precise diagnostic messages" bullet rather than fixed (it's new
+behavior, not a test for existing behavior). See the top "Latest session" entry in "Session Log".
+3 new `npm test` cases, 179 total, all passing.
+
+Before that: added checker-level tests for the `Cannot assign to derived` and direct-property-
+write-forbidden diagnostics, which previously were only exercised indirectly via `codegen.ts`'s
+own separate `CodegenError` checks — flagged (but did not fix) that codegen still duplicates both
+rules independently of the checker. 176 total tests at that point (see the next "Older session"
+entry).
 
 Before that: added regression-test coverage for several semantic-checker diagnostics that were
 already implemented but untested/marked unstarted in `TODO.md` (component existence/prop/
-declaration checking, general undefined-name diagnostics) — see the next "Older session" entry.
-174 total tests at that point.
+declaration checking, general undefined-name diagnostics). 174 total tests at that point (see
+further "Older session" entries).
 
 Before that: a documentation-only session organized an externally-sourced set of future-direction
-ideas into `TODO.md` and fixed a stale `README.md` bullet (see the next "Older session" entry).
+ideas into `TODO.md` and fixed a stale `README.md` bullet (see further "Older session" entries).
 
 Before that: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a
 `compiler/src/webPreview.ts` builds a project and bundles its previewable components (via
@@ -492,6 +500,70 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 ## Session Log
 
 ### Latest session
+
+**AI:** Claude
+
+**Task:** Continued the same `checker.ts` regression-coverage sweep, per the previous session's
+"Next" note: check every `typeIsResolvable(...)` call site for fixture coverage.
+
+**Result:**
+- Enumerated all `typeIsResolvable` call sites in `checker.ts` (12 total, including the recursive
+  helper itself) and cross-referenced each against `test-checker.js`. Found three genuinely
+  untested-but-implemented paths, each distinguishable from an already-tested one only by *where*
+  it fires (same message shape, different declaration context) — the existing tests' regex
+  patterns don't check the `where` field, so a superficial grep for the message text alone would
+  have missed that these were actually different code paths:
+  - Component-level param type (`checkComponentDecl`'s own `for (const p of decl.params)` loop,
+    `where = "component '...'"`) — previously only the *function*-param path (`fnWhere = "...,
+    function '...'"`) had a fixture (`unknown-function-param-type.crs`).
+  - Struct field type (`checkStructDecl`, "referenced by field").
+  - `inject<T>` declared type (`checkComponentDecl`'s `InjectDecl` case, "referenced by inject").
+- Added matching fixtures (`component-param-unknown-type.crs`, `struct-field-unknown-type.crs`,
+  `inject-unknown-type.crs`) and three `test-checker.js` cases. All three passed against the
+  existing, unmodified checker.
+- While enumerating, noticed `state`/`derived`/`provide`/`const` declared types are the one
+  category *not* checked via `typeIsResolvable` at all — `checkLiteralTypeMatch` only compares the
+  declared type against the initializer's inferred type. Verified experimentally (a scratch
+  `/tmp` fixture, not committed) that `state<BogusType> x = "hello";` still produces a diagnostic
+  today, just a less precise one (`Type mismatch: declared as 'BogusType' but initialized with a
+  'string' value` instead of `Unknown type 'BogusType'`). This is not a silent gap — an error does
+  fire — so it didn't belong in this session's "add a test for existing behavior" scope; recorded
+  as a concrete example under `TODO.md`'s existing (previously vague) "More precise diagnostic
+  messages" bullet instead, per `AGENTS.md` §4 ("identify it ... explain the conflict ... only
+  then change it" — the "only then change it" part is future work, not this session's).
+
+**Files changed:**
+- `TODO.md` (Types section: added a concrete example to the existing "More precise diagnostic
+  messages" bullet; no checkbox states changed elsewhere this session — the three newly-tested
+  paths all fall under the already-`[x]`-checked "Generic-aware type positions")
+- `compiler/scripts/test-checker.js` (3 new test cases)
+- `compiler/scripts/fixtures/checker/component-param-unknown-type.crs` (new)
+- `compiler/scripts/fixtures/checker/struct-field-unknown-type.crs` (new)
+- `compiler/scripts/fixtures/checker/inject-unknown-type.crs` (new)
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean). `npm test`: 179 PASS, 0 FAIL, exit 0 (up from
+176 before this session).
+
+**Problems/Decisions:** The `state`/`derived`/`provide`/`const` type-resolvability gap described
+above is a real, if minor, diagnostic-quality issue — not fixed this session, deliberately, since
+it's new checker behavior (an additional `typeIsResolvable` call plus a decision about whether the
+existing `Type mismatch` diagnostic should still fire alongside a new `Unknown type` one, or be
+suppressed) rather than a test for something that already works as designed.
+
+**Next:** Implementing the fix just described would be a good next small unit: add
+`typeIsResolvable(m.type, globalScope)` alongside the existing `checkExpr`/`checkLiteralTypeMatch`
+calls in `checkComponentDecl`'s `StateDecl`/`DerivedDecl`/`ProvideDecl`/`ConstDecl` case, decide
+what the resulting message/severity should be when both an unresolvable type *and* a mismatched
+initializer are present at once (probably: report `Unknown type` and skip the now-redundant `Type
+mismatch` check for that declaration, since comparing against a type that doesn't exist isn't a
+meaningful comparison), add a fixture, and update the `TODO.md` note accordingly. Beyond that, the
+`typeIsResolvable` sweep is now complete; `TODO.md` §16's standing priorities (Null Safety's
+flow-sensitive narrowing, or the Types section's remaining assignment-compatibility gaps) are the
+next candidates if further coverage-sweeping is judged sufficient for now.
+
+---
+
+### Older session
 
 **AI:** Claude
 

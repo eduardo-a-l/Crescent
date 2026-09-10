@@ -140,6 +140,24 @@ const cases = [
     label: 'a function param declared with an unresolvable type',
   },
   {
+    file: 'component-param-unknown-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by param 'value'/,
+    label: 'a component-level param (not a function param) declared with an unresolvable type',
+  },
+  {
+    file: 'struct-field-unknown-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by field 'value'/,
+    label: 'a struct field declared with an unresolvable type',
+  },
+  {
+    file: 'inject-unknown-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by inject 'value'/,
+    label: 'an inject<T> declared with an unresolvable type',
+  },
+  {
     file: 'wrong-arg-count.crs',
     severity: 'error',
     pattern: /Function 'add' expects 2 argument\(s\) but received 1/,

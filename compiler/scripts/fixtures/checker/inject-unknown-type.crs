@@ -1,0 +1,7 @@
+component Broken {
+    inject<BogusType> value;
+
+    view {
+        <p>"static"</p>
+    }
+}

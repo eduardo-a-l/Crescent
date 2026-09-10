@@ -168,7 +168,18 @@
 - [ ] Array element type checking
 - [x] Component prop type checking
 - [ ] Function-type compatibility
-- [ ] More precise diagnostic messages
+- [ ] More precise diagnostic messages — e.g. `state<BogusType> x = "hello";` currently reports
+  `Type mismatch: declared as 'BogusType' but initialized with a 'string' value` rather than
+  `Unknown type 'BogusType'`, because `checkLiteralTypeMatch` (used for `state`/`derived`/
+  `provide`/`const` initializers) compares the declared type against the initializer's inferred
+  type without first checking `typeIsResolvable` on the declared type itself — unlike the
+  `VarDecl`/function-param/function-return/struct-field/component-param/`inject` type checks (all
+  now covered by fixtures — see "Undefined-name diagnostics" note above and the `Components`
+  section below), which do call `typeIsResolvable` directly and report the clearer message. Found
+  while sweeping `checker.ts` for `typeIsResolvable` call sites; not fixed here since it's small
+  new behavior (calling `typeIsResolvable` in one more place, then deciding whether the existing
+  `Type mismatch` message stays as a secondary diagnostic or is suppressed once `Unknown type` has
+  already fired) rather than a test for something that already works as intended.
 
 ## Null Safety
 
