@@ -14,11 +14,17 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session added regression-test coverage for several semantic-checker diagnostics that were
+Latest session continued the same regression-coverage sweep of `checker.ts`: added checker-level
+tests for the `Cannot assign to derived` and direct-property-write-forbidden diagnostics, which
+previously were only exercised indirectly via `codegen.ts`'s own separate `CodegenError` checks —
+see the top "Latest session" entry in "Session Log". Flagged (but did not fix) that codegen still
+duplicates both rules independently of the checker. No checker/compiler behavior changed, only
+tests and `TODO.md` annotations; 2 new `npm test` cases, 176 total, all passing.
+
+Before that: added regression-test coverage for several semantic-checker diagnostics that were
 already implemented but untested/marked unstarted in `TODO.md` (component existence/prop/
-declaration checking, general undefined-name diagnostics) — see the top "Latest session" entry in
-"Session Log" for exactly what was added and why. No checker/compiler behavior changed, only tests
-and `TODO.md` checkbox accuracy; 6 new `npm test` cases, 174 total, all passing.
+declaration checking, general undefined-name diagnostics) — see the next "Older session" entry.
+174 total tests at that point.
 
 Before that: a documentation-only session organized an externally-sourced set of future-direction
 ideas into `TODO.md` and fixed a stale `README.md` bullet (see the next "Older session" entry).
@@ -486,6 +492,66 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 ## Session Log
 
 ### Latest session
+
+**AI:** Claude
+
+**Task:** Direct continuation of the previous session's own "Next" recommendation: sweep
+`checker.ts` for more implemented-but-untested diagnostics, starting with the two it named —
+`Cannot assign to derived '...'` and the direct-property-write-forbidden diagnostic, both inside
+`checkAssignmentTarget` — and, per its explicit caveat, first check whether the existing
+`test-forbidden-derived-assignment.js`/`test-forbidden-property-write.js` scripts already cover
+them before assuming they don't.
+
+**Result:**
+- Confirmed those two existing test scripts exercise `codegen.ts`'s own independent
+  `CodegenError` checks (calling `generateProgram()` directly on a parsed program, never running
+  the checker), not `checker.ts`'s `checkAssignmentTarget` diagnostics. The two enforcement points
+  are separate code paths with separate (if similarly-worded) error messages — the checker's own
+  diagnostics genuinely had no regression coverage before this session, confirming the earlier
+  session's guess.
+- Added two new fixtures under `compiler/scripts/fixtures/checker/`
+  (`derived-assignment-forbidden.crs`, `direct-property-write-forbidden.crs` — content mirrors the
+  existing top-level `fixtures/forbidden-derived-assignment.crs`/`forbidden-property-write.crs`
+  used by the codegen tests, since the same source naturally exercises both layers) and two
+  matching cases in `compiler/scripts/test-checker.js` asserting the checker's own diagnostic
+  messages (`Cannot assign to derived 'total'; ...` and `Direct property write on state 'user' is
+  forbidden; ...`).
+- Updated `TODO.md`'s Reactivity subsection: annotated "Restrictions on reactive object property
+  mutation" (already checked `[x]`) with what's now actually covered and, importantly, flagged that
+  codegen still duplicates both rules independently rather than the checker being the sole source
+  of truth — this is a real (if minor) architectural duplication worth knowing about per `AGENTS.md`
+  §9/§10, not something this session tried to fix, since collapsing it is a separate, larger unit
+  of work (would mean deciding whether codegen should trust the checker having already run, which
+  touches the CLI's compile pipeline, not just these two rules).
+
+**Files changed:**
+- `TODO.md` (annotation only)
+- `compiler/scripts/test-checker.js` (2 new test cases)
+- `compiler/scripts/fixtures/checker/derived-assignment-forbidden.crs` (new)
+- `compiler/scripts/fixtures/checker/direct-property-write-forbidden.crs` (new)
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean). `npm test`: 176 PASS, 0 FAIL, exit 0 (up from
+174 before this session).
+
+**Problems/Decisions:** Noticed but explicitly did not fix: `checker.ts` and `codegen.ts` each
+independently re-derive and enforce the same two reactive-mutation rules. This isn't a bug today —
+both layers currently agree — but it's a duplication that could silently drift if one side changes
+without the other (e.g. a future new dependency of `total` that codegen's own check doesn't handle
+the same way the checker's does). Recorded in `TODO.md` rather than acted on, since fixing it means
+deciding whether `cli.ts`'s pipeline should skip codegen's own checks once the semantic checker has
+already run cleanly — a design/architecture question, not a same-session fix.
+
+**Next:** The rest of the sweep this session didn't get to: the `Unknown type` family already has
+partial fixture coverage (`unknown-generic-type.crs`, `unknown-function-param-type.crs`,
+`unknown-return-and-for-types.crs`) but it's worth double-checking every `typeIsResolvable(...)`
+call site in `checker.ts` has at least one fixture exercising it (e.g. `InjectDecl`'s unknown-type
+check doesn't appear to have one yet). Otherwise, `TODO.md` §16's next-highest items (Null Safety's
+flow-sensitive narrowing, or the Types section's remaining assignment-compatibility gaps) remain
+the standing priority once this kind of coverage sweep is judged sufficient.
+
+---
+
+### Older session
 
 **AI:** Claude
 

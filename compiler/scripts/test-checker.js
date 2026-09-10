@@ -80,6 +80,18 @@ const cases = [
     label: 'a component with two view blocks',
   },
   {
+    file: 'derived-assignment-forbidden.crs',
+    severity: 'error',
+    pattern: /Cannot assign to derived 'total'; reassign one of its dependencies instead/,
+    label: 'a direct assignment to a derived<T> value',
+  },
+  {
+    file: 'direct-property-write-forbidden.crs',
+    severity: 'error',
+    pattern: /Direct property write on state 'user' is forbidden; reassign the whole state instead/,
+    label: 'a direct property write on a state<T> holding a struct',
+  },
+  {
     file: 'missing-prop.crs',
     severity: 'error',
     pattern: /Missing prop 'name' passed to <Greeting>/,

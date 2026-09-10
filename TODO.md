@@ -192,7 +192,15 @@
 ## Reactivity
 
 - [x] Basic state validation
-- [x] Restrictions on reactive object property mutation
+- [x] Restrictions on reactive object property mutation — `checkAssignmentTarget` rejects a direct
+  property write on a `state<T>` holding a struct (`direct-property-write-forbidden.crs`) and a
+  direct reassignment of a `derived<T>` value (`derived-assignment-forbidden.crs`). Both were
+  previously only exercised indirectly, through `codegen.ts`'s own separate `CodegenError` checks
+  (`test-forbidden-derived-assignment.js`/`test-forbidden-property-write.js`) — the checker's own
+  diagnostic path had no direct regression test until this session. Note codegen still duplicates
+  both rules independently rather than relying on the checker to have already caught them; see
+  "Comprehensive state mutation analysis" below and `AGENTS.md` §9/§10 on keeping semantic checks
+  out of codegen where avoidable — collapsing the duplication is future cleanup, not done here.
 - [ ] Comprehensive state mutation analysis
 - [ ] Reactive collection mutation validation
 - [ ] Derived-state dependency validation

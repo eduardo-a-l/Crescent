@@ -1,0 +1,13 @@
+component Cart {
+    state<int> price = 10;
+    state<int> quantity = 2;
+    derived<int> total = price * quantity;
+
+    void hack() {
+        total = 999;
+    }
+
+    view {
+        <p>{total}</p>
+    }
+}
