@@ -1,0 +1,3 @@
+component Broken {
+    state<int> count = 0;
+}

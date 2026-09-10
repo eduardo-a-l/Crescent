@@ -1,0 +1,9 @@
+struct User {
+    string name;
+}
+
+component Broken {
+    view {
+        <User/>
+    }
+}

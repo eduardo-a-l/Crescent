@@ -32,6 +32,12 @@ const cases = [
     label: 'an undefined identifier used in an assignment target',
   },
   {
+    file: 'undefined-identifier-read.crs',
+    severity: 'error',
+    pattern: /Undefined identifier 'missing'/,
+    label: 'an undefined identifier read in a view interpolation',
+  },
+  {
     file: 'missing-struct-field.crs',
     severity: 'error',
     pattern: /Missing field 'age' in struct literal 'User'/,
@@ -42,6 +48,36 @@ const cases = [
     severity: 'error',
     pattern: /Unknown field 'nickname' on struct 'User'/,
     label: 'a struct literal with an unknown field',
+  },
+  {
+    file: 'unknown-component.crs',
+    severity: 'error',
+    pattern: /Unknown component '<Missing>'/,
+    label: 'a template element referencing a component that does not exist',
+  },
+  {
+    file: 'struct-as-component.crs',
+    severity: 'error',
+    pattern: /'User' is a struct, not a component — it cannot be used as an element/,
+    label: 'a template element referencing a struct name instead of a component',
+  },
+  {
+    file: 'unknown-prop.crs',
+    severity: 'error',
+    pattern: /Unknown prop 'nickname' passed to <Greeting> \(not declared as a param\)/,
+    label: 'a component call passing a prop the component does not declare',
+  },
+  {
+    file: 'missing-view-block.crs',
+    severity: 'error',
+    pattern: /Component has no 'view' block/,
+    label: 'a component with no view block at all',
+  },
+  {
+    file: 'duplicate-view-block.crs',
+    severity: 'error',
+    pattern: /Component has more than one 'view' block/,
+    label: 'a component with two view blocks',
   },
   {
     file: 'missing-prop.crs',

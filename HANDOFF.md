@@ -14,12 +14,14 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session was documentation-only (see the top "Latest session" entry in "Session Log"): the
-maintainer shared an external review/brainstorm of Crescent's future direction and asked for it to
-be organized into `TODO.md` alongside the existing roadmap, plus a small fix to the top-level
-`README.md` (its VS Code bullet was enumerating specific current commands and had already gone
-stale — reworded to be as stable as the other three bullets). No compiler/extension code changed
-this session.
+Latest session added regression-test coverage for several semantic-checker diagnostics that were
+already implemented but untested/marked unstarted in `TODO.md` (component existence/prop/
+declaration checking, general undefined-name diagnostics) — see the top "Latest session" entry in
+"Session Log" for exactly what was added and why. No checker/compiler behavior changed, only tests
+and `TODO.md` checkbox accuracy; 6 new `npm test` cases, 174 total, all passing.
+
+Before that: a documentation-only session organized an externally-sourced set of future-direction
+ideas into `TODO.md` and fixed a stale `README.md` bullet (see the next "Older session" entry).
 
 Before that: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a
 `compiler/src/webPreview.ts` builds a project and bundles its previewable components (via
@@ -483,7 +485,90 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 ## Session Log
 
-### Latest session (documentation only)
+### Latest session
+
+**AI:** Claude
+
+**Task:** No explicit instruction — picked up `TODO.md` §16's priority order (fix
+spec/implementation contradictions, strengthen the semantic checker, add regression tests). The
+previous session's own "Recommended Next Step" #4 specifically flagged "Undefined-name diagnostics"
+as plausibly already implemented and just needing verification; investigating that turned up a
+broader pattern worth the same treatment: `TODO.md`'s §5 "Components" subsection listed five items
+as entirely `[ ]` unstarted, but reading `checker.ts` showed three of them (component existence
+checking, component prop checking, and most of component declaration checking) were already
+substantially implemented and simply untested/undocumented.
+
+**Result:**
+- Confirmed via `checker.ts` inspection, not assumption, exactly what already exists:
+  - `checkExpr`'s `Identifier` case (used for every expression context — reads, assignment targets,
+    view interpolations, function arguments, etc.) already flags any name that isn't in scope,
+    global scope, or `BUILTIN_GLOBALS`. This is "Undefined-name diagnostics" (§5 Scope/Names),
+    confirmed genuinely general-purpose, not narrowly scoped to the one assignment-target fixture
+    that existed before this session.
+  - `checkTemplateNode`'s `Element` case already reports `Unknown component '<Tag>'` for a
+    nonexistent component name, `'Tag' is a struct, not a component...` when a struct name is used
+    as an element, and `Unknown prop 'x' passed to <Tag>` for an undeclared prop (in addition to
+    the already-tested "Missing prop"/type-mismatch cases). This is "Component existence checking"
+    and most of "Component prop checking" (§5 Components).
+  - `checkComponentDecl` already rejects a component with zero or more than one `view` block, on
+    top of the already-tested duplicate-member-name check. This is most of "Component declaration
+    checking" (§5 Components).
+- Added 6 new fixtures under `compiler/scripts/fixtures/checker/` and 6 corresponding cases in
+  `compiler/scripts/test-checker.js`, each asserting the exact diagnostic message and exercising a
+  behavior that had no regression coverage before this session: `undefined-identifier-read.crs`
+  (a plain read of an undefined name in a view interpolation, to complement the existing
+  assignment-target fixture), `unknown-component.crs`, `struct-as-component.crs`,
+  `unknown-prop.crs`, `missing-view-block.crs`, `duplicate-view-block.crs`. All six pass against
+  the existing, unmodified checker — no compiler behavior changed this session, only test coverage
+  and documentation accuracy.
+- Updated `TODO.md` §5's "Scope / Names" and "Components" subsections to check off the
+  now-verified-and-tested items, with a short note next to each pointing at the fixture(s) that
+  cover it and, where relevant, what's explicitly still *not* covered (e.g. undefined-name
+  diagnostics don't cover cross-module resolution; component prop checking exempts `on*` attributes
+  entirely rather than validating them, which is exactly why "Event handler signature checking"
+  is still unchecked). Removed the separate "Component argument checking" bullet, folding it into
+  "Component prop checking" — components don't have a distinct "argument" concept apart from props
+  in Crescent's current design, and the two bullets described the same behavior.
+
+**Files changed:**
+- `TODO.md` (checkbox/documentation accuracy only — see above)
+- `compiler/scripts/test-checker.js` (6 new test cases)
+- `compiler/scripts/fixtures/checker/undefined-identifier-read.crs` (new)
+- `compiler/scripts/fixtures/checker/unknown-component.crs` (new)
+- `compiler/scripts/fixtures/checker/struct-as-component.crs` (new)
+- `compiler/scripts/fixtures/checker/unknown-prop.crs` (new)
+- `compiler/scripts/fixtures/checker/missing-view-block.crs` (new)
+- `compiler/scripts/fixtures/checker/duplicate-view-block.crs` (new)
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean). `npm test`: 174 PASS, 0 FAIL, exit 0 (up from
+168 before this session — 6 new cases, all passing on the first real run since they test existing,
+unmodified behavior rather than new code).
+
+**Problems/Decisions:** None requiring resolution. The main judgment call was scope: rather than
+also adding tests/checkboxes for every other untested diagnostic in the checker (there are more —
+e.g. `Cannot assign to derived`, `Direct property write on state ... is forbidden`, the
+`Unknown type` family for params/returns/for-loops which already has partial coverage), this
+session stayed focused on the Components subsection plus the one Scope/Names item the previous
+session explicitly flagged, per `AGENTS.md` §4 ("make small coherent changes") and §15 ("one
+feature ... over large unrelated rewrites"). The remaining untested-but-implemented diagnostics are
+a reasonable, well-scoped follow-up in the same spirit.
+
+**Next:** A natural continuation, if VS Code/tooling work isn't the priority: sweep the rest of
+`checker.ts` for other implemented-but-untested/unchecked diagnostics using the same method (read
+the code, don't assume the checklist is accurate, add a fixture + test case, then correct the
+checkbox) — `Cannot assign to derived '...'` and the direct-property-write-forbidden diagnostic
+(both in `checkAssignmentTarget`) are the most obvious candidates, and would round out the
+Reactivity subsection's "Restrictions on reactive object property mutation" claim with real
+regression coverage rather than relying on it having been exercised only via `forbidden-derived-
+assignment.js`/`forbidden-property-write.js` (which test *codegen*/runtime behavior, not that the
+checker itself reports the right diagnostic message — worth double-checking whether those already
+cover it before assuming they don't). Otherwise, `TODO.md` §16's next-highest items (Null Safety's
+flow-sensitive narrowing, or the Types section's remaining assignment-compatibility gaps) remain
+open.
+
+---
+
+### Older session
 
 **AI:** Claude
 

@@ -147,7 +147,13 @@
 - [x] Basic scope resolution
 - [ ] Comprehensive symbol resolution
 - [x] Duplicate declaration diagnostics
-- [ ] Undefined-name diagnostics
+- [x] Undefined-name diagnostics — `checkExpr`'s `Identifier` case flags any read of a name not in
+  scope, in global scope, or in `BUILTIN_GLOBALS`, so it fires uniformly across reads, assignment
+  targets, and view interpolations (`undefined-identifier-read.crs`, `undefined-identifier.crs`);
+  `on_change`'s watched names are checked separately for existence
+  (`checker.ts`'s `OnChangeDecl` case). What's *not* covered here is cross-module resolution — see
+  the next item — a name imported via `use` from another file that itself doesn't exist there is a
+  module-resolution error, not something this checker function sees.
 - [ ] Cross-module symbol resolution
 
 ## Types
@@ -196,13 +202,27 @@
 
 ## Components
 
-- [ ] Component declaration checking
-- [ ] Component argument checking
-- [ ] Component prop checking
-- [ ] Component existence checking
-- [ ] Event handler signature checking
+- [x] Component declaration checking — a component's params + `state`/`derived`/`provide`/
+  `const`/`inject`/function members are checked for duplicate names as one combined set
+  (`duplicate-component-member.crs`), and a component with zero or more than one `view` block is
+  rejected (`missing-view-block.crs`, `duplicate-view-block.crs`)
+- [x] Component prop checking — a required prop that isn't passed (`missing-prop.crs`), a prop
+  passed that isn't declared as a param (`unknown-prop.crs`), and a prop passed with a
+  type-mismatched value (`wrong-prop-type.crs`, `wrong-prop-type-string-attr.crs`) are all flagged;
+  attributes starting with `on` are exempted from the unknown-prop check since they're event
+  handlers, not props
+- [x] Component existence checking — a template element referencing a component name that doesn't
+  exist (`unknown-component.crs`), or that resolves to a struct instead of a component
+  (`struct-as-component.crs`), is flagged
+- [ ] Event handler signature checking — `on*` attributes are currently exempt from prop
+  validation entirely (see "Component prop checking" above); nothing yet verifies the handler
+  expression actually resolves to a function, or that its signature is call-compatible with how
+  the runtime invokes it
 - [ ] Slot usage validation
-- [ ] Lifecycle block validation
+- [ ] Lifecycle block validation — `on_mount`/`on_change` bodies are type-checked like any other
+  statement block, and `on_change`'s watched names are checked for existence
+  (`checker.ts`'s `OnChangeDecl` case), but nothing yet validates lifecycle-specific rules (e.g.
+  restrictions on what's valid inside `on_mount` vs. elsewhere, once such rules are decided)
 
 ## Diagnostics
 
