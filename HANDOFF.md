@@ -14,20 +14,25 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session finished sweeping every `typeIsResolvable(...)` call site in `checker.ts` for
-fixture coverage, per the previous session's "Next" note. Added tests for three untested paths
-(component-level param type, struct field type, `inject<T>` type) and, along the way, found a real
-but minor diagnostic-quality gap — `state`/`derived`/`provide`/`const` declared types are never
-checked for existence, only compared against their initializer — recorded as a concrete example
-under `TODO.md`'s existing "More precise diagnostic messages" bullet rather than fixed (it's new
-behavior, not a test for existing behavior). See the top "Latest session" entry in "Session Log".
-3 new `npm test` cases, 179 total, all passing.
+Latest session was documentation-only, at the maintainer's explicit request: restructured `TODO.md`
+§12 around ten maintainer-supplied core-language-evolution ideas (string interpolation,
+destructuring, tuples, enums/ADTs, pattern matching, exhaustiveness diagnostics, first-class
+function types, generics, interfaces/traits, broader type-system polish), framed explicitly as
+"important, not urgent" with a note that hardening work (the last several sessions) shouldn't
+indefinitely crowd it out. See the top "Latest session" entry in "Session Log". No code changed;
+test count unchanged at 179.
+
+Before that: finished sweeping every `typeIsResolvable(...)` call site in `checker.ts` for
+fixture coverage. Added tests for three untested paths (component-level param type, struct field
+type, `inject<T>` type) and flagged (but did not fix) that `state`/`derived`/`provide`/`const`
+declared types are never checked for existence, only compared against their initializer. 179 total
+tests (see the next "Older session" entry).
 
 Before that: added checker-level tests for the `Cannot assign to derived` and direct-property-
 write-forbidden diagnostics, which previously were only exercised indirectly via `codegen.ts`'s
 own separate `CodegenError` checks — flagged (but did not fix) that codegen still duplicates both
-rules independently of the checker. 176 total tests at that point (see the next "Older session"
-entry).
+rules independently of the checker. 176 total tests at that point (see further "Older session"
+entries).
 
 Before that: added regression-test coverage for several semantic-checker diagnostics that were
 already implemented but untested/marked unstarted in `TODO.md` (component existence/prop/
@@ -499,7 +504,63 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 ## Session Log
 
-### Latest session
+### Latest session (documentation only)
+
+**AI:** Claude
+
+**Task:** The maintainer gave a structured list of ten core-language-evolution ideas (string
+interpolation, destructuring, tuples, enums/ADTs, pattern matching, exhaustiveness diagnostics,
+first-class function types, generics, interfaces/traits, and broader type-system polish) and asked
+for them to be recorded in the project's docs as *important but not urgent*, with an explicit
+instruction not to let the project get "stuck forever fixing things" instead of also evolving the
+language — a direct response to the last several sessions, which were all checker regression-test
+hardening.
+
+**Result:**
+- Restructured `TODO.md` §12 ("Language Features to Evaluate") around the maintainer's ten items,
+  organized as a new "Core Language Evolution" subsection, roughly sequenced by real dependency
+  (destructuring before tuples/pattern-matching; enums before `Result<T,E>`; pattern matching
+  before exhaustiveness checking) rather than just transcribed in the order given — and
+  cross-referenced each against what's already tracked elsewhere in `TODO.md` so nothing exists in
+  two places with two different descriptions (e.g. "First-class function types" now explicitly
+  notes its overlap with §5's existing "Function-type compatibility" checker item; "More powerful
+  type-system features" notes its overlap with §5's existing "Flow-sensitive null narrowing" work).
+  This superseded and absorbed four flatter, less-detailed bullets from an earlier session's
+  version of this section (generics, function types, pattern matching, destructuring) rather than
+  leaving duplicates.
+- Added an explicit "important, not urgent" framing note at the top of §12, addressed to future
+  sessions (including future instances of me), stating directly that hardening work has no natural
+  end point and should not be used as a permanent excuse to defer language evolution — a healthy
+  project alternates between the two. Added a short cross-reference to this from §16's "Current
+  Priority Order" too, so the framing is visible from both the feature-list side and the
+  task-selection side.
+- Deliberately did **not** put this level of detail in `docs/Crescent_Design.md`: that document is
+  the source of truth for *decided* semantics (per `AGENTS.md` §2), and every one of these ten
+  items is explicitly undesigned/undecided (e.g. "decide whether interfaces and traits should be
+  one concept or two" is itself listed as open work). Putting a decided-looking write-up in the
+  design doc before any of this is actually designed would misrepresent the document's own stated
+  purpose. `TODO.md` is the correct home for "important, not urgent, not yet designed" ideas — this
+  matches how the maintainer's previous batch of future-direction ideas were handled two sessions
+  ago.
+
+**Files changed:** `TODO.md`, `HANDOFF.md`. No compiler/runtime/extension source touched — this was
+a documentation/roadmap session per the maintainer's explicit request, not a code task.
+
+**Tests:** Not applicable (no code changed). `git diff --check` run to confirm no whitespace issues.
+
+**Problems/Decisions:** The one deliberate restructuring choice: grouped and lightly reordered the
+maintainer's ten items by dependency rather than preserving their exact given order, since several
+of them explicitly build on each other (this was called out per-item so the reasoning is visible,
+not just imposed silently).
+
+**Next:** No new code work implied by this session. `TODO.md` §16's priority order (with its new
+note that hardening work shouldn't indefinitely crowd out §12) is still the right place to pick up
+the next task — including, now more explicitly than before, a §12 "Core Language Evolution" item if
+the next session judges the recent run of checker-hardening work sufficient for now.
+
+---
+
+### Older session
 
 **AI:** Claude
 

@@ -571,21 +571,91 @@ Every important compiler bug should ideally become a regression test.
 
 # 12. Language Features to Evaluate
 
-These are deliberately NOT commitments.
+These are deliberately NOT commitments. Each should be designed before implementation.
 
-Each should be designed before implementation.
+> **This section is important, not urgent — and that's a deliberate distinction, not a way of
+> saying "someday, maybe never."** Recent sessions have mostly hardened what already exists
+> (regression tests for already-implemented checker diagnostics, documentation accuracy). That
+> work is valuable and should continue, but correctness/testing work is never *finished* — there
+> is always one more untested diagnostic, one more edge case. Crescent should not treat that as a
+> reason to indefinitely postpone language evolution. A healthy rhythm alternates between
+> hardening what exists and deliberately spending a session on real design work from this section
+> — sketching grammar, prototyping a small parser change, writing an example program in the
+> proposed syntax — even while the checker is still imperfect. Neither activity should be starved
+> by the other. See `TODO.md` §16's priority order for how this fits with day-to-day task
+> selection; that order is about picking *today's* task, not a permanent verdict that language
+> evolution always waits.
 
-- [ ] More complete generics
-- [ ] Better function types
-- [ ] Pattern matching (e.g. `match result { Ok(value) => ...; Err(error) => ...; }`,
-  or a simpler value-matching form like `match user.role { "admin" => ...; _ => ...; }`)
-  — most compelling once `Result<T, E>` (below) exists, since the two reinforce
-  each other
+## Core Language Evolution
+
+The following ten areas are grouped and roughly sequenced by dependency — later groups lean on
+earlier ones (pattern matching needs something worth matching on; exhaustiveness checking needs
+pattern matching to exist first; interfaces/traits interact with generics either way). This is a
+design roadmap, not an implementation order forced on any single session — pick one coherent group,
+design it against `docs/Crescent_Design.md`'s existing principles, and write it up there before
+touching the parser.
+
+- [ ] **String interpolation** — interpolation inside string literals (not just `view`/`style`
+  interpolation, which already exists); escaping rules for literal `{`/`}` inside an interpolated
+  string; eventually, formatting expressions (e.g. controlling how a number renders) once there's
+  a concrete need. Relatively independent of the rest of this list — a reasonable place to start
+  if a small, self-contained language change is wanted.
+- [ ] **Destructuring** — struct destructuring, array destructuring, in both variable declarations
+  and function parameters. (Supersedes the old flat "Destructuring" bullet from earlier revisions
+  of this roadmap — same idea, spelled out.) Worth designing before tuples/enums below, since both
+  of those become much more useful once values can be destructured.
+- [ ] **Tuples** — tuple types, tuple literals, tuple indexing, and tuple destructuring (building
+  on the destructuring item above). Consider whether Crescent actually needs tuples as a distinct
+  concept or whether structs already cover the same need less anonymously — decide deliberately,
+  don't add both without a reason.
+- [ ] **Enums / algebraic data types** — basic enums, variants that carry values, type checking for
+  both, and how they interact with `match` below. This is also the natural home for a future
+  `Result<T, E>` (see "Better error/result conventions" below) — a `Result` is just an enum with an
+  `Ok`/`Err` shape, so enums should probably land before or alongside `Result` rather than after it.
+- [ ] **Pattern matching** — `match` itself; literal patterns; wildcards; variable bindings; struct
+  patterns; enum patterns; guards. (Supersedes the old flat "Pattern matching" bullet.) Most
+  compelling once enums and destructuring exist, since matching on a bare primitive alone is a much
+  smaller feature than matching on structured data. Justify this against Crescent specifically —
+  e.g. it integrates naturally with reactive state that has an explicit
+  loading/success/error shape — not merely "other typed languages have `match`."
+- [ ] **Exhaustiveness & pattern diagnostics** — non-exhaustive `match` detection, unreachable-
+  pattern detection, missing-case diagnostics, and generally better pattern-related error messages.
+  Only meaningful once `match` and enums exist; this is the checker-side follow-up to the pattern
+  matching item above, not a separate feature to design in isolation.
+- [ ] **First-class function types** — function types such as `(int, int) -> int`; functions passed
+  as parameters; functions returned as values; function-type compatibility/checking (this
+  supersedes the old flat "Better function types" bullet, and overlaps with the existing "Function-
+  type compatibility" item under §5's Types subsection — resolve that overlap when this is actually
+  designed, don't track it in two places once it's real work); and closures, which is the part of
+  this group most likely to need real design discussion given Crescent's current reactivity model
+  (what does a closure capture from `state<T>`? a snapshot or a live reference?).
+- [ ] **Generics** — generic structs, generic functions, generic components, generic collections,
+  and — only if Crescent actually needs them in practice — type constraints. (Supersedes the old
+  flat "More complete generics" bullet.) Crescent already has generic *type syntax* in the parser;
+  this item is about generic *declarations* (writing a struct/function/component once and
+  parameterizing it), a materially bigger step.
+- [ ] **Interfaces / traits** — interface or trait declarations, implementations, type checking, and
+  how they interact with generic constraints above. Explicitly undecided: whether this should be
+  one concept or two (an "interface" a component/struct implements vs. a "trait" used purely for
+  generic bounds) is itself part of the design work, not a foregone conclusion — don't build both
+  without first deciding whether the distinction earns its complexity in Crescent specifically.
+- [ ] **More powerful type-system features** — type aliases; better nullable/type narrowing (this
+  overlaps with the existing, already-tracked "Flow-sensitive null narrowing" work under §5's Null
+  Safety subsection — that's compiler-hardening work on the *current* nullable model and can
+  proceed independently of anything else in this list); possibly union types; possibly type-
+  inference improvements; and whatever else real Crescent usage surfaces once the above features
+  exist and people are actually writing more Crescent code. This is deliberately the least defined
+  item — treat it as "revisit once the rest of this list has taught us more about what Crescent
+  actually needs," not a queue of specific sub-features to pick off.
+
+## Ecosystem, Runtime & Peripheral Ideas
+
 - [ ] Better error/result conventions, specifically a `Result<T, E>` type as an
   explicit alternative to exceptions (e.g. `Result<User, Error> getUser(int id)`
-  paired with `match`/similar above) — fits the "safe, explicitly typed" design
+  paired with `match` above) — fits the "safe, explicitly typed" design
   goal in `docs/Crescent_Design.md` and could become a distinguishing feature
-  rather than an incidental one
+  rather than an incidental one. See "Enums / algebraic data types" above for why this
+  probably wants to be built on top of enums rather than as its own special-cased type.
 - [ ] Async semantics refinement, including how `await` composes with reactive
   state in lifecycle blocks (see the Runtime "Reactive Core" note above about a
   possible future `resource` primitive)
@@ -598,7 +668,6 @@ Each should be designed before implementation.
   learn and reason about, so it should not be attempted before the core
   semantics are settled
 - [ ] More expressive collection operations
-- [ ] Destructuring
 - [ ] Spread syntax
 - [ ] Additional primitive types if justified
 - [ ] A standard router (`route "/users/:id" { <User/> }`-style) once module
@@ -757,3 +826,10 @@ When there is no explicit task from the maintainer, prefer work in approximately
 9. Explore additional compilation targets.
 
 Do not prioritize new syntax over correctness of already-defined syntax unless there is a deliberate design reason.
+
+This ordering is for picking *today's* task when nothing else is specified — it is not a claim
+that item 8 (language features, see §12) is low-value or should wait indefinitely. Hardening work
+(items 1-7) has no natural end point; there is always another edge case or another untested
+diagnostic. If several sessions in a row have all been hardening work, that is itself a signal to
+deliberately pick a §12 item next, not a reason to keep finding one more thing to harden. Both
+kinds of work move the project forward; neither should permanently starve the other.

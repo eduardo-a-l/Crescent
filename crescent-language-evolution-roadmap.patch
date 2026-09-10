@@ -1,0 +1,231 @@
+diff --git a/HANDOFF.md b/HANDOFF.md
+index b80e4fb..69dc6bc 100644
+--- a/HANDOFF.md
++++ b/HANDOFF.md
+@@ -14,20 +14,25 @@
+ **Active area:** Compiler / language implementation
+ 
+ **Current task:**
+-Latest session finished sweeping every `typeIsResolvable(...)` call site in `checker.ts` for
+-fixture coverage, per the previous session's "Next" note. Added tests for three untested paths
+-(component-level param type, struct field type, `inject<T>` type) and, along the way, found a real
+-but minor diagnostic-quality gap — `state`/`derived`/`provide`/`const` declared types are never
+-checked for existence, only compared against their initializer — recorded as a concrete example
+-under `TODO.md`'s existing "More precise diagnostic messages" bullet rather than fixed (it's new
+-behavior, not a test for existing behavior). See the top "Latest session" entry in "Session Log".
+-3 new `npm test` cases, 179 total, all passing.
++Latest session was documentation-only, at the maintainer's explicit request: restructured `TODO.md`
++§12 around ten maintainer-supplied core-language-evolution ideas (string interpolation,
++destructuring, tuples, enums/ADTs, pattern matching, exhaustiveness diagnostics, first-class
++function types, generics, interfaces/traits, broader type-system polish), framed explicitly as
++"important, not urgent" with a note that hardening work (the last several sessions) shouldn't
++indefinitely crowd it out. See the top "Latest session" entry in "Session Log". No code changed;
++test count unchanged at 179.
++
++Before that: finished sweeping every `typeIsResolvable(...)` call site in `checker.ts` for
++fixture coverage. Added tests for three untested paths (component-level param type, struct field
++type, `inject<T>` type) and flagged (but did not fix) that `state`/`derived`/`provide`/`const`
++declared types are never checked for existence, only compared against their initializer. 179 total
++tests (see the next "Older session" entry).
+ 
+ Before that: added checker-level tests for the `Cannot assign to derived` and direct-property-
+ write-forbidden diagnostics, which previously were only exercised indirectly via `codegen.ts`'s
+ own separate `CodegenError` checks — flagged (but did not fix) that codegen still duplicates both
+-rules independently of the checker. 176 total tests at that point (see the next "Older session"
+-entry).
++rules independently of the checker. 176 total tests at that point (see further "Older session"
++entries).
+ 
+ Before that: added regression-test coverage for several semantic-checker diagnostics that were
+ already implemented but untested/marked unstarted in `TODO.md` (component existence/prop/
+@@ -499,7 +504,63 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
+ 
+ ## Session Log
+ 
+-### Latest session
++### Latest session (documentation only)
++
++**AI:** Claude
++
++**Task:** The maintainer gave a structured list of ten core-language-evolution ideas (string
++interpolation, destructuring, tuples, enums/ADTs, pattern matching, exhaustiveness diagnostics,
++first-class function types, generics, interfaces/traits, and broader type-system polish) and asked
++for them to be recorded in the project's docs as *important but not urgent*, with an explicit
++instruction not to let the project get "stuck forever fixing things" instead of also evolving the
++language — a direct response to the last several sessions, which were all checker regression-test
++hardening.
++
++**Result:**
++- Restructured `TODO.md` §12 ("Language Features to Evaluate") around the maintainer's ten items,
++  organized as a new "Core Language Evolution" subsection, roughly sequenced by real dependency
++  (destructuring before tuples/pattern-matching; enums before `Result<T,E>`; pattern matching
++  before exhaustiveness checking) rather than just transcribed in the order given — and
++  cross-referenced each against what's already tracked elsewhere in `TODO.md` so nothing exists in
++  two places with two different descriptions (e.g. "First-class function types" now explicitly
++  notes its overlap with §5's existing "Function-type compatibility" checker item; "More powerful
++  type-system features" notes its overlap with §5's existing "Flow-sensitive null narrowing" work).
++  This superseded and absorbed four flatter, less-detailed bullets from an earlier session's
++  version of this section (generics, function types, pattern matching, destructuring) rather than
++  leaving duplicates.
++- Added an explicit "important, not urgent" framing note at the top of §12, addressed to future
++  sessions (including future instances of me), stating directly that hardening work has no natural
++  end point and should not be used as a permanent excuse to defer language evolution — a healthy
++  project alternates between the two. Added a short cross-reference to this from §16's "Current
++  Priority Order" too, so the framing is visible from both the feature-list side and the
++  task-selection side.
++- Deliberately did **not** put this level of detail in `docs/Crescent_Design.md`: that document is
++  the source of truth for *decided* semantics (per `AGENTS.md` §2), and every one of these ten
++  items is explicitly undesigned/undecided (e.g. "decide whether interfaces and traits should be
++  one concept or two" is itself listed as open work). Putting a decided-looking write-up in the
++  design doc before any of this is actually designed would misrepresent the document's own stated
++  purpose. `TODO.md` is the correct home for "important, not urgent, not yet designed" ideas — this
++  matches how the maintainer's previous batch of future-direction ideas were handled two sessions
++  ago.
++
++**Files changed:** `TODO.md`, `HANDOFF.md`. No compiler/runtime/extension source touched — this was
++a documentation/roadmap session per the maintainer's explicit request, not a code task.
++
++**Tests:** Not applicable (no code changed). `git diff --check` run to confirm no whitespace issues.
++
++**Problems/Decisions:** The one deliberate restructuring choice: grouped and lightly reordered the
++maintainer's ten items by dependency rather than preserving their exact given order, since several
++of them explicitly build on each other (this was called out per-item so the reasoning is visible,
++not just imposed silently).
++
++**Next:** No new code work implied by this session. `TODO.md` §16's priority order (with its new
++note that hardening work shouldn't indefinitely crowd out §12) is still the right place to pick up
++the next task — including, now more explicitly than before, a §12 "Core Language Evolution" item if
++the next session judges the recent run of checker-hardening work sufficient for now.
++
++---
++
++### Older session
+ 
+ **AI:** Claude
+ 
+diff --git a/TODO.md b/TODO.md
+index 9ac5b7d..a4d1f17 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -571,21 +571,91 @@ Every important compiler bug should ideally become a regression test.
+ 
+ # 12. Language Features to Evaluate
+ 
+-These are deliberately NOT commitments.
++These are deliberately NOT commitments. Each should be designed before implementation.
++
++> **This section is important, not urgent — and that's a deliberate distinction, not a way of
++> saying "someday, maybe never."** Recent sessions have mostly hardened what already exists
++> (regression tests for already-implemented checker diagnostics, documentation accuracy). That
++> work is valuable and should continue, but correctness/testing work is never *finished* — there
++> is always one more untested diagnostic, one more edge case. Crescent should not treat that as a
++> reason to indefinitely postpone language evolution. A healthy rhythm alternates between
++> hardening what exists and deliberately spending a session on real design work from this section
++> — sketching grammar, prototyping a small parser change, writing an example program in the
++> proposed syntax — even while the checker is still imperfect. Neither activity should be starved
++> by the other. See `TODO.md` §16's priority order for how this fits with day-to-day task
++> selection; that order is about picking *today's* task, not a permanent verdict that language
++> evolution always waits.
++
++## Core Language Evolution
++
++The following ten areas are grouped and roughly sequenced by dependency — later groups lean on
++earlier ones (pattern matching needs something worth matching on; exhaustiveness checking needs
++pattern matching to exist first; interfaces/traits interact with generics either way). This is a
++design roadmap, not an implementation order forced on any single session — pick one coherent group,
++design it against `docs/Crescent_Design.md`'s existing principles, and write it up there before
++touching the parser.
++
++- [ ] **String interpolation** — interpolation inside string literals (not just `view`/`style`
++  interpolation, which already exists); escaping rules for literal `{`/`}` inside an interpolated
++  string; eventually, formatting expressions (e.g. controlling how a number renders) once there's
++  a concrete need. Relatively independent of the rest of this list — a reasonable place to start
++  if a small, self-contained language change is wanted.
++- [ ] **Destructuring** — struct destructuring, array destructuring, in both variable declarations
++  and function parameters. (Supersedes the old flat "Destructuring" bullet from earlier revisions
++  of this roadmap — same idea, spelled out.) Worth designing before tuples/enums below, since both
++  of those become much more useful once values can be destructured.
++- [ ] **Tuples** — tuple types, tuple literals, tuple indexing, and tuple destructuring (building
++  on the destructuring item above). Consider whether Crescent actually needs tuples as a distinct
++  concept or whether structs already cover the same need less anonymously — decide deliberately,
++  don't add both without a reason.
++- [ ] **Enums / algebraic data types** — basic enums, variants that carry values, type checking for
++  both, and how they interact with `match` below. This is also the natural home for a future
++  `Result<T, E>` (see "Better error/result conventions" below) — a `Result` is just an enum with an
++  `Ok`/`Err` shape, so enums should probably land before or alongside `Result` rather than after it.
++- [ ] **Pattern matching** — `match` itself; literal patterns; wildcards; variable bindings; struct
++  patterns; enum patterns; guards. (Supersedes the old flat "Pattern matching" bullet.) Most
++  compelling once enums and destructuring exist, since matching on a bare primitive alone is a much
++  smaller feature than matching on structured data. Justify this against Crescent specifically —
++  e.g. it integrates naturally with reactive state that has an explicit
++  loading/success/error shape — not merely "other typed languages have `match`."
++- [ ] **Exhaustiveness & pattern diagnostics** — non-exhaustive `match` detection, unreachable-
++  pattern detection, missing-case diagnostics, and generally better pattern-related error messages.
++  Only meaningful once `match` and enums exist; this is the checker-side follow-up to the pattern
++  matching item above, not a separate feature to design in isolation.
++- [ ] **First-class function types** — function types such as `(int, int) -> int`; functions passed
++  as parameters; functions returned as values; function-type compatibility/checking (this
++  supersedes the old flat "Better function types" bullet, and overlaps with the existing "Function-
++  type compatibility" item under §5's Types subsection — resolve that overlap when this is actually
++  designed, don't track it in two places once it's real work); and closures, which is the part of
++  this group most likely to need real design discussion given Crescent's current reactivity model
++  (what does a closure capture from `state<T>`? a snapshot or a live reference?).
++- [ ] **Generics** — generic structs, generic functions, generic components, generic collections,
++  and — only if Crescent actually needs them in practice — type constraints. (Supersedes the old
++  flat "More complete generics" bullet.) Crescent already has generic *type syntax* in the parser;
++  this item is about generic *declarations* (writing a struct/function/component once and
++  parameterizing it), a materially bigger step.
++- [ ] **Interfaces / traits** — interface or trait declarations, implementations, type checking, and
++  how they interact with generic constraints above. Explicitly undecided: whether this should be
++  one concept or two (an "interface" a component/struct implements vs. a "trait" used purely for
++  generic bounds) is itself part of the design work, not a foregone conclusion — don't build both
++  without first deciding whether the distinction earns its complexity in Crescent specifically.
++- [ ] **More powerful type-system features** — type aliases; better nullable/type narrowing (this
++  overlaps with the existing, already-tracked "Flow-sensitive null narrowing" work under §5's Null
++  Safety subsection — that's compiler-hardening work on the *current* nullable model and can
++  proceed independently of anything else in this list); possibly union types; possibly type-
++  inference improvements; and whatever else real Crescent usage surfaces once the above features
++  exist and people are actually writing more Crescent code. This is deliberately the least defined
++  item — treat it as "revisit once the rest of this list has taught us more about what Crescent
++  actually needs," not a queue of specific sub-features to pick off.
++
++## Ecosystem, Runtime & Peripheral Ideas
+ 
+-Each should be designed before implementation.
+-
+-- [ ] More complete generics
+-- [ ] Better function types
+-- [ ] Pattern matching (e.g. `match result { Ok(value) => ...; Err(error) => ...; }`,
+-  or a simpler value-matching form like `match user.role { "admin" => ...; _ => ...; }`)
+-  — most compelling once `Result<T, E>` (below) exists, since the two reinforce
+-  each other
+ - [ ] Better error/result conventions, specifically a `Result<T, E>` type as an
+   explicit alternative to exceptions (e.g. `Result<User, Error> getUser(int id)`
+-  paired with `match`/similar above) — fits the "safe, explicitly typed" design
++  paired with `match` above) — fits the "safe, explicitly typed" design
+   goal in `docs/Crescent_Design.md` and could become a distinguishing feature
+-  rather than an incidental one
++  rather than an incidental one. See "Enums / algebraic data types" above for why this
++  probably wants to be built on top of enums rather than as its own special-cased type.
+ - [ ] Async semantics refinement, including how `await` composes with reactive
+   state in lifecycle blocks (see the Runtime "Reactive Core" note above about a
+   possible future `resource` primitive)
+@@ -598,7 +668,6 @@ Each should be designed before implementation.
+   learn and reason about, so it should not be attempted before the core
+   semantics are settled
+ - [ ] More expressive collection operations
+-- [ ] Destructuring
+ - [ ] Spread syntax
+ - [ ] Additional primitive types if justified
+ - [ ] A standard router (`route "/users/:id" { <User/> }`-style) once module
+@@ -757,3 +826,10 @@ When there is no explicit task from the maintainer, prefer work in approximately
+ 9. Explore additional compilation targets.
+ 
+ Do not prioritize new syntax over correctness of already-defined syntax unless there is a deliberate design reason.
++
++This ordering is for picking *today's* task when nothing else is specified — it is not a claim
++that item 8 (language features, see §12) is low-value or should wait indefinitely. Hardening work
++(items 1-7) has no natural end point; there is always another edge case or another untested
++diagnostic. If several sessions in a row have all been hardening work, that is itself a signal to
++deliberately pick a §12 item next, not a reason to keep finding one more thing to harden. Both
++kinds of work move the project forward; neither should permanently starve the other.
