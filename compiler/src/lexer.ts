@@ -105,7 +105,9 @@ export class Lexer {
     }
 
     if (c === '"') {
+      const parts: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string }> = [];
       let str = '';
+      let hasInterpolation = false;
       while (!this.isAtEnd() && this.peekChar() !== '"') {
         const ch = this.advanceChar();
         if (ch === '\\') {
@@ -113,13 +115,24 @@ export class Lexer {
           if (next === 'n') str += '\n';
           else if (next === 't') str += '\t';
           else str += next;
+        } else if (ch === '{') {
+          hasInterpolation = true;
+          parts.push({ kind: 'raw', text: str });
+          str = '';
+          const exprSource = this.readInterpolationSource();
+          this.advanceChar();
+          parts.push({ kind: 'expr', source: exprSource });
         } else {
           str += ch;
         }
       }
       if (this.isAtEnd()) throw new LexError(`Unterminated string literal at line ${this.line}`);
       this.advanceChar();
-      return this.makeToken('STRING_LITERAL', str, start);
+      if (!hasInterpolation) return this.makeToken('STRING_LITERAL', str, start);
+      parts.push({ kind: 'raw', text: str });
+      const token = this.makeToken('STRING_LITERAL', str, start);
+      token.stringParts = parts;
+      return token;
     }
 
     switch (c) {
@@ -196,7 +209,7 @@ export class Lexer {
       }
       text += this.advanceChar();
     }
-    if (this.isAtEnd()) throw new LexError('Unterminated style interpolation');
+    if (this.isAtEnd()) throw new LexError('Unterminated interpolation');
     return text;
   }
 

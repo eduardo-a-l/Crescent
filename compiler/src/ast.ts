@@ -20,7 +20,8 @@ export type Expr =
   | { kind: 'Call'; callee: Expr; args: Expr[] }
   | { kind: 'Member'; object: Expr; property: string }
   | { kind: 'Index'; object: Expr; index: Expr }
-  | { kind: 'Postfix'; op: '++' | '--'; operand: Expr };
+  | { kind: 'Postfix'; op: '++' | '--'; operand: Expr }
+  | { kind: 'TemplateString'; parts: InterpolatedPart[] };
 
 export type Stmt =
   | { kind: 'VarDecl'; type: CrescentType; name: string; init: Expr; line: number }
@@ -66,7 +67,8 @@ export type TemplateNode =
   | { kind: 'TextInterpolation'; expr: Expr; line: number }
   | { kind: 'TextLiteral'; value: string; line: number };
 
-export type StyleValuePart = { kind: 'raw'; text: string } | { kind: 'expr'; expr: Expr };
+export type StyleValuePart = InterpolatedPart;
+export type InterpolatedPart = { kind: 'raw'; text: string } | { kind: 'expr'; expr: Expr };
 
 export interface StyleDeclaration {
   property: string;

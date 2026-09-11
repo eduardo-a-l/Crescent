@@ -21,6 +21,7 @@ export interface Token {
   value: string;
   line: number;
   start: number;
+  stringParts?: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string }>;
 }
 
 export const KEYWORDS: Record<string, TokenType> = {

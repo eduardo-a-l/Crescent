@@ -175,7 +175,7 @@ function escapeForTemplateLiteral(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
 }
 
-function styleValuePartsToJs(parts: AST.StyleValuePart[], stateNames: Set<string>): string {
+function interpolatedPartsToJs(parts: AST.InterpolatedPart[], stateNames: Set<string>): string {
   const pieces = parts.map((p) =>
     p.kind === 'raw' ? escapeForTemplateLiteral(p.text) : '${' + exprToJs(p.expr, stateNames) + '}'
   );
@@ -205,7 +205,7 @@ function generateStyleBlock(
       } else {
         const varName = `--crs-${varCounter}`;
         varCounter += 1;
-        varAssignments.push({ varName, exprJs: styleValuePartsToJs(decl.parts, stateNames) });
+        varAssignments.push({ varName, exprJs: interpolatedPartsToJs(decl.parts, stateNames) });
         declLines.push(`  ${decl.property}: var(${varName});`);
       }
     }
@@ -421,6 +421,8 @@ function exprToJs(expr: AST.Expr, stateNames: Set<string>): string {
       return `${exprToJs(expr.object, stateNames)}[${exprToJs(expr.index, stateNames)}]`;
     case 'Postfix':
       unsupported('postfix expressions outside statement position');
+    case 'TemplateString':
+      return interpolatedPartsToJs(expr.parts, stateNames);
     default:
       unsupported((expr as { kind: string }).kind);
   }

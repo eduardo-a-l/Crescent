@@ -84,6 +84,8 @@ function inferLiteralType(expr: AST.Expr): AST.CrescentType | null {
       return { kind: 'PrimitiveType', name: 'float' };
     case 'StringLiteral':
       return { kind: 'PrimitiveType', name: 'string' };
+    case 'TemplateString':
+      return { kind: 'PrimitiveType', name: 'string' };
     case 'BoolLiteral':
       return { kind: 'PrimitiveType', name: 'bool' };
     case 'StructLiteral':
@@ -304,6 +306,11 @@ function checkExpr(
       return;
     case 'Postfix':
       checkExpr(expr.operand, scope, globalScope, functions, narrow, where, line, diagnostics);
+      return;
+    case 'TemplateString':
+      for (const p of expr.parts) {
+        if (p.kind === 'expr') checkExpr(p.expr, scope, globalScope, functions, narrow, where, line, diagnostics);
+      }
       return;
   }
 }

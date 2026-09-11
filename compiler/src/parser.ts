@@ -568,6 +568,12 @@ export class Parser {
     return expr;
   }
 
+  private parseInterpolatedStringParts(token: Token): AST.InterpolatedPart[] {
+    return token.stringParts!.map((p) =>
+      p.kind === 'raw' ? { kind: 'raw', text: p.text } : { kind: 'expr', expr: new Parser(p.source).parseExpression() }
+    );
+  }
+
   private parsePrimary(): AST.Expr {
     if (this.check('INT_LITERAL')) {
       return { kind: 'IntLiteral', value: parseInt(this.advance().value, 10) };
@@ -576,7 +582,11 @@ export class Parser {
       return { kind: 'FloatLiteral', value: parseFloat(this.advance().value) };
     }
     if (this.check('STRING_LITERAL')) {
-      return { kind: 'StringLiteral', value: this.advance().value };
+      const token = this.advance();
+      if (token.stringParts) {
+        return { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) };
+      }
+      return { kind: 'StringLiteral', value: token.value };
     }
     if (this.check('TRUE')) {
       this.advance();
@@ -675,7 +685,11 @@ export class Parser {
       return { kind: 'TextInterpolation', expr, line: 0 };
     }
     if (this.check('STRING_LITERAL')) {
-      return { kind: 'TextLiteral', value: this.advance().value, line: 0 };
+      const token = this.advance();
+      if (token.stringParts) {
+        return { kind: 'TextInterpolation', expr: { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) }, line: 0 };
+      }
+      return { kind: 'TextLiteral', value: token.value, line: 0 };
     }
     this.fail('Expected a template node inside view block');
   }
@@ -700,8 +714,12 @@ export class Parser {
         this.expect('RBRACE');
         attributes.push({ name: attrName, isExpr: true, exprValue });
       } else {
-        const stringValue = this.expect('STRING_LITERAL').value;
-        attributes.push({ name: attrName, isExpr: false, stringValue });
+        const token = this.expect('STRING_LITERAL');
+        if (token.stringParts) {
+          attributes.push({ name: attrName, isExpr: true, exprValue: { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) } });
+        } else {
+          attributes.push({ name: attrName, isExpr: false, stringValue: token.value });
+        }
       }
     }
     if (this.check('SLASH_GT')) {

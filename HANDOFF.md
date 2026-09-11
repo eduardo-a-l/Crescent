@@ -14,19 +14,29 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session was documentation-only, at the maintainer's explicit request: restructured `TODO.md`
+Latest session implemented **string interpolation** end to end — the first real
+`TODO.md` §12 "Core Language Evolution" item picked up under the "important, not urgent, alternate
+with hardening" framing from the previous session. A `string` literal can now embed `{ Expression }`
+directly (`"Hello, {name}!"`), in any context a string literal appears (expressions, `view {}` text,
+attribute values), with `\{`/`\}` as literal-brace escapes. See the top "Latest session" entry in
+"Session Log" for the full design/implementation writeup. 6 new `npm test` cases (2 checker
+fixtures + 4 e2e assertions), 185 total, all passing. `docs/Crescent_Grammar.md` and
+`docs/Crescent_Design.md` both updated — this is the first session where a `TODO.md` §12 language
+feature went from idea to a documented, implemented, tested part of the language, not just a
+roadmap entry.
+
+Before that: documentation-only — restructured `TODO.md`
 §12 around ten maintainer-supplied core-language-evolution ideas (string interpolation,
 destructuring, tuples, enums/ADTs, pattern matching, exhaustiveness diagnostics, first-class
 function types, generics, interfaces/traits, broader type-system polish), framed explicitly as
 "important, not urgent" with a note that hardening work (the last several sessions) shouldn't
-indefinitely crowd it out. See the top "Latest session" entry in "Session Log". No code changed;
-test count unchanged at 179.
+indefinitely crowd it out. 179 total tests at that point (see the next "Older session" entry).
 
 Before that: finished sweeping every `typeIsResolvable(...)` call site in `checker.ts` for
 fixture coverage. Added tests for three untested paths (component-level param type, struct field
 type, `inject<T>` type) and flagged (but did not fix) that `state`/`derived`/`provide`/`const`
 declared types are never checked for existence, only compared against their initializer. 179 total
-tests (see the next "Older session" entry).
+tests at that point (see further "Older session" entries).
 
 Before that: added checker-level tests for the `Cannot assign to derived` and direct-property-
 write-forbidden diagnostics, which previously were only exercised indirectly via `codegen.ts`'s
@@ -504,7 +514,140 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 ## Session Log
 
-### Latest session (documentation only)
+### Latest session
+
+**AI:** Claude
+
+**Task:** Explicit instruction to continue, following through on the previous session's own
+framing ("important, not urgent... don't get stuck forever fixing things — a healthy project
+alternates hardening with real language-design work"). Picked **string interpolation** from
+`TODO.md` §12's "Core Language Evolution" list — the item explicitly flagged as "a reasonable
+place to start if a small, self-contained language change is wanted" — and, per the framing note's
+own instruction to "design it against `docs/Crescent_Design.md`'s existing principles, and write it
+up there before touching the parser," did real design work first, then implemented the whole
+feature (not just the design writeup) since the design turned out small and low-risk once grounded
+in an existing pattern already in the codebase.
+
+**Result:**
+- Investigated before designing anything: Crescent had *zero* real string interpolation anywhere,
+  including in `view`/`style` blocks — what looks like interpolation there
+  (`<p>"Don't Buy " {item}</p>`) is actually just adjacent template-node siblings, not embedding
+  inside one string. But `style {}` value parsing already has a working, tested mechanism for
+  exactly this shape of problem: `Lexer.readInterpolationSource()` (brace-depth counting to find a
+  matching `}`) plus `AST.StyleValuePart` (`raw`/`expr` parts) plus a nested `new Parser(exprSource)`
+  to parse each captured expression source substring
+  (`parser.ts`'s `parseStyleDeclaration()`). Designed string interpolation to reuse this exact
+  mechanism rather than invent a second one, which kept the actual diff small and low-risk despite
+  touching every compiler layer.
+- **`compiler/src/ast.ts`:** generalized `StyleValuePart` into a new `InterpolatedPart` type alias
+  (kept `StyleValuePart = InterpolatedPart` so every existing reference is untouched) and added a
+  new `Expr` variant, `TemplateString { parts: InterpolatedPart[] }`.
+- **`compiler/src/tokens.ts`:** added an optional `stringParts` field to `Token`, carrying
+  `Array<{ kind: 'raw'; text } | { kind: 'expr'; source }>` when a string literal contains
+  interpolation; left `undefined` for the overwhelming majority of strings that don't, so nothing
+  about a non-interpolated `STRING_LITERAL` token changes shape.
+- **`compiler/src/lexer.ts`:** the `"` string-scanning branch now detects an *unescaped* `{`
+  (an escaped `\{` still falls through the pre-existing backslash-escape fallback, exactly like
+  `\"`/`\\` already did — no new escape convention was invented) and, on finding one, delegates to
+  `readInterpolationSource()` to capture the raw expression source up to its balanced matching `}`
+  (this already correctly handles a nested brace pair inside the expression, e.g. a struct literal
+  like `{Point { x: 1, y: 2 }}`, by depth-counting rather than assuming the first `}` closes it —
+  the same reasoning applied to the TextMate grammar fix several sessions ago). Also generalized
+  `readInterpolationSource()`'s error message from `'Unterminated style interpolation'` to
+  `'Unterminated interpolation'`, since it now serves two callers, not one — a one-line, symmetric
+  improvement to both. A string with no unescaped `{` returns the exact same `STRING_LITERAL` token
+  as before this session; behavior for the entire existing corpus of non-interpolated strings is
+  provably unchanged (confirmed by the full, unmodified 179-test suite still passing after this
+  layer alone).
+- **`compiler/src/parser.ts`:** added a `parseInterpolatedStringParts(token)` helper mirroring
+  `parseStyleDeclaration()`'s own expression-parsing loop, and updated all three (and only three)
+  places a `STRING_LITERAL` token is consumed: `parsePrimary()` now returns a `TemplateString` expr
+  when the token has interpolation parts (otherwise the same plain `StringLiteral` as before);
+  `parseTemplateNodeInner()` now returns a `TextInterpolation` node wrapping a `TemplateString`
+  (reusing the *existing* `TextInterpolation` `TemplateNode` kind — no new template-node variant
+  needed); the plain-attribute-value branch now produces `{ isExpr: true, exprValue: TemplateString }`
+  instead of a static `stringValue` when interpolated (reusing the *existing* `isExpr`/`exprValue`
+  attribute shape — no new `Attribute` variant needed either). Reusing existing AST shapes this
+  thoroughly meant the feature needed a total of one new `Expr` variant and zero new `TemplateNode`
+  or `Attribute` variants.
+- **`compiler/src/checker.ts`:** added a `TemplateString` case to `checkExpr` (recurses into each
+  `expr` part exactly like `Binary`/`Call`/etc. already do for their sub-expressions — an
+  identifier used inside an interpolation is checked the same as anywhere else) and to
+  `inferLiteralType` (a `TemplateString` always infers as `string`). The `inferLiteralType` case is
+  a genuine, if incidental, improvement over the status quo: before this session, an initializer
+  that wasn't a bare literal returned `null` from `inferLiteralType` and skipped type-mismatch
+  checking entirely (a pre-existing, `TODO.md`-documented limitation — see the "More precise
+  diagnostic messages" note added two sessions ago); a `TemplateString` initializer now gets real
+  type checking for free, e.g. `state<int> x = "count: {n}";` is correctly flagged as a type
+  mismatch rather than silently accepted.
+- **`compiler/src/codegen.ts`:** renamed `styleValuePartsToJs` to `interpolatedPartsToJs` (now used
+  by both style values and the new `TemplateString` case, so the style-specific name no longer
+  fit) and added a `TemplateString` case in `exprToJs` that calls it — an interpolated string
+  compiles to a genuine JS template literal (`` `Hello, ${name.get()}!` ``), not a manually
+  constructed `+`-concatenation chain.
+- **New example + tests:** `compiler/examples/string_interpolation.crs` (interpolation in view
+  text, an attribute, and escaped braces, on a component with reactive `state`);
+  `compiler/scripts/test-string-interpolation.js` (a jsdom end-to-end test — mounts the compiled
+  component, asserts the initial interpolated text/attribute render correctly, asserts escaped
+  braces render literally, then clicks a button and asserts the interpolated text updates
+  reactively); two new `compiler/scripts/fixtures/checker/` fixtures
+  (`interpolated-string-undefined-identifier.crs`, `interpolated-string-type-mismatch.crs`) with
+  matching `test-checker.js` cases. Wired the new e2e test into `package.json`'s `test` script
+  chain, in the same position as the other page-mount tests.
+- **Docs:** `docs/Crescent_Grammar.md` — added a formal `StringLiteral`/`StringPart`/`StringEscape`
+  lexical grammar (§6, previously entirely unspecified beyond the bare `Literal` alternative); a
+  new §2.4 disambiguation subsection for `{`/`}` inside a string literal, describing precisely how
+  this differs from `MODE_VIEW`/`MODE_STYLE`'s interpolation (it's lexer-internal to one token, not
+  a parser-visible mode transition); fixed a now-false claim in §7 ("No quoted-brace hybrid form is
+  legal" — this was true before this session and is not anymore, so it was corrected rather than
+  left stale, per `AGENTS.md`'s rule against a knowingly-incorrect grammar doc); and a "Resolved"
+  entry in §10 cross-referencing all the new files. `docs/Crescent_Design.md` — new "String
+  Interpolation" subsection under §2 (Type System & Variables), with the concatenation-equivalence
+  explanation, the escaping rule, and an explicit note that formatting expressions (padding,
+  decimal places) are a deliberately separate, deferred piece of `TODO.md` §12's original item, not
+  bundled into this one.
+- `TODO.md` §12: checked off "String interpolation," with a note on exactly what shipped and what
+  (formatting expressions) is explicitly still open and why it's a separate, larger piece of work
+  rather than an oversight.
+
+**Files changed:** `compiler/src/ast.ts`, `compiler/src/tokens.ts`, `compiler/src/lexer.ts`,
+`compiler/src/parser.ts`, `compiler/src/checker.ts`, `compiler/src/codegen.ts`,
+`compiler/examples/string_interpolation.crs` (new),
+`compiler/scripts/test-string-interpolation.js` (new),
+`compiler/scripts/fixtures/checker/interpolated-string-undefined-identifier.crs` (new),
+`compiler/scripts/fixtures/checker/interpolated-string-type-mismatch.crs` (new),
+`compiler/scripts/test-checker.js`, `compiler/package.json` (test script chain),
+`docs/Crescent_Grammar.md`, `docs/Crescent_Design.md`, `TODO.md`, `HANDOFF.md`.
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean throughout — checked after each layer, not just
+at the end). `npm test`: 185 PASS, 0 FAIL, exit 0 (up from 179 — 2 new checker-fixture cases plus 4
+new e2e assertions in `test-string-interpolation.js`). The full existing suite (179 tests) was
+re-run and confirmed passing after the lexer change alone, before any parser/checker/codegen
+changes were made, specifically to isolate and confirm that non-interpolated strings are
+byte-for-byte unaffected.
+
+**Problems/Decisions:** The main design decision, stated explicitly above: reuse the `style{}`
+interpolation mechanism rather than build a second one, and reuse existing AST shapes
+(`TextInterpolation`, `isExpr`/`exprValue`) rather than add new `TemplateNode`/`Attribute` variants
+— both choices were about keeping the diff small and consistent with the codebase's own
+conventions, not about cutting corners on the feature itself (the feature is fully implemented,
+checked, code-generated, and tested end to end, not a stub). Deliberately left out of scope:
+formatting expressions (documented as future work, both in `docs/Crescent_Design.md` and
+`TODO.md`); a would-be edge case where an interpolation's expression source itself contains a
+nested string literal with a `{`/`}` inside it (e.g. `` {fn("a}b")} ``) is not specially handled —
+`readInterpolationSource()`'s raw depth-counting doesn't know about nested string literals, exactly
+the same pre-existing limitation `MODE_STYLE` interpolation already has, so this is not a new
+regression, just an inherited, narrow edge case worth knowing about.
+
+**Next:** `TODO.md` §16's priority order applies as always — pick the next item, whether that's
+more §12 language-evolution work (destructuring is the natural next step per §12's own stated
+dependency ordering, since tuples/pattern-matching both build on it) or a return to
+hardening/testing work if that's judged more valuable right now. Either is legitimate per the
+alternating-priorities framing from two sessions ago.
+
+---
+
+### Older session (documentation only)
 
 **AI:** Claude
 

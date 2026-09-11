@@ -38,6 +38,18 @@ const cases = [
     label: 'an undefined identifier read in a view interpolation',
   },
   {
+    file: 'interpolated-string-undefined-identifier.crs',
+    severity: 'error',
+    pattern: /Undefined identifier 'missing'/,
+    label: 'an undefined identifier read inside a {...} string interpolation',
+  },
+  {
+    file: 'interpolated-string-type-mismatch.crs',
+    severity: 'error',
+    pattern: /Type mismatch: declared as 'int' but initialized with a 'string' value/,
+    label: 'a state<int> initialized with an interpolated string (always type string)',
+  },
+  {
     file: 'missing-struct-field.crs',
     severity: 'error',
     pattern: /Missing field 'age' in struct literal 'User'/,

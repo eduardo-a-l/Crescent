@@ -82,6 +82,28 @@ condition). Any other `{` in `MODE_VIEW` is an **interpolation** and pushes `MOD
 Inside `MODE_STYLE`: every `{` is an interpolation (style rule bodies use `{ }` for the CSS rule
 itself, which is structural, not a mode-entering brace — see `StyleRule` in §7).
 
+### 2.4 `{` / `}` inside a `StringLiteral` — interpolation vs. literal text
+
+A `StringLiteral`'s lexical scan (§6) treats an unescaped `{` the same way `MODE_VIEW`/`MODE_STYLE`
+treat one: it starts an interpolation, pushes `MODE_CODE`, parses a single `Expression`, and
+resumes literal-text scanning at the matching `}`. Unlike `MODE_VIEW`/`MODE_STYLE`, this is not a
+token-stream-level mode transition the parser drives — it is entirely internal to how the lexer
+scans one `"..."` token. The lexer performs a raw, unparsed brace-depth count to find the matching
+`}` (the same technique `MODE_STYLE` already uses, see `Lexer.readInterpolationSource()` in the
+reference implementation) and hands the raw text of each interpolation back to the parser, which
+parses it as a standalone `Expression` — so a nested brace pair inside the interpolation (e.g. a
+`StructLiteral`, as in `"{Point { x: 1, y: 2 }}"`) is handled correctly by depth-counting, not
+misread as the interpolation's own closing brace.
+
+`\{` and `\}` are literal-brace escapes — they fall through the same backslash-escape mechanism as
+`\n`, `\t`, and `\"` (§6) rather than needing a distinct escaping convention. A bare `}` outside an
+active interpolation has no special meaning and never needs escaping.
+
+This applies to every `StringLiteral`, regardless of surrounding mode — a `StringLiteral` inside
+`MODE_VIEW` text or a `MODE_VIEW`/native-HTML attribute value can contain an interpolation exactly
+the same way a `StringLiteral` in ordinary `MODE_CODE` can, since the lexer doesn't know which mode
+requested the token. See §7's `Attribute`/`TextLiteral` note, which this supersedes.
+
 ---
 
 ## 3. Top-Level Structure
@@ -204,7 +226,18 @@ FieldInit      ::= Identifier ':' Expression
 ArrayLiteral   ::= '[' [ Expression { ',' Expression } ] ']'
 ArgList        ::= Expression { ',' Expression }
 Literal        ::= IntLiteral | FloatLiteral | StringLiteral | 'true' | 'false' | 'null'
+
+StringLiteral  ::= '"' { StringPart } '"'
+StringPart     ::= StringChar | StringEscape | '{' Expression '}'
+StringChar     ::= any source character except '"', '\', or an unescaped '{'
+StringEscape   ::= '\' AnyChar
 ```
+
+`StringEscape` recognizes `\n` (newline) and `\t` (tab) specially; every other escaped character
+(`\"`, `\\`, `\{`, `\}`, or anything else) is inserted literally. See §2.4 for how the `{ Expression }`
+alternative is disambiguated from literal text, and how nested braces inside the expression are
+handled. A `StringLiteral` with no `{ Expression }` part behaves exactly as in v0.2 — this is a
+strict addition, not a change to any string literal that doesn't use interpolation.
 
 Note: `Relational`'s `'<'` is the comparison case from §2.1 — reachable here only because
 `Relational` is only ever entered from within `MODE_CODE` expression parsing, never from a type or
@@ -241,8 +274,13 @@ TextLiteral          ::= StringLiteral
 `TagName`'s three alternatives resolve per §2.2: `UppercaseIdentifier` is a component instantiation,
 `LowercaseIdentifier` is a native HTML tag, and `slot` is reserved and self-closing only.
 
-`Attribute` values are unambiguous per the v0.2 fix: bare `{Expression}` for expressions, plain
-`StringLiteral` for static strings. No quoted-brace hybrid form is legal.
+`Attribute` values are unambiguous per the v0.2 fix: bare `{Expression}` for a value that is itself
+an arbitrary expression, or a `StringLiteral` (per §6, now itself capable of containing
+`{ Expression }` interpolations per §2.4) for a value written as a string. An attribute whose
+`StringLiteral` contains at least one interpolation is parsed as if `isExpr` had been written
+directly — it is checked and code-generated as a computed value, not a static string. There is
+still no separate "hybrid" attribute-value alternative in the grammar above; interpolation is a
+property of `StringLiteral` itself; nothing about the `Attribute` production changes.
 
 `TemplateFor`'s `key` clause is required per §14.4 of the design doc; its absence is a parse-level
 warning, not a parse error — the parser should still accept the loop and fall back to index-based
@@ -293,6 +331,27 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
   before codegen.
 
 ## 10. Open Items for v0.3 of this grammar
+
+- **Resolved:** `StringLiteral` interpolation (§2.4, §6). Previously "no quoted-brace hybrid form"
+  was legal — a string could only ever be fully static text, and anything computed had to be a
+  separate `{ Expression }` sibling (in `MODE_VIEW`) or a separate `isExpr` attribute. A
+  `StringLiteral` can now contain `{ Expression }` segments directly, in any context a
+  `StringLiteral` appears (an ordinary expression, `MODE_VIEW` text, or an attribute value), with
+  `\{`/`\}` as literal-brace escapes. Implemented by having the lexer split an interpolated string
+  into raw-text/expression-source parts (mirroring the existing `MODE_STYLE` interpolation
+  mechanism) and having the parser turn each expression-source part into a real `Expression` via a
+  nested `Parser` instance, exactly as `parseStyleDeclaration()` already did for style values. The
+  resulting AST reuses `TemplateNode.TextInterpolation` for view text and the existing
+  `isExpr`/`exprValue` attribute shape for attributes — no new `TemplateNode` or `Attribute`
+  variant was needed, only a new `Expr` kind (`TemplateString`) for the expression case itself.
+  `docs/Crescent_Design.md` §"String interpolation" (new) covers the language-level semantics;
+  `compiler/examples/string_interpolation.crs` and
+  `compiler/scripts/test-string-interpolation.js` are the working end-to-end example and its
+  regression test; `compiler/scripts/fixtures/checker/interpolated-string-undefined-identifier.crs`
+  and `interpolated-string-type-mismatch.crs` cover the semantic-checker side (identifiers inside
+  an interpolation are checked exactly like any other identifier reference, and an interpolated
+  string's inferred type is always `string`, so assigning one to a non-`string`-typed declaration
+  is now caught).
 
 - **Resolved (partially):** a `StructLiteral`'s `typeName` not matching any declared `StructDecl`
   is now a real diagnostic — the semantic checker (`compiler/src/checker.ts`) flags an unknown

@@ -595,11 +595,15 @@ design roadmap, not an implementation order forced on any single session — pic
 design it against `docs/Crescent_Design.md`'s existing principles, and write it up there before
 touching the parser.
 
-- [ ] **String interpolation** — interpolation inside string literals (not just `view`/`style`
-  interpolation, which already exists); escaping rules for literal `{`/`}` inside an interpolated
-  string; eventually, formatting expressions (e.g. controlling how a number renders) once there's
-  a concrete need. Relatively independent of the rest of this list — a reasonable place to start
-  if a small, self-contained language change is wanted.
+- [x] **String interpolation** — implemented: a `string` literal can embed `{ Expression }`
+  directly (`"Hello, {name}!"`), in any context a string literal appears (expressions, `view {}`
+  text, attribute values); `\{`/`\}` escape a literal brace. See
+  `docs/Crescent_Design.md`'s "String Interpolation" subsection (§2) for the language-level
+  semantics and `docs/Crescent_Grammar.md` §2.4/§6/§10 for the grammar and implementation notes.
+  Still open, deliberately deferred: formatting expressions (controlling *how* an embedded value
+  renders — padding, decimal places, etc.) — there's no concrete need for it yet, and it's a
+  materially different, larger feature (a mini format-spec mini-language) than "embed an
+  expression," which is why it isn't bundled into this bullet's `[x]`.
 - [ ] **Destructuring** — struct destructuring, array destructuring, in both variable declarations
   and function parameters. (Supersedes the old flat "Destructuring" bullet from earlier revisions
   of this roadmap — same idea, spelled out.) Worth designing before tuples/enums below, since both

@@ -32,6 +32,38 @@ bool is_active = true;
 
 ```
 
+### String Interpolation
+
+A `string` literal can embed an expression directly with `{ Expression }`:
+
+```c
+state<string> name = "Ada";
+state<int> count = 0;
+
+string message = "Hello, {name}! Count is {count}.";
+```
+
+The embedded expression is evaluated and converted to its string representation, then spliced into
+the surrounding text — exactly as if the string had been written as ordinary concatenation
+(`"Hello, " + name + "! Count is " + count + "."`), just without the noise. This works anywhere a
+string literal is legal: an ordinary expression, `view {}` text, or an attribute value — writing
+`<p>"Hello, {name}!"</p>` is equivalent to today's `<p>"Hello, " {name} "!"</p>` sibling-node form,
+just as one node instead of three, and `<img title="Photo of {name}"/>` lets an attribute carry a
+mix of literal and computed text without switching it to a full `{ ... }` expression attribute.
+
+To include a literal `{` or `}` in an interpolated string, escape it: `"Use \\{curly braces\\}"`.
+A string with no `{ }` at all is completely unaffected by this feature — it behaves exactly as
+before.
+
+Interpolation is a property of how a string *literal* is written, not a new type — an interpolated
+string is still exactly a `string`, checked and inferred as one everywhere a `string` is expected
+(so, for instance, assigning one to a `state<int>` is a type error, the same as assigning any other
+string value would be).
+
+What this does **not** cover yet, and is intentionally left for later (see `TODO.md` §12): controlling
+*how* an embedded value renders — padding a number to a fixed width, formatting a float's decimal
+places, and so on. Today, an embedded expression always renders via its default string conversion.
+
 ### Mutability & Constants
 
 - Variables are mutable by default (C-style).

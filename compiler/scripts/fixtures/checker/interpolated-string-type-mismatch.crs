@@ -1,0 +1,8 @@
+component Broken {
+    state<int> count = 0;
+    state<int> label = "Count: {count}";
+
+    view {
+        <p>{label}</p>
+    }
+}
