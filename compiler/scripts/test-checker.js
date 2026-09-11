@@ -241,6 +241,24 @@ const cases = [
     pattern: /'null' returned from function 'compute', which is not nullable \('int'\)/,
     label: 'a non-nullable function returning null',
   },
+  {
+    file: 'wrong-array-element-type.crs',
+    severity: 'error',
+    pattern: /Type mismatch: array element at index 2 expects 'int' but received a 'string' value/,
+    label: 'an array literal state initializer with a mismatched element type',
+  },
+  {
+    file: 'null-array-element-not-nullable.crs',
+    severity: 'error',
+    pattern: /'null' at index 1 is not allowed because the element type 'int' is not nullable/,
+    label: 'an array literal with a null element whose element type is not nullable',
+  },
+  {
+    file: 'wrong-array-element-type-arg.crs',
+    severity: 'error',
+    pattern: /Type mismatch: element of argument 'values' of function 'sum' at index 2 expects 'int' but received a 'string' value/,
+    label: 'a function call with an inline array-literal argument containing a mismatched element',
+  },
 ];
 
 for (const c of cases) {
@@ -262,6 +280,9 @@ assert(noDuplicatesDiagnostics.length === 0, `no-duplicates-ok.crs: unique names
 
 const correctReturnDiagnostics = diagnosticsFor('correct-return-ok.crs');
 assert(correctReturnDiagnostics.length === 0, `correct-return-ok.crs: correctly-typed returns (including a nullable return and a bare void "return;") produce no diagnostics, got ${JSON.stringify(correctReturnDiagnostics)}`);
+
+const correctArrayElementsDiagnostics = diagnosticsFor('correct-array-elements-ok.crs');
+assert(correctArrayElementsDiagnostics.length === 0, `correct-array-elements-ok.crs: correctly-typed array literals (including nullable elements and a nested array) produce no diagnostics, got ${JSON.stringify(correctArrayElementsDiagnostics)}`);
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
 let totalExampleDiagnostics = 0;

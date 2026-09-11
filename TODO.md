@@ -174,7 +174,21 @@
   matching the checker's existing literal-shaped-only limitation elsewhere (see the "More precise
   diagnostic messages" note above). `on_mount`/`on_change` bodies are not given a return context
   and so are unaffected by this check.
-- [ ] Array element type checking
+- [x] Array element type checking — `checkArrayElements` in `checker.ts` walks every element of an
+  array literal (recursively, for nested array literals) once the declared/expected type has been
+  confirmed to be (or unwrap to) an `ArrayType`, and flags a mismatched element, a `null` element
+  against a non-nullable element type, at any position — not just the first, which is all
+  `inferLiteralType`'s existing array-type inference sees (`ArrayLiteral` infers its type from
+  `elements[0]` only, so `int[] x = [1, 2, "three"]` previously passed the top-level
+  `literalTypeMatches` check undetected). Wired into all four existing literal-type-match call
+  sites: `checkLiteralTypeMatch` (`state`/`derived`/`provide`/`const` initializers and struct-field
+  values), `checkCallArgs` (call arguments), `checkAttributeTypeMatch` (component props), and
+  `checkReturnStmt` (return values) — each only after its own existing top-level check has passed,
+  so a wrong array *type* still reports the original single top-level diagnostic rather than a
+  flood of confusing element-level noise. See `wrong-array-element-type.crs`,
+  `null-array-element-not-nullable.crs`, and `wrong-array-element-type-arg.crs` for the negative
+  cases and `correct-array-elements-ok.crs` (including a nullable-element array and a nested
+  `int[][]`) for the positive one.
 - [x] Component prop type checking
 - [ ] Function-type compatibility
 - [ ] More precise diagnostic messages — e.g. `state<BogusType> x = "hello";` currently reports

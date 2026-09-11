@@ -14,7 +14,22 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session implemented **function return-type checking** (`TODO.md` §5 Semantic Checker →
+Latest session implemented **array element type checking** (`TODO.md` §5 Semantic Checker →
+Types), the next unchecked item after function return-type checking (which itself had already been
+committed to `develop` — `b0b00e5` — by the time this session started; this session's own prior
+patch had been applied and merged upstream). Added `checkArrayElements()` in `checker.ts`: walks
+every element of an array literal (recursively for nested array literals) once the expected type is
+known to be (or unwrap to) an `ArrayType`, catching a mismatched element or a disallowed `null`
+element at *any* index — a real gap, since `inferLiteralType`'s existing array-type inference only
+looks at `elements[0]`, so e.g. `int[] x = [1, 2, "three"]` previously passed the top-level
+type-match check undetected. Wired into all four existing call sites that already do
+literal-type-matching (`checkLiteralTypeMatch`, `checkCallArgs`, `checkAttributeTypeMatch`,
+`checkReturnStmt`), each guarded to only run after its own existing top-level check passes. Four
+new fixtures + `test-checker.js` cases (194 total tests, up from 190, all passing, no regressions).
+`TODO.md` checked off with an implementation note. **Not committed** — see
+`crescent-array-element-checking.patch` for a transferable copy of this session's diff.
+
+Before that: implemented **function return-type checking** (`TODO.md` §5 Semantic Checker →
 Types), the next unchecked item in that section after argument/prop-type checking. Added
 `checkReturnStmt()`/`ReturnContext` in `checker.ts`: each `return` statement inside a `FunctionDecl`
 body (including nested `if`/`for` blocks) is now validated against that function's declared return
@@ -29,8 +44,7 @@ TODO item). Same literal-shaped-only limitation as the existing arg/prop/struct-
 `null-return-not-nullable.crs`) and one positive regression fixture (`correct-return-ok.crs`,
 covering a matching nullable return and an early bare `return;` inside a `void` function), plus
 matching `test-checker.js` cases. `TODO.md`'s "Function return-type checking" line checked off with
-a note. **Not committed** — working tree contains this focused diff; see `crescent-return-type-
-checking.patch` mentioned at the end of this entry for a transferable copy.
+a note. Committed upstream as `b0b00e5` ("feat: Add return type checking") between sessions.
 
 Before that: implemented **string interpolation** end to end — the first real
 `TODO.md` §12 "Core Language Evolution" item picked up under the "important, not urgent, alternate
@@ -536,6 +550,88 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 **AI:** Claude
 
+**Task:** Continuing from the previous session (whose diff had, by this session's start, already
+been committed to `develop` as `b0b00e5` outside the AI's own workflow — the maintainer applied and
+committed the handed-off patch between sessions). Re-checked `HEAD`, confirmed the working tree was
+clean and green, then continued down `TODO.md` §16's priority order: **array element type
+checking** in §5 Types, the next unchecked box.
+
+**Result:** Investigated first, since the box's true scope wasn't obvious from its one-line
+description. Found `inferLiteralType`'s existing `ArrayLiteral` case only infers a type from
+`expr.elements[0]` — meaning `state<int[]> nums = [1, 2, "three"];` already passed the top-level
+`literalTypeMatches` check silently, because the check only ever "sees" the first element's type.
+That's the actual gap, not a from-scratch feature.
+
+Added `checkArrayElements(declared, expr, where, line, diagnostics, messagePrefix)` to
+`checker.ts`: unwraps a `NullableType` wrapper off `declared`, bails out if what remains isn't an
+`ArrayType` (or `expr` isn't an `ArrayLiteral`) — safe no-op for any type it doesn't apply to — then
+walks every element by index: a `null` element against a non-nullable element type is flagged, a
+nested `ArrayLiteral` element recurses (so `int[][]` is checked element-by-element at every depth,
+not just the outer array), and everything else goes through the same `inferLiteralType` +
+`literalTypeMatches` pair every other check in this file already uses, with the mismatching index
+named in the message.
+
+Wired into all four places that already do a top-level literal-type match, each call added
+*after* its own existing check and only reached when that check passed — so a wholesale wrong array
+type (e.g. passing a `string[]` where `int[]` is declared) still produces exactly the one
+pre-existing top-level diagnostic, not that plus a redundant per-element pile-on:
+- `checkLiteralTypeMatch` — `state`/`derived`/`provide`/`const` initializers and struct-field
+  values (both call sites this function already serves).
+- `checkCallArgs` — call arguments, message prefixed `element of argument '<param>' of function
+  '<fn>'`.
+- `checkAttributeTypeMatch` — component props, message prefixed `element of prop '<attr>'`.
+- `checkReturnStmt` — return values, message prefixed `element of function '<fn>' return value`
+  (guarded on `returnType !== 'void'`, reusing the `ReturnContext` from last session).
+
+Added four fixtures under `scripts/fixtures/checker/`: `wrong-array-element-type.crs` (a mismatched
+element deep in a `state` initializer), `null-array-element-not-nullable.crs` (a `null` element
+against non-nullable `int`), `wrong-array-element-type-arg.crs` (a mismatched element in an inline
+array literal passed as a call argument), and `correct-array-elements-ok.crs` (positive — a plain
+`int[]`, an `int?[]` with a `null` element, and a nested `int[][]`, plus that array being both a
+`state` initializer and a function-call argument, none of which should fire). Matching
+`test-checker.js` cases added. `TODO.md`'s "Array element type checking" line checked off with an
+implementation note.
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-array-element-checking.patch`.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 194 PASS, 0 FAIL, exit 0 (up from 190 before this
+session — exactly the 4 new fixture-driven cases above, no regressions anywhere, including the "all
+real examples pass the semantic checker cleanly" check — the existing examples' array literals
+(`array_mutators.crs`, `keyed_list.crs`, `reactive_list.crs`, `structs_and_generics.crs`, etc.) all
+still produce zero diagnostics under the new per-element walk).
+
+**Decisions:** Ran the element-wise check only *after* the existing top-level check succeeds, not
+instead of it or in addition unconditionally — a wrong array type shouldn't drown the person in one
+diagnostic per element when the real problem is the declared type itself. Recursed through nested
+`ArrayLiteral` elements rather than trying to handle `int[][]` as a special flat case, since the
+recursive form falls out naturally from `checkArrayElements` calling itself with `elementType` and
+generalizes to any depth for free. Did not attempt to check non-literal array elements (e.g. an
+identifier or function call inside `[a, b(), c]`) — same literal-shaped-only boundary as every other
+check in this file; a real expression-type-inference pass is the actual prerequisite for going
+further, as already noted in earlier sessions' "Decisions".
+
+**Problems:** None. No pre-existing behavior needed to change; this was purely additive (new
+diagnostics for cases that previously fell through silently).
+
+**Remaining:** `TODO.md` §5 Types still has open items: complete assignment compatibility (the
+`todos = [...]` plain-reassignment case in `keyed_list.crs`/`reactive_list.crs` is *not* checked by
+anything today, array or otherwise — reassignment isn't routed through `checkLiteralTypeMatch` at
+all), function-type compatibility, and the "More precise diagnostic messages" `typeIsResolvable`
+note. None started this session.
+
+**Next step:** Per `TODO.md` §16, either keep hardening the checker — "complete assignment
+compatibility" is the most natural next box, and would also make the plain `state<T> x; ... x =
+<value>;` case exercise the same `checkArrayElements` machinery — or, since hardening has now run
+two sessions in a row, deliberately pick a §12 language-feature item next per the note at the end of
+§16.
+
+---
+
+### Older session
+
+**AI:** Claude
+
 **Task:** No explicit maintainer task; followed `TODO.md` §16's priority order ("strengthen the
 semantic checker" ranks above expanding language features) and picked **function return-type
 checking** from §5 Types — the next unchecked box after argument checking and component prop-type
@@ -573,9 +669,8 @@ Types with a short implementation note (existence-checking of the return type na
 already done by an earlier Codex session — this is the separate, previously-missing check that a
 `return` statement's *value* matches that type).
 
-**Commit:** Not committed — working tree contains this focused diff. Handed over as
-`crescent-return-type-checking.patch` (see the maintainer's own patch-application step; this file
-is not committed to the repository).
+**Commit:** Handed over as `crescent-return-type-checking.patch`; the maintainer applied and
+committed it upstream as `develop`'s `b0b00e5` ("feat: Add return type checking") between sessions.
 
 **Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm install` (needed — `node_modules` was
 absent at the start of this session, fresh clone); `npm test` (190 PASS, 0 FAIL, exit 0 — up from

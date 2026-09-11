@@ -112,6 +112,40 @@ function literalTypeMatches(declared: AST.CrescentType, actual: AST.CrescentType
   return false;
 }
 
+function checkArrayElements(
+  declared: AST.CrescentType,
+  expr: AST.Expr,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[],
+  messagePrefix: string
+): void {
+  const arrType = declared.kind === 'NullableType' ? declared.inner : declared;
+  if (arrType.kind !== 'ArrayType' || expr.kind !== 'ArrayLiteral') return;
+  const elementType = arrType.inner;
+  expr.elements.forEach((el, i) => {
+    if (el.kind === 'NullLiteral') {
+      if (elementType.kind !== 'NullableType') {
+        diagnostics.push(
+          err(`${messagePrefix}: 'null' at index ${i} is not allowed because the element type '${typeToString(elementType)}' is not nullable`, where, line)
+        );
+      }
+      return;
+    }
+    if (el.kind === 'ArrayLiteral') {
+      checkArrayElements(elementType, el, where, line, diagnostics, messagePrefix);
+      return;
+    }
+    const actual = inferLiteralType(el);
+    if (!actual) return;
+    if (!literalTypeMatches(elementType, actual)) {
+      diagnostics.push(
+        err(`${messagePrefix} at index ${i} expects '${typeToString(elementType)}' but received a '${typeToString(actual)}' value`, where, line)
+      );
+    }
+  });
+}
+
 function checkLiteralTypeMatch(declared: AST.CrescentType, init: AST.Expr, where: string, line: number, diagnostics: Diagnostic[]): void {
   if (init.kind === 'NullLiteral') {
     if (declared.kind !== 'NullableType') {
@@ -125,7 +159,9 @@ function checkLiteralTypeMatch(declared: AST.CrescentType, init: AST.Expr, where
     diagnostics.push(
       err(`Type mismatch: declared as '${typeToString(declared)}' but initialized with a '${typeToString(actual)}' value`, where, line)
     );
+    return;
   }
+  checkArrayElements(declared, init, where, line, diagnostics, 'Type mismatch: array element');
 }
 
 function checkCallArgs(
@@ -166,7 +202,9 @@ function checkCallArgs(
           line
         )
       );
+      continue;
     }
+    checkArrayElements(param.type, arg, where, line, diagnostics, `Type mismatch: element of argument '${param.name}' of function '${fnDecl.name}'`);
   }
 }
 
@@ -199,7 +237,9 @@ function checkAttributeTypeMatch(
     diagnostics.push(
       err(`Type mismatch: prop '${attr.name}' expects '${typeToString(declared)}' but received a '${typeToString(actual)}' value`, where, line)
     );
+    return;
   }
+  checkArrayElements(declared, exprValue, where, line, diagnostics, `Type mismatch: element of prop '${attr.name}'`);
 }
 
 interface NarrowState {
@@ -384,7 +424,9 @@ function checkReturnStmt(
         stmt.line
       )
     );
+    return;
   }
+  checkArrayElements(returnType, stmt.value, where, stmt.line, diagnostics, `Type mismatch: element of function '${functionName}' return value`);
 }
 
 function checkStmts(
