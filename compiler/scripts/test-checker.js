@@ -284,6 +284,12 @@ assert(correctReturnDiagnostics.length === 0, `correct-return-ok.crs: correctly-
 const correctArrayElementsDiagnostics = diagnosticsFor('correct-array-elements-ok.crs');
 assert(correctArrayElementsDiagnostics.length === 0, `correct-array-elements-ok.crs: correctly-typed array literals (including nullable elements and a nested array) produce no diagnostics, got ${JSON.stringify(correctArrayElementsDiagnostics)}`);
 
+const unknownStateTypeDiagnostics = diagnosticsFor('unknown-state-type.crs');
+assert(
+  unknownStateTypeDiagnostics.length === 1 && unknownStateTypeDiagnostics[0].message === "Unknown type 'BogusType'",
+  `unknown-state-type.crs: an unknown declared state type reports exactly one 'Unknown type' diagnostic, not a redundant 'Type mismatch' against the initializer too, got ${JSON.stringify(unknownStateTypeDiagnostics)}`
+);
+
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
 let totalExampleDiagnostics = 0;
 for (const [relPath, file] of exampleFiles) {

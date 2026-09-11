@@ -191,18 +191,17 @@
   `int[][]`) for the positive one.
 - [x] Component prop type checking
 - [ ] Function-type compatibility
-- [ ] More precise diagnostic messages — e.g. `state<BogusType> x = "hello";` currently reports
-  `Type mismatch: declared as 'BogusType' but initialized with a 'string' value` rather than
-  `Unknown type 'BogusType'`, because `checkLiteralTypeMatch` (used for `state`/`derived`/
-  `provide`/`const` initializers) compares the declared type against the initializer's inferred
-  type without first checking `typeIsResolvable` on the declared type itself — unlike the
-  `VarDecl`/function-param/function-return/struct-field/component-param/`inject` type checks (all
-  now covered by fixtures — see "Undefined-name diagnostics" note above and the `Components`
-  section below), which do call `typeIsResolvable` directly and report the clearer message. Found
-  while sweeping `checker.ts` for `typeIsResolvable` call sites; not fixed here since it's small
-  new behavior (calling `typeIsResolvable` in one more place, then deciding whether the existing
-  `Type mismatch` message stays as a secondary diagnostic or is suppressed once `Unknown type` has
-  already fired) rather than a test for something that already works as intended.
+- [x] More precise diagnostic messages — `checkLiteralTypeMatch` now calls `typeIsResolvable` on
+  the declared type before comparing it against the initializer's inferred type, matching the
+  `VarDecl`/function-param/function-return/struct-field/component-param/`inject` type checks that
+  already did this. `state<BogusType> x = "hello";` now reports `Unknown type 'BogusType'` instead
+  of the previous, more confusing `Type mismatch: declared as 'BogusType' but initialized with a
+  'string' value` — the `Unknown type` diagnostic is reported and the (now redundant) `Type
+  mismatch`/array-element checks are skipped for that declaration, so an unresolvable declared type
+  produces exactly one diagnostic rather than a pile-on (`unknown-state-type.crs`; asserted via an
+  exact `diagnostics.length === 1` check in `test-checker.js`, not just presence of the message, to
+  pin down the suppression behavior specifically). Applies to `state`/`derived`/`provide`/`const`
+  initializers and struct-field values, the two call sites `checkLiteralTypeMatch` serves.
 
 ## Null Safety
 

@@ -14,7 +14,21 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session implemented **array element type checking** (`TODO.md` §5 Semantic Checker →
+Latest session fixed the **"More precise diagnostic messages"** item (`TODO.md` §5 Semantic
+Checker → Types) — the last previously-open box in that section, and one that already had a fully
+specified fix written into the TODO note from an earlier session's sweep. By the time this session
+started, array element type checking (previous session's patch) had already been committed
+upstream (`dc9dd27`). `checkLiteralTypeMatch` now calls `typeIsResolvable` on the declared type
+before comparing it to the initializer, so `state<BogusType> x = "hello";` reports `Unknown type
+'BogusType'` instead of the more confusing `Type mismatch: declared as 'BogusType' but initialized
+with a 'string' value` — and only that one diagnostic, since the function returns immediately once
+`Unknown type` fires rather than also running the (now-redundant) `Type mismatch`/array-element
+checks. One new fixture (`unknown-state-type.crs`) plus a `test-checker.js` assertion that pins down
+the *exact* diagnostic count (1), not just the message's presence, since the suppression behavior
+is the actual point of the fix. **Not committed** — see
+`crescent-precise-diagnostic-messages.patch` for a transferable copy.
+
+Before that: implemented **array element type checking** (`TODO.md` §5 Semantic Checker →
 Types), the next unchecked item after function return-type checking (which itself had already been
 committed to `develop` — `b0b00e5` — by the time this session started; this session's own prior
 patch had been applied and merged upstream). Added `checkArrayElements()` in `checker.ts`: walks
@@ -26,8 +40,8 @@ type-match check undetected. Wired into all four existing call sites that alread
 literal-type-matching (`checkLiteralTypeMatch`, `checkCallArgs`, `checkAttributeTypeMatch`,
 `checkReturnStmt`), each guarded to only run after its own existing top-level check passes. Four
 new fixtures + `test-checker.js` cases (194 total tests, up from 190, all passing, no regressions).
-`TODO.md` checked off with an implementation note. **Not committed** — see
-`crescent-array-element-checking.patch` for a transferable copy of this session's diff.
+`TODO.md` checked off with an implementation note. Committed upstream as `dc9dd27` ("feat: Add
+array element checking") between sessions.
 
 Before that: implemented **function return-type checking** (`TODO.md` §5 Semantic Checker →
 Types), the next unchecked item in that section after argument/prop-type checking. Added
@@ -550,6 +564,75 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 **AI:** Claude
 
+**Task:** Continuing from the previous session (its diff already committed upstream as `dc9dd27`
+by this session's start). Followed `TODO.md` §16's priority order into §5 Types' last open box:
+**"More precise diagnostic messages."** Unlike the last few sessions, this box wasn't a bare
+one-liner — an earlier session's sweep of `checker.ts` had already pinned down exactly what was
+wrong and exactly what the fix should be, in the TODO note itself. This session's job was mostly to
+implement that already-designed fix and verify it, not to design something new.
+
+**Result:** `checkLiteralTypeMatch` (serving both `state`/`derived`/`provide`/`const` initializers
+and struct-field values) now takes a `globalScope` parameter and calls `typeIsResolvable(declared,
+globalScope)` before doing anything else — mirroring the `VarDecl`/function-param/function-return/
+struct-field/component-param/`inject` checks that already did this. If the declared type doesn't
+resolve, it reports `Unknown type '<name>'` and returns immediately, so the (now redundant, and
+actively confusing) `Type mismatch: declared as '<name>' but initialized with a '<value's type>'`
+diagnostic — and the array-element check added last session — never also fire for that same
+declaration. `state<BogusType> x = "hello";` now reports one diagnostic (`Unknown type
+'BogusType'`) instead of one confusing one.
+
+Both call sites (`checkLiteralTypeMatch(declaredFields.get(f.name)!, ...)` for struct-literal
+fields, and `checkLiteralTypeMatch(m.type, m.init, ...)` for `state`/`derived`/`provide`/`const`
+members) already had a `globalScope` variable in their enclosing scope, so threading it through was
+a pure signature change with no ripple beyond the two call sites and the new
+`typeIsResolvable`/`err` calls inside the function itself.
+
+Added `unknown-state-type.crs` (a `state<BogusType> x = "hello";` fixture) and, deliberately, a
+`test-checker.js` assertion that checks `diagnostics.length === 1` and the exact message — not just
+`hasDiagnostic(...)` presence-of-pattern, which every other `cases`-array entry uses — because the
+*suppression* of the redundant `Type mismatch` diagnostic is the actual point of this fix, and a
+presence-only assertion would pass even if both diagnostics fired.
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-precise-diagnostic-messages.patch`.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 195 PASS, 0 FAIL, exit 0 (up from 194 before this
+session — exactly the 1 new fixture-driven case, no regressions anywhere, including "all real
+examples pass the semantic checker cleanly").
+
+**Decisions:** Returned immediately after the `Unknown type` diagnostic rather than trying to
+"continue checking what we can" against an unresolvable type — there's nothing meaningful left to
+compare the initializer against once the declared type itself doesn't exist, and continuing would
+just reintroduce the exact redundant-diagnostic problem this fix exists to remove. Did not touch
+any other `checkLiteralTypeMatch`-adjacent function (`checkCallArgs`, `checkAttributeTypeMatch`,
+`checkReturnStmt`) — none of those had the same gap; they already call `typeIsResolvable` (directly
+or via the resolvability check already present on params/return types/props) before doing their
+type-match comparison, which is exactly why the TODO note called out `checkLiteralTypeMatch`
+specifically rather than "the checker in general."
+
+**Problems:** None. The fix was exactly as scoped in the TODO note; no surprises during
+implementation.
+
+**Remaining:** `TODO.md` §5 Types now has no more `[ ]` boxes — every remaining item there is
+either `[x]` or the two `[~]`/partial ones (`Nullable checking`, tracked separately under `Null
+Safety` below with its own five open sub-items). §5's other subsections (`Scope / Names`,
+`Null Safety`, `Structs`, `Reactivity`, and further down `Components`/`Styling`/`Diagnostics
+Quality`) still have real open work — see the section immediately below "Types" in `TODO.md` for
+the next candidates once this patch is applied and committed.
+
+**Next step:** Per `TODO.md` §16's own framing, this is now three checker-hardening sessions in a
+row (return-type checking → array element checking → this). The `TODO.md` §16 note explicitly says
+not to get stuck forever hardening — a healthy project alternates with real language-design work.
+Next session should seriously consider picking a §12 "Core Language Evolution" item instead of
+immediately grabbing the next `[ ]` box in §5's `Structs` or `Null Safety` subsections, unless there
+is a specific reason (like a particularly small, well-scoped item) to keep hardening one more round.
+
+---
+
+### Older session
+
+**AI:** Claude
+
 **Task:** Continuing from the previous session (whose diff had, by this session's start, already
 been committed to `develop` as `b0b00e5` outside the AI's own workflow — the maintainer applied and
 committed the handed-off patch between sessions). Re-checked `HEAD`, confirmed the working tree was
@@ -592,8 +675,9 @@ array literal passed as a call argument), and `correct-array-elements-ok.crs` (p
 `test-checker.js` cases added. `TODO.md`'s "Array element type checking" line checked off with an
 implementation note.
 
-**Commit:** Not committed — working tree contains this focused diff. Handed over as
-`crescent-array-element-checking.patch`.
+**Commit:** Handed over as `crescent-array-element-checking.patch`; the maintainer applied and
+committed it upstream as `develop`'s `dc9dd27` ("feat: Add array element checking") between
+sessions.
 
 **Tests:** `npx tsc --noEmit` clean. `npm test`: 194 PASS, 0 FAIL, exit 0 (up from 190 before this
 session — exactly the 4 new fixture-driven cases above, no regressions anywhere, including the "all

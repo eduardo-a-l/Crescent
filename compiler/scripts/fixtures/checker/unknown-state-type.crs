@@ -1,0 +1,7 @@
+component Broken {
+    state<BogusType> x = "hello";
+
+    view {
+        <p>"static"</p>
+    }
+}

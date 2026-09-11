@@ -146,7 +146,18 @@ function checkArrayElements(
   });
 }
 
-function checkLiteralTypeMatch(declared: AST.CrescentType, init: AST.Expr, where: string, line: number, diagnostics: Diagnostic[]): void {
+function checkLiteralTypeMatch(
+  declared: AST.CrescentType,
+  init: AST.Expr,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[],
+  globalScope: Map<string, SymbolInfo>
+): void {
+  if (!typeIsResolvable(declared, globalScope)) {
+    diagnostics.push(err(`Unknown type '${typeToString(declared)}'`, where, line));
+    return;
+  }
   if (init.kind === 'NullLiteral') {
     if (declared.kind !== 'NullableType') {
       diagnostics.push(err(`'null' assigned to non-nullable type '${typeToString(declared)}'`, where, line));
@@ -297,7 +308,7 @@ function checkExpr(
           if (!declaredFields.has(f.name)) {
             diagnostics.push(err(`Unknown field '${f.name}' on struct '${expr.typeName}'`, where, line));
           } else {
-            checkLiteralTypeMatch(declaredFields.get(f.name)!, f.value, `${where}, field '${f.name}'`, line, diagnostics);
+            checkLiteralTypeMatch(declaredFields.get(f.name)!, f.value, `${where}, field '${f.name}'`, line, diagnostics, globalScope);
           }
         }
       }
@@ -675,7 +686,7 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
       case 'ProvideDecl':
       case 'ConstDecl':
         checkExpr(m.init, scope, globalScope, functions, narrow, `${where}, '${m.name}'`, m.line, diagnostics);
-        checkLiteralTypeMatch(m.type, m.init, `${where}, '${m.name}'`, m.line, diagnostics);
+        checkLiteralTypeMatch(m.type, m.init, `${where}, '${m.name}'`, m.line, diagnostics, globalScope);
         break;
       case 'InjectDecl':
         if (!typeIsResolvable(m.type, globalScope)) {
