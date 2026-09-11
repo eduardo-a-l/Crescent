@@ -217,6 +217,30 @@ const cases = [
     pattern: /Duplicate param 'a' in function 'add'/,
     label: 'a function with two params sharing a name',
   },
+  {
+    file: 'wrong-return-type.crs',
+    severity: 'error',
+    pattern: /function 'compute' declares return type 'int' but returns a 'string' value/,
+    label: 'a function returning a literal of the wrong type',
+  },
+  {
+    file: 'missing-return-value.crs',
+    severity: 'error',
+    pattern: /Function 'compute' must return a value of type 'int'/,
+    label: 'a non-void function with a bare "return;" statement',
+  },
+  {
+    file: 'void-return-with-value.crs',
+    severity: 'error',
+    pattern: /Function 'run' has a 'void' return type but returns a value/,
+    label: 'a void function returning a value',
+  },
+  {
+    file: 'null-return-not-nullable.crs',
+    severity: 'error',
+    pattern: /'null' returned from function 'compute', which is not nullable \('int'\)/,
+    label: 'a non-nullable function returning null',
+  },
 ];
 
 for (const c of cases) {
@@ -235,6 +259,9 @@ assert(correctPropDiagnostics.length === 0, `correct-prop-type-ok.crs: correctly
 
 const noDuplicatesDiagnostics = diagnosticsFor('no-duplicates-ok.crs');
 assert(noDuplicatesDiagnostics.length === 0, `no-duplicates-ok.crs: unique names across params, members, struct fields, and top-level decls produce no diagnostics, got ${JSON.stringify(noDuplicatesDiagnostics)}`);
+
+const correctReturnDiagnostics = diagnosticsFor('correct-return-ok.crs');
+assert(correctReturnDiagnostics.length === 0, `correct-return-ok.crs: correctly-typed returns (including a nullable return and a bare void "return;") produce no diagnostics, got ${JSON.stringify(correctReturnDiagnostics)}`);
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
 let totalExampleDiagnostics = 0;

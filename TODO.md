@@ -164,7 +164,16 @@
 - [~] Nullable checking
 - [ ] Complete assignment compatibility
 - [x] Function argument checking
-- [ ] Function return-type checking
+- [x] Function return-type checking — `checkReturnStmt` in `checker.ts` validates each `return`
+  statement against its enclosing function's declared return type: a `void` function returning a
+  value, a non-`void` function's bare `return;`, a mismatched literal-shaped value, and a `null`
+  return against a non-nullable type are all flagged (`wrong-return-type.crs`,
+  `missing-return-value.crs`, `void-return-with-value.crs`, `null-return-not-nullable.crs`;
+  `correct-return-ok.crs` covers a matching nullable return and an early bare `return;` inside a
+  `void` function). Non-literal return expressions (e.g. `return someVar;`) are left unchecked,
+  matching the checker's existing literal-shaped-only limitation elsewhere (see the "More precise
+  diagnostic messages" note above). `on_mount`/`on_change` bodies are not given a return context
+  and so are unaffected by this check.
 - [ ] Array element type checking
 - [x] Component prop type checking
 - [ ] Function-type compatibility

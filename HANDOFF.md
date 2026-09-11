@@ -14,7 +14,25 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session implemented **string interpolation** end to end — the first real
+Latest session implemented **function return-type checking** (`TODO.md` §5 Semantic Checker →
+Types), the next unchecked item in that section after argument/prop-type checking. Added
+`checkReturnStmt()`/`ReturnContext` in `checker.ts`: each `return` statement inside a `FunctionDecl`
+body (including nested `if`/`for` blocks) is now validated against that function's declared return
+type — a `void` function returning a value, a non-`void` function's bare `return;`, a
+literal-shaped value of the wrong type, and a `null` return against a non-nullable type are all
+flagged. Threaded through a new optional `returnCtx: ReturnContext | null` parameter on
+`checkStmts()`, defaulting to `null`; `on_mount`/`on_change` bodies still call `checkStmts()`
+without it, so they remain unaffected (lifecycle-block validation is a separate, still-unstarted
+TODO item). Same literal-shaped-only limitation as the existing arg/prop/struct-field checks: a
+`return someVar;` with a non-literal expression is left unchecked. Added four negative fixtures
+(`wrong-return-type.crs`, `missing-return-value.crs`, `void-return-with-value.crs`,
+`null-return-not-nullable.crs`) and one positive regression fixture (`correct-return-ok.crs`,
+covering a matching nullable return and an early bare `return;` inside a `void` function), plus
+matching `test-checker.js` cases. `TODO.md`'s "Function return-type checking" line checked off with
+a note. **Not committed** — working tree contains this focused diff; see `crescent-return-type-
+checking.patch` mentioned at the end of this entry for a transferable copy.
+
+Before that: implemented **string interpolation** end to end — the first real
 `TODO.md` §12 "Core Language Evolution" item picked up under the "important, not urgent, alternate
 with hardening" framing from the previous session. A `string` literal can now embed `{ Expression }`
 directly (`"Hello, {name}!"`), in any context a string literal appears (expressions, `view {}` text,
@@ -515,6 +533,80 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 ## Session Log
 
 ### Latest session
+
+**AI:** Claude
+
+**Task:** No explicit maintainer task; followed `TODO.md` §16's priority order ("strengthen the
+semantic checker" ranks above expanding language features) and picked **function return-type
+checking** from §5 Types — the next unchecked box after argument checking and component prop-type
+checking, both already done in prior sessions using the same literal-shaped-comparison approach.
+
+**Result:** Added `ReturnContext` (`{ functionName, returnType }`) and `checkReturnStmt()` to
+`checker.ts`. `checkComponentDecl()`'s `FunctionDecl` case now builds a `ReturnContext` from the
+function's own name/declared return type and passes it into `checkStmts()` via a new optional
+`returnCtx` parameter (default `null`), which the `If`/`For` recursive calls thread through
+unchanged so a `return` nested inside a loop or branch is still checked against the *enclosing
+function's* return type, not treated as un-contextualized. The `Return` statement case then calls
+`checkReturnStmt()`, which mirrors `checkCallArgs()`'s existing null/literal-type-matching logic:
+- a `void` function's `return <expr>;` is flagged ("has a 'void' return type but returns a value");
+- a non-`void` function's bare `return;` is flagged ("must return a value of type '...'");
+- `return null;` against a non-nullable declared type is flagged, matching the existing
+  arg/prop/struct-field null-check wording;
+- a literal-shaped return value (int/float/string/bool/struct-literal/array-literal) of the wrong
+  type is flagged with the same "Type mismatch: ... but returns/received a '...' value" phrasing
+  used elsewhere in the checker.
+
+`on_mount`/`on_change` bodies call `checkStmts()` without a `returnCtx` (still `null`), so a
+`return;` used there for early-exit is deliberately left unchecked — lifecycle-specific return
+semantics are an open, separate `TODO.md` item ("Lifecycle block validation"), not something to
+invent here. Only literal-shaped return expressions are checked; `return someVar;` (the common
+case) is left alone, consistent with every other type-match check in this file — see the existing
+"More precise diagnostic messages" `TODO.md` note for the same limitation elsewhere.
+
+Added five fixtures under `scripts/fixtures/checker/`: `wrong-return-type.crs`,
+`missing-return-value.crs`, `void-return-with-value.crs`, and `null-return-not-nullable.crs`
+(negative), plus `correct-return-ok.crs` (positive — a normal `int` return, an `int?` function that
+both returns `null` and returns a plain `int` depending on a branch, and a `void` function with an
+early bare `return;` inside an `if`, none of which should produce a diagnostic). Added matching
+cases to `scripts/test-checker.js`. Checked off "Function return-type checking" in `TODO.md` §5
+Types with a short implementation note (existence-checking of the return type name itself was
+already done by an earlier Codex session — this is the separate, previously-missing check that a
+`return` statement's *value* matches that type).
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-return-type-checking.patch` (see the maintainer's own patch-application step; this file
+is not committed to the repository).
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm install` (needed — `node_modules` was
+absent at the start of this session, fresh clone); `npm test` (190 PASS, 0 FAIL, exit 0 — up from
+185 before this session, i.e. exactly the 5 new fixture-driven assertions above, no regressions in
+any pre-existing case, including the "all real examples pass the semantic checker cleanly" check
+and every runtime/DOM/preview test).
+
+**Decisions:** Kept the check literal-shaped-only (no attempt at a real expression type-inference
+pass) to stay consistent with every other type-comparison check already in `checker.ts` — see the
+"Decisions" note on component prop type checking two sessions ago, which flagged that a real
+inference helper is the actual prerequisite for going beyond literal-only checking anywhere in this
+file, return types included. Did not touch `on_mount`/`on_change` — giving lifecycle blocks a
+return context (and deciding what "returning early" should even mean there) is a different,
+undecided piece of work.
+
+**Problems:** None encountered. No pre-existing behavior needed to change.
+
+**Remaining:** `TODO.md` §5 Types still has open items: complete assignment compatibility, array
+element type checking, function-type compatibility, and the "More precise diagnostic messages"
+note (checking `typeIsResolvable` on `state`/`derived`/`provide`/`const` declared types before
+comparing against the initializer). None started this session.
+
+**Next step:** Per `TODO.md` §16, either continue hardening the checker (array element type
+checking is the next naturally-scoped item using the same literal-shaped pattern used here and in
+`checkCallArgs`/`checkAttributeTypeMatch`/`checkReturnStmt`) or, if hardening has now run several
+sessions in a row, deliberately pick a §12 language-feature item instead per the note at the end of
+§16.
+
+---
+
+### Older session
 
 **AI:** Claude
 

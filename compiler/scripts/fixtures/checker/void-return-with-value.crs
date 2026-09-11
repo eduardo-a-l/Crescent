@@ -1,0 +1,9 @@
+component Broken {
+    void run() {
+        return 1;
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

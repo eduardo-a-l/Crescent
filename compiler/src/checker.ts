@@ -339,6 +339,54 @@ function checkAssignmentTarget(
   }
 }
 
+interface ReturnContext {
+  functionName: string;
+  returnType: 'void' | AST.CrescentType;
+}
+
+function checkReturnStmt(
+  stmt: Extract<AST.Stmt, { kind: 'Return' }>,
+  returnCtx: ReturnContext | null,
+  where: string,
+  diagnostics: Diagnostic[]
+): void {
+  if (!returnCtx) return;
+  const { functionName, returnType } = returnCtx;
+  if (returnType === 'void') {
+    if (stmt.value) {
+      diagnostics.push(
+        err(`Function '${functionName}' has a 'void' return type but returns a value`, where, stmt.line)
+      );
+    }
+    return;
+  }
+  if (!stmt.value) {
+    diagnostics.push(
+      err(`Function '${functionName}' must return a value of type '${typeToString(returnType)}'`, where, stmt.line)
+    );
+    return;
+  }
+  if (stmt.value.kind === 'NullLiteral') {
+    if (returnType.kind !== 'NullableType') {
+      diagnostics.push(
+        err(`'null' returned from function '${functionName}', which is not nullable ('${typeToString(returnType)}')`, where, stmt.line)
+      );
+    }
+    return;
+  }
+  const actual = inferLiteralType(stmt.value);
+  if (!actual) return;
+  if (!literalTypeMatches(returnType, actual)) {
+    diagnostics.push(
+      err(
+        `Type mismatch: function '${functionName}' declares return type '${typeToString(returnType)}' but returns a '${typeToString(actual)}' value`,
+        where,
+        stmt.line
+      )
+    );
+  }
+}
+
 function checkStmts(
   stmts: AST.Stmt[],
   scope: Set<string>,
@@ -347,7 +395,8 @@ function checkStmts(
   narrow: NarrowState,
   derivedNames: Set<string>,
   where: string,
-  diagnostics: Diagnostic[]
+  diagnostics: Diagnostic[],
+  returnCtx: ReturnContext | null = null
 ): void {
   const localScope = new Set(scope);
   for (const stmt of stmts) {
@@ -378,8 +427,8 @@ function checkStmts(
           nullable: narrow.nullable,
           narrowed: target ? new Set(narrow.narrowed).add(target) : narrow.narrowed,
         };
-        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics);
-        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics);
+        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx);
+        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx);
         break;
       }
       case 'For': {
@@ -389,11 +438,12 @@ function checkStmts(
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics);
+        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx);
         break;
       }
       case 'Return':
         if (stmt.value) checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkReturnStmt(stmt, returnCtx, where, diagnostics);
         break;
     }
   }
@@ -610,7 +660,10 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         if (m.returnType !== 'void' && !typeIsResolvable(m.returnType, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(m.returnType)}' referenced by return type of function '${m.name}'`, fnWhere, m.line));
         }
-        checkStmts(m.body, fnScope, globalScope, functions, narrow, derivedNames, fnWhere, diagnostics);
+        checkStmts(m.body, fnScope, globalScope, functions, narrow, derivedNames, fnWhere, diagnostics, {
+          functionName: m.name,
+          returnType: m.returnType,
+        });
         break;
       }
       case 'OnMountDecl':

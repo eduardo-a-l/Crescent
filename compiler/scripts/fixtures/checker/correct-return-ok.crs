@@ -1,0 +1,25 @@
+component Fine {
+    state<int> total = 0;
+
+    int add(int a, int b) {
+        return a + b;
+    }
+
+    int? maybe_negative(int n) {
+        if (n < 0) {
+            return null;
+        }
+        return n;
+    }
+
+    void run() {
+        if (total > 0) {
+            return;
+        }
+        total = add(1, 2);
+    }
+
+    view {
+        <p>{total}</p>
+    }
+}
