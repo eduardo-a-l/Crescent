@@ -1,0 +1,11 @@
+component Counter {
+    state<int> total = 0;
+
+    void reset() {
+        total = "not a number";
+    }
+
+    view {
+        <p>{total}</p>
+    }
+}

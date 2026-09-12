@@ -217,10 +217,33 @@
 - [x] Struct declarations
 - [x] Property lookup
 - [x] Struct literals
-- [ ] Complete field validation
-- [ ] Missing-field diagnostics
-- [ ] Extra-field diagnostics
-- [ ] Assignment compatibility
+- [x] Complete field validation — already implemented: `checkExpr`'s `StructLiteral` case calls
+  `checkLiteralTypeMatch` per field (`unknown-struct-field.crs`/`missing-struct-field.crs` and the
+  `wrong-prop-type*.crs` fixtures already exercise it). Corrected the checkbox this session after
+  noticing, while implementing "Assignment compatibility" below, that this box and the next two
+  were stale — the work was already done and tested, just never marked off.
+- [x] Missing-field diagnostics — already implemented (`Missing field '<name>' in struct literal
+  '<type>'`, `missing-struct-field.crs`). See note above.
+- [x] Extra-field diagnostics — already implemented (`Unknown field '<name>' on struct '<type>'`,
+  `unknown-struct-field.crs`). See note above.
+- [x] Assignment compatibility — `checkAssignmentTypeMatch` (built on the same `checkValueTypeMatch`
+  core `checkLiteralTypeMatch` now also uses) validates a plain `=` reassignment's value against the
+  target's declared type. **Scoped to component-level named members only** (`state`/`derived`/
+  `provide`/`const`/`inject` members and component params) via a new `memberTypes` map built
+  alongside the existing `scope`/`nullable` maps in `checkComponentDecl` and threaded through
+  `checkStmts` — a plain `Identifier` assignment target whose name is in `memberTypes` gets checked;
+  anything else (a local `VarDecl` variable, a function parameter, a `Member`/`Index` write) does
+  not, since `localScope` only tracks names, not types, for those, and extending it to do so is a
+  larger refactor than this box needs. Skips derived targets (already an error via
+  `checkAssignmentTarget`) and skips every compound-assignment operator (`+=`/`-=`/`*=`/`/=`) — only
+  plain `=` is checked, since a compound op's actual required type relationship (e.g. can you `+=`
+  a `string` onto a `string`, but not an `int`?) isn't the same question and deserves its own
+  pass. Same literal-shaped-only limitation as everywhere else: `total = total + 1;` (a non-literal
+  expression) isn't type-checked, only `total = "wrong";` (a literal). See `wrong-assignment-
+  type.crs`, `wrong-assignment-array-element-type.crs`, `null-assignment-not-nullable.crs`
+  (negative) and `correct-assignment-ok.crs` (positive — correct literal, non-literal, compound
+  `+=`, nullable, and even a `const` reassignment, since nothing currently forbids reassigning a
+  `const` at all — a separate, unrelated gap noted under "Reactivity" below, not fixed here).
 
 ## Reactivity
 
@@ -240,6 +263,17 @@
 - [ ] Lifecycle/reactivity validation
 - [ ] Reactive CSS expression validation
 - [ ] Component context validation for `provide` / `inject`
+- [ ] `const` reassignment is not forbidden — noticed while implementing "Assignment compatibility"
+  under `Structs` above (`correct-assignment-ok.crs` has to include a `const` reassignment as a
+  *passing* case, since nothing currently rejects it). A `ConstDecl` member is only ever
+  distinguished from `StateDecl`/`ProvideDecl` by which keyword declared it; `checkAssignmentTarget`
+  doesn't currently look at `m.kind` at all, so `const string title = "X"; ... title = "Y";` passes
+  the checker with no diagnostic even though the whole point of `const` (as opposed to `state`) is
+  presumably that it shouldn't be reassignable after initialization. Small, well-scoped fix once
+  picked up: `checkAssignmentTarget` (or `checkComponentDecl`, wherever `const` names get tracked)
+  needs a `constNames: Set<string>` alongside the existing `derivedNames`, and an
+  `Assignment`/`PostfixStmt` target matching a name in it should report something like `Cannot
+  assign to const '<name>'; it can only be set at declaration`.
 
 ## Components
 

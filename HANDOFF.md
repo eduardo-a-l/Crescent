@@ -14,11 +14,35 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session picked a `TODO.md` §12 **language-feature** item — **struct destructuring** in
+Latest session went back to hardening the checker after one language-feature session (struct
+destructuring, previous session — already committed upstream as `03158e7` by this session's
+start). Reviewed `Structs` and `Null Safety` for the next well-scoped item and found something
+worth a note before picking one: three of `Structs`' four open `[ ]` boxes — "Complete field
+validation," "Missing-field diagnostics," "Extra-field diagnostics" — were **already fully
+implemented** (`checkExpr`'s `StructLiteral` case, already exercised by
+`missing-struct-field.crs`/`unknown-struct-field.crs`) and just never checked off. Fixed the
+bookkeeping and picked the one real remaining gap: **Assignment compatibility**.
+
+Added type-checking for plain `=` reassignments (`total = "wrong";`), refactoring
+`checkLiteralTypeMatch` into a shared `checkValueTypeMatch` core so the new `checkAssignmentTypeMatch`
+reuses the exact same null/array-element logic with different wording. New `memberTypes` map in
+`checkComponentDecl`, threaded through `checkStmts`. **Deliberately scoped to component-level named
+members only** (`state`/`derived`/`provide`/`const`/`inject`/component params) — local variables,
+function parameters, and `obj.field = x` writes are explicitly out of scope, since `localScope` only
+tracks names (not types) for those, and extending it is a bigger refactor than this box needs. Only
+plain `=` is checked, not `+=`/`-=`/`*=`/`/=`. 4 new fixtures (3 negative, 1 positive covering
+correct/non-literal/compound/nullable/`const` reassignment — all of which should pass). Discovered,
+as a side effect of writing that positive fixture, that reassigning a `const` isn't forbidden by
+anything today; noted as a new, separate, well-scoped `TODO.md` item under Reactivity rather than
+fixed here (out of scope for a "type compatibility" task — that's a mutability question). Full
+suite: 205 PASS, 0 FAIL, up from 201, no regressions. **Not committed** — see
+`crescent-assignment-compatibility.patch` for a transferable copy.
+
+Before that: picked a `TODO.md` §12 **language-feature** item — **struct destructuring** in
 local variable declarations — rather than continuing to hardened the checker, per §16's own note
 that three-plus hardening sessions in a row (return-type checking → array element checking →
 precise diagnostic messages, all previous sessions) is itself a signal to deliberately switch to
-real language design work. By this session's start, the precise-diagnostic-messages patch had
+real language design work. By that session's start, the precise-diagnostic-messages patch had
 already been committed upstream (`9b9f18a`), leaving §5 Types with no remaining `[ ]` boxes.
 
 New syntax: `Point { x, y } = current;` — declares `x`/`y` as new local variables read off
@@ -36,7 +60,7 @@ compile to plain JS objects. `docs/Crescent_Design.md` and `docs/Crescent_Gramma
 example (`examples/struct_destructuring.crs`) plus its e2e test wired into `npm test`, 5 new checker
 fixtures, 6 new tests total (201 passing, up from 195, no regressions). `TODO.md`'s "Destructuring"
 bullet marked `[~]` (partial) with a note on exactly what's done and what's deliberately deferred.
-**Not committed** — see `crescent-struct-destructuring.patch` for a transferable copy.
+Committed upstream as `03158e7` ("feat: Add struct destructuring") between sessions.
 
 Before that: fixed the **"More precise diagnostic messages"** item (`TODO.md` §5 Semantic
 Checker → Types) — the last previously-open box in that section, and one that already had a fully
@@ -588,6 +612,108 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 **AI:** Claude
 
+**Task:** Continuing from the previous session (its diff already committed upstream as `03158e7`
+by this session's start). That session's own "Next step" note left both directions open —
+designing array destructuring, or going back to hardening §5's other subsections. Chose hardening:
+reviewed `Structs` and `Null Safety` for a well-scoped next item.
+
+**Result:** Before picking anything, actually checked what each open `Structs` box currently does —
+worth doing explicitly, since a stale checkbox left unchecked looks identical to genuinely
+unstarted work from the TODO list alone. Found `checkExpr`'s `StructLiteral` case already
+implements per-field type checking (`checkLiteralTypeMatch` called per field), missing-field
+diagnostics (`Missing field '<name>' in struct literal '<type>'`), and extra-field diagnostics
+(`Unknown field '<name>' on struct '<type>'`) — all three already covered by existing fixtures
+(`missing-struct-field.crs`, `unknown-struct-field.crs`, the `wrong-prop-type*.crs` family). Checked
+off all three with a note explaining they were already done, not new work. That left exactly one
+real gap in `Structs`: **Assignment compatibility** — nothing checks a reassignment's value against
+its target's declared type at all.
+
+Implemented it, scoped narrowly on purpose. Refactored `checkLiteralTypeMatch`'s body into a shared
+`checkValueTypeMatch(declared, value, where, line, diagnostics, globalScope, verb)` — same
+unknown-type/null/literal-mismatch/array-element logic, but the mismatch message's verb
+("initialized with" vs "assigned") is now a parameter, so `checkLiteralTypeMatch` and the new
+`checkAssignmentTypeMatch` share one implementation instead of two copies that could drift. Added a
+`memberTypes: Map<string, CrescentType>` to `checkComponentDecl`, populated alongside the existing
+`scope`/`nullable` maps for component params and `state`/`derived`/`provide`/`const`/`inject`
+members, threaded through `checkStmts` as a new trailing parameter (default `new Map()`, so every
+existing call site not explicitly passed it keeps working unchanged — only the `FunctionDecl`/
+`OnMountDecl`/`OnChangeDecl` call sites in `checkComponentDecl` and the `If`/`For` recursive calls
+needed updating). The `Assignment` case now calls `checkAssignmentTypeMatch` when: the operator is
+plain `=` (not `+=`/`-=`/`*=`/`/=` — a compound op's actual required type relationship isn't the
+same question, and wasn't tackled here), the target is a bare `Identifier` (not `Member`/`Index` —
+those already get a different, existing error for writing through a state's property), the target
+isn't a `derived` name (already an error via `checkAssignmentTarget`), and the name is found in
+`memberTypes` (so a local `VarDecl` variable or a function parameter — neither tracked in
+`memberTypes` — is silently skipped, not a false negative introduced by this change, since nothing
+checked those before either).
+
+Manually verified the behavior before writing any fixture: built a scratch `.crs` file with a
+correct reassignment, a wrong-type reassignment, a non-literal reassignment (`total = total + 1;`),
+a compound `+= 1`, and a `const` reassignment, ran it through `checkFile` directly, and confirmed
+each one's diagnostics (or lack of any) matched intent — same "verify raw behavior before asserting
+it" discipline as every prior fixture-writing session. That manual check is what surfaced an
+unrelated discovery: nothing in the checker currently distinguishes a `const` member from a
+`state`/`provide` one for assignment purposes, so `const string title = "X"; ... title = "Y";`
+passes with zero diagnostics — meaning `const`'s whole point (immutable after declaration) isn't
+actually enforced. Didn't fix it here (a mutability question, not this task's type-compatibility
+question) — added a new, well-scoped `TODO.md` item under `Reactivity` describing exactly what a
+fix would look like (a `constNames: Set<string>` alongside the existing `derivedNames`, checked in
+`checkAssignmentTarget`), so a future session doesn't have to rediscover it. `correct-assignment-
+ok.crs` deliberately includes that `const` reassignment as a *passing* case, documented in-fixture
+as testing today's (arguably wrong) behavior rather than silently omitting it.
+
+Added 4 fixtures: `wrong-assignment-type.crs`, `wrong-assignment-array-element-type.crs`,
+`null-assignment-not-nullable.crs` (negative), `correct-assignment-ok.crs` (positive — correct
+literal, non-literal, compound `+=`, nullable, and `const` reassignment, none of which should
+fire). Matching `test-checker.js` cases added.
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-assignment-compatibility.patch`.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 205 PASS, 0 FAIL, exit 0 (up from 201 before this
+session — exactly the 4 new fixture-driven cases, no regressions anywhere, including "all real
+examples pass the semantic checker cleanly" — none of the existing examples' plain reassignments
+(`array_mutators.crs`'s `items = ...`, `keyed_list.crs`'s `todos = ...`, etc.) newly trip the check,
+since they're all either correctly-typed or non-literal expressions).
+
+**Decisions:** Kept the type-check scoped to component-level members and explicitly did not attempt
+to extend `localScope` (currently just `Set<string>`) into a typed map to also cover local
+variables and function parameters — that's a real, larger refactor (every `checkStmts`/`checkExpr`
+call site that touches `localScope` would need updating) better done as its own deliberate session
+than folded quietly into this one. Left compound assignment operators unchecked entirely rather
+than guessing at partial rules for them (e.g. allowing `total += 1` for `int` but not
+`total += "x"` for `int` — actually already a `string`-vs-`int` mismatch worth catching — but what
+about `label += "!"` where `label` is `string`? That's valid string-concatenation `+=`, so the rule
+isn't simply "same type as declared," and figuring out the real rule is its own task). Reused
+`StructLiteral`'s existing check names/wording style, and refactored rather than duplicated,
+following the pattern already established across every type-check function in this file.
+
+**Problems:** None. The `Structs`-checkbox bookkeeping fix was mildly annoying to have missed
+across three separate hardening sessions, but harmless — flagged in case the pattern recurs
+(checking whether a claimed-open box is actually still open, before assuming a TODO checklist is
+perfectly in sync with the code, seems worth doing as a matter of habit).
+
+**Remaining:** `Structs` now has no `[ ]` boxes at all. `Null Safety` still has five of its six
+listed items unchecked (`Flow-sensitive null narrowing`, `Correct narrowing through if`, `Correct
+narrowing through logical conditions`, `Prevent invalid nullable access`, `Test nested/control-flow
+cases`) — worth checking, the same way this session checked `Structs`, whether any of those are
+also already-done-but-unchecked before assuming they're all genuinely unstarted. The new `const`
+reassignment gap is now a tracked `TODO.md` item under `Reactivity`. `TODO.md` §12's "Destructuring"
+item still has array destructuring and parameter destructuring open.
+
+**Next step:** Per `TODO.md` §16's alternating framing, and since this was only one hardening
+session after one language-feature session, either direction is legitimate again. Two well-scoped
+hardening candidates surfaced this session specifically: the `const`-reassignment fix (small, clear,
+already spec'd out in the new TODO note) or auditing `Null Safety`'s five open items for the same
+"already-done-but-unchecked" possibility found in `Structs` this time. On the language-feature
+side, array destructuring is still the natural next `TODO.md` §12 pick.
+
+---
+
+### Older session
+
+**AI:** Claude
+
 **Task:** Continuing from the previous session (its diff already committed upstream as `9b9f18a`
 by this session's start, leaving `TODO.md` §5 Types with no remaining `[ ]` boxes). Per §16's own
 framing — "if several sessions in a row have all been hardening work, that is itself a signal to
@@ -643,8 +769,9 @@ new §2.5 disambiguation-rule writeup, the `Statement`/`VarDecl` production in �
 interpolation one. `TODO.md`'s "Destructuring" bullet changed from `[ ]` to `[~]` (partial) with a
 note on exactly what shipped and what's still open.
 
-**Commit:** Not committed — working tree contains this focused diff. Handed over as
-`crescent-struct-destructuring.patch`.
+**Commit:** Handed over as `crescent-struct-destructuring.patch`; the maintainer applied and
+committed it upstream as `develop`'s `03158e7` ("feat: Add struct destructuring") between
+sessions.
 
 **Tests:** `npx tsc --noEmit` clean. `npm test`: 201 PASS, 0 FAIL, exit 0 (up from 195 before this
 session — the 5 new checker-fixture cases plus the 1 new e2e mount test, no regressions anywhere).

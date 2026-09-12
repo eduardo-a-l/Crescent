@@ -146,33 +146,42 @@ function checkArrayElements(
   });
 }
 
-function checkLiteralTypeMatch(
+function checkValueTypeMatch(
   declared: AST.CrescentType,
-  init: AST.Expr,
+  value: AST.Expr,
   where: string,
   line: number,
   diagnostics: Diagnostic[],
-  globalScope: Map<string, SymbolInfo>
+  globalScope: Map<string, SymbolInfo>,
+  verb: string
 ): void {
   if (!typeIsResolvable(declared, globalScope)) {
     diagnostics.push(err(`Unknown type '${typeToString(declared)}'`, where, line));
     return;
   }
-  if (init.kind === 'NullLiteral') {
+  if (value.kind === 'NullLiteral') {
     if (declared.kind !== 'NullableType') {
       diagnostics.push(err(`'null' assigned to non-nullable type '${typeToString(declared)}'`, where, line));
     }
     return;
   }
-  const actual = inferLiteralType(init);
+  const actual = inferLiteralType(value);
   if (!actual) return;
   if (!literalTypeMatches(declared, actual)) {
     diagnostics.push(
-      err(`Type mismatch: declared as '${typeToString(declared)}' but initialized with a '${typeToString(actual)}' value`, where, line)
+      err(`Type mismatch: declared as '${typeToString(declared)}' but ${verb} a '${typeToString(actual)}' value`, where, line)
     );
     return;
   }
-  checkArrayElements(declared, init, where, line, diagnostics, 'Type mismatch: array element');
+  checkArrayElements(declared, value, where, line, diagnostics, 'Type mismatch: array element');
+}
+
+function checkLiteralTypeMatch(declared: AST.CrescentType, init: AST.Expr, where: string, line: number, diagnostics: Diagnostic[], globalScope: Map<string, SymbolInfo>): void {
+  checkValueTypeMatch(declared, init, where, line, diagnostics, globalScope, 'initialized with');
+}
+
+function checkAssignmentTypeMatch(declared: AST.CrescentType, value: AST.Expr, where: string, line: number, diagnostics: Diagnostic[], globalScope: Map<string, SymbolInfo>): void {
+  checkValueTypeMatch(declared, value, where, line, diagnostics, globalScope, 'assigned');
 }
 
 function checkCallArgs(
@@ -449,7 +458,8 @@ function checkStmts(
   derivedNames: Set<string>,
   where: string,
   diagnostics: Diagnostic[],
-  returnCtx: ReturnContext | null = null
+  returnCtx: ReturnContext | null = null,
+  memberTypes: Map<string, AST.CrescentType> = new Map()
 ): void {
   const localScope = new Set(scope);
   for (const stmt of stmts) {
@@ -490,6 +500,12 @@ function checkStmts(
         checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, where, stmt.line, diagnostics);
+        if (stmt.op === '=' && stmt.target.kind === 'Identifier' && !derivedNames.has(stmt.target.name)) {
+          const declaredType = memberTypes.get(stmt.target.name);
+          if (declaredType) {
+            checkAssignmentTypeMatch(declaredType, stmt.value, where, stmt.line, diagnostics, globalScope);
+          }
+        }
         break;
       case 'PostfixStmt':
         checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
@@ -505,8 +521,8 @@ function checkStmts(
           nullable: narrow.nullable,
           narrowed: target ? new Set(narrow.narrowed).add(target) : narrow.narrowed,
         };
-        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx);
-        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx);
+        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes);
+        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes);
         break;
       }
       case 'For': {
@@ -516,7 +532,7 @@ function checkStmts(
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx);
+        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes);
         break;
       }
       case 'Return':
@@ -641,9 +657,11 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
   const where = `component '${decl.name}'`;
   const scope = new Set<string>();
   const nullable = new Map<string, AST.CrescentType>();
+  const memberTypes = new Map<string, AST.CrescentType>();
 
   for (const p of decl.params) {
     scope.add(p.name);
+    memberTypes.set(p.name, p.type);
     if (p.type.kind === 'NullableType') nullable.set(p.name, p.type);
     if (!typeIsResolvable(p.type, globalScope)) {
       diagnostics.push(err(`Unknown type '${typeToString(p.type)}' referenced by param '${p.name}'`, where, decl.line));
@@ -659,6 +677,7 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
       case 'ConstDecl':
       case 'InjectDecl':
         scope.add(m.name);
+        memberTypes.set(m.name, m.type);
         if (m.type.kind === 'NullableType') nullable.set(m.name, m.type);
         break;
       case 'FunctionDecl':
@@ -741,17 +760,17 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         checkStmts(m.body, fnScope, globalScope, functions, narrow, derivedNames, fnWhere, diagnostics, {
           functionName: m.name,
           returnType: m.returnType,
-        });
+        }, memberTypes);
         break;
       }
       case 'OnMountDecl':
-        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_mount`, diagnostics);
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_mount`, diagnostics, null, memberTypes);
         break;
       case 'OnChangeDecl':
         for (const w of m.watched) {
           if (!scope.has(w)) diagnostics.push(err(`Undefined identifier '${w}' watched by on_change`, where, m.line));
         }
-        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_change(${m.watched.join(', ')})`, diagnostics);
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_change(${m.watched.join(', ')})`, diagnostics, null, memberTypes);
         break;
       case 'ViewBlockDecl':
         for (const node of m.nodes) checkTemplateNode(node, scope, globalScope, functions, narrow, `${where}, view`, diagnostics);

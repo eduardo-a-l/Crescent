@@ -283,6 +283,24 @@ const cases = [
     pattern: /'Card' is a component, not a struct — it cannot be used in a struct destructure/,
     label: 'a struct destructure naming a component instead of a struct',
   },
+  {
+    file: 'wrong-assignment-type.crs',
+    severity: 'error',
+    pattern: /Type mismatch: declared as 'int' but assigned a 'string' value/,
+    label: 'reassigning a state variable with a value of the wrong type',
+  },
+  {
+    file: 'wrong-assignment-array-element-type.crs',
+    severity: 'error',
+    pattern: /Type mismatch: array element at index 2 expects 'int' but received a 'string' value/,
+    label: 'reassigning a state array with a mismatched element type',
+  },
+  {
+    file: 'null-assignment-not-nullable.crs',
+    severity: 'error',
+    pattern: /'null' assigned to non-nullable type 'int'/,
+    label: 'reassigning null to a non-nullable state variable',
+  },
 ];
 
 for (const c of cases) {
@@ -318,6 +336,12 @@ const correctStructDestructureDiagnostics = diagnosticsFor('correct-struct-destr
 assert(
   correctStructDestructureDiagnostics.length === 0,
   `correct-struct-destructure-ok.crs: a full-field and a partial-field struct destructure both produce no diagnostics, got ${JSON.stringify(correctStructDestructureDiagnostics)}`
+);
+
+const correctAssignmentDiagnostics = diagnosticsFor('correct-assignment-ok.crs');
+assert(
+  correctAssignmentDiagnostics.length === 0,
+  `correct-assignment-ok.crs: correctly-typed reassignments, a non-literal reassignment, a compound '+=', and a nullable reassignment all produce no diagnostics, got ${JSON.stringify(correctAssignmentDiagnostics)}`
 );
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));

@@ -1,0 +1,33 @@
+component Counter {
+    state<int> total = 0;
+    state<string?> label = null;
+    const string title = "Counter";
+
+    void reset() {
+        total = 5;
+    }
+
+    void bump() {
+        total = total + 1;
+    }
+
+    void compound_bump() {
+        total += 1;
+    }
+
+    void clear_label() {
+        label = null;
+    }
+
+    void set_label() {
+        label = "hi";
+    }
+
+    void rename() {
+        title = "New title";
+    }
+
+    view {
+        <p>{total}</p>
+    }
+}
