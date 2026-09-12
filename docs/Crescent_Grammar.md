@@ -104,6 +104,26 @@ This applies to every `StringLiteral`, regardless of surrounding mode — a `Str
 the same way a `StringLiteral` in ordinary `MODE_CODE` can, since the lexer doesn't know which mode
 requested the token. See §7's `Attribute`/`TextLiteral` note, which this supersedes.
 
+### 2.5 `Identifier '{' Identifier` at statement start — struct destructure vs. struct literal
+
+At the start of a `Statement`, `Identifier '{'` is ambiguous on paper with two different
+productions: a `VarDeclStatement` attempting `Type Identifier`, where `Identifier` happened to be
+a bare type name immediately followed by a block-shaped thing, and the new
+`StructDestructureStatement` (§6). In practice it's resolved the same way the reference
+implementation already resolves `VarDeclStatement` itself failing to match at an `Identifier`-led
+statement (see the parser's snapshot/restore around `parseVarDeclStatement` in §6's notes): attempt
+`VarDeclStatement` first (`Type Identifier '=' Expression ';'` — this fails immediately, since after
+parsing `Identifier` as a `Type` it expects another `Identifier`, not `'{'`), restore, then attempt
+`StructDestructureStatement` (`Identifier '{' Identifier { ',' Identifier } '}' '=' Expression
+';'`), restore and fall through to `Assignment`/`ExprStatement` if that also fails.
+
+This never collides with a `StructLiteral` **expression** (`Identifier '{' FieldInit ... '}'`,
+where each `FieldInit` is `Identifier ':' Expression`): a destructure pattern's field list is bare
+identifiers separated by `','`, so the first field inside `'{' '}'` immediately diverges from
+`FieldInit`'s required `':' `token, and parsing fails/restores rather than silently misreading one
+production as the other. A `StructLiteral` can still appear as an ordinary expression anywhere an
+`Expression` is expected — including, unambiguously, on the *right* of a destructure's `'='`.
+
 ---
 
 ## 3. Top-Level Structure
@@ -191,6 +211,7 @@ completeness so the whole grammar is in one place.
 Block          ::= '{' { Statement } '}'
 
 Statement      ::= VarDecl
+                  | StructDestructureStatement
                   | Assignment ';'
                   | ExprStatement ';'
                   | IfStatement
@@ -199,6 +220,8 @@ Statement      ::= VarDecl
                   | Block
 
 VarDecl        ::= Type Identifier '=' Expression ';'
+StructDestructureStatement
+               ::= Identifier '{' Identifier { ',' Identifier } '}' '=' Expression ';'
 Assignment     ::= LValue AssignOp Expression ';'
                   | LValue ( '++' | '--' ) ';'
 LValue         ::= Identifier { '.' Identifier | '[' Expression ']' }
@@ -352,6 +375,30 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
   an interpolation are checked exactly like any other identifier reference, and an interpolated
   string's inferred type is always `string`, so assigning one to a non-`string`-typed declaration
   is now caught).
+
+- **Resolved:** local-declaration struct destructuring (§2.5, §6). New `StructDestructureStatement`
+  production: `Identifier '{' Identifier { ',' Identifier } '}' '=' Expression ';'`, e.g.
+  `Point { x, y } = current;`. Disambiguated from both `VarDecl` (an `Identifier`-led statement
+  attempting `Type Identifier '=' ...`) and a `StructLiteral` **expression** (same
+  `Identifier '{' ... '}'` opening shape, but requiring `Identifier ':' Expression` fields) purely
+  by parse-attempt-and-restore, exactly the mechanism the reference implementation already uses to
+  disambiguate a `VarDecl` from a plain assignment/expression statement at an `Identifier`-led
+  statement start — no new lookahead machinery, no new token, no lexer changes. New `Stmt` AST
+  variant, `StructDestructure { typeName, fields, init }`; checker resolves `typeName` against
+  declared structs exactly like a `StructLiteral`'s `typeName` (unknown-struct, struct-vs-component
+  diagnostics reused) plus one destructure-specific check (unknown field name, duplicate field
+  name); codegen emits it as native JS object destructuring (`const { x, y } = <init>;`), which
+  works for free because a Crescent struct value already compiles to a plain JS object with
+  matching field-name keys. `docs/Crescent_Design.md`'s "Struct Destructuring" subsection (§2)
+  covers the language-level semantics, including what's deliberately *not* covered yet (parameter-
+  list destructuring, array destructuring — each flagged as needing its own separate design pass
+  rather than inheriting this feature's answers by default). See
+  `compiler/examples/struct_destructuring.crs` /
+  `compiler/scripts/test-struct-destructuring.js` for the working end-to-end example, and
+  `compiler/scripts/fixtures/checker/unknown-struct-destructure-type.crs`,
+  `unknown-struct-destructure-field.crs`, `duplicate-struct-destructure-field.crs`,
+  `component-as-struct-destructure.crs`, and `correct-struct-destructure-ok.crs` for the checker
+  fixtures.
 
 - **Resolved (partially):** a `StructLiteral`'s `typeName` not matching any declared `StructDecl`
   is now a real diagnostic — the semantic checker (`compiler/src/checker.ts`) flags an unknown

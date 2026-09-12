@@ -25,6 +25,7 @@ export type Expr =
 
 export type Stmt =
   | { kind: 'VarDecl'; type: CrescentType; name: string; init: Expr; line: number }
+  | { kind: 'StructDestructure'; typeName: string; fields: string[]; init: Expr; line: number }
   | { kind: 'Assignment'; target: Expr; op: string; value: Expr; line: number }
   | { kind: 'PostfixStmt'; target: Expr; op: '++' | '--'; line: number }
   | { kind: 'ExprStatement'; expr: Expr; line: number }

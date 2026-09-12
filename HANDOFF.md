@@ -14,7 +14,31 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session fixed the **"More precise diagnostic messages"** item (`TODO.md` §5 Semantic
+Latest session picked a `TODO.md` §12 **language-feature** item — **struct destructuring** in
+local variable declarations — rather than continuing to hardened the checker, per §16's own note
+that three-plus hardening sessions in a row (return-type checking → array element checking →
+precise diagnostic messages, all previous sessions) is itself a signal to deliberately switch to
+real language design work. By this session's start, the precise-diagnostic-messages patch had
+already been committed upstream (`9b9f18a`), leaving §5 Types with no remaining `[ ]` boxes.
+
+New syntax: `Point { x, y } = current;` — declares `x`/`y` as new local variables read off
+`current`'s matching struct fields, including partial-field selection (`Point { x } = current;`).
+Scoped deliberately narrowly (local variable declarations only) with two related extensions —
+function-parameter destructuring and array destructuring — explicitly designed-and-deferred rather
+than silently out of scope; see `docs/Crescent_Design.md`'s new "Struct Destructuring" subsection
+for the reasoning. New AST `StructDestructure` statement; parser disambiguates it from both
+`VarDecl` and a `StructLiteral` expression by parse-attempt-and-restore, the same mechanism already
+used to disambiguate `VarDecl` from a plain assignment; checker reuses `StructLiteral`'s
+unknown-struct/struct-vs-component diagnostics plus a new unknown-field/duplicate-field check;
+codegen emits plain JS object destructuring, which works for free since Crescent structs already
+compile to plain JS objects. `docs/Crescent_Design.md` and `docs/Crescent_Grammar.md` (§2.5, §6,
+§10) both updated — design-doc-first, matching the string-interpolation session's approach. New
+example (`examples/struct_destructuring.crs`) plus its e2e test wired into `npm test`, 5 new checker
+fixtures, 6 new tests total (201 passing, up from 195, no regressions). `TODO.md`'s "Destructuring"
+bullet marked `[~]` (partial) with a note on exactly what's done and what's deliberately deferred.
+**Not committed** — see `crescent-struct-destructuring.patch` for a transferable copy.
+
+Before that: fixed the **"More precise diagnostic messages"** item (`TODO.md` §5 Semantic
 Checker → Types) — the last previously-open box in that section, and one that already had a fully
 specified fix written into the TODO note from an earlier session's sweep. By the time this session
 started, array element type checking (previous session's patch) had already been committed
@@ -25,8 +49,8 @@ with a 'string' value` — and only that one diagnostic, since the function retu
 `Unknown type` fires rather than also running the (now-redundant) `Type mismatch`/array-element
 checks. One new fixture (`unknown-state-type.crs`) plus a `test-checker.js` assertion that pins down
 the *exact* diagnostic count (1), not just the message's presence, since the suppression behavior
-is the actual point of the fix. **Not committed** — see
-`crescent-precise-diagnostic-messages.patch` for a transferable copy.
+is the actual point of the fix. Committed upstream as `9b9f18a` ("feat: Add precise diagnostic
+messages") between sessions.
 
 Before that: implemented **array element type checking** (`TODO.md` §5 Semantic Checker →
 Types), the next unchecked item after function return-type checking (which itself had already been
@@ -564,6 +588,111 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 **AI:** Claude
 
+**Task:** Continuing from the previous session (its diff already committed upstream as `9b9f18a`
+by this session's start, leaving `TODO.md` §5 Types with no remaining `[ ]` boxes). Per §16's own
+framing — "if several sessions in a row have all been hardening work, that is itself a signal to
+deliberately pick a §12 item next" — and having just landed three hardening sessions in a row
+(return-type checking, array element checking, precise diagnostic messages), picked **struct
+destructuring** from §12's "Core Language Evolution" list: the first item after string
+interpolation, and the one the roadmap's own sequencing note flags as worth doing before
+tuples/enums ("both of those become much more useful once values can be destructured").
+
+**Result:** Designed first, in `docs/Crescent_Design.md`, before touching the parser — same
+approach as the string-interpolation session. Deliberately scoped down to **struct destructuring in
+a local variable declaration only**: `Point { x, y } = current;` binds `x`/`y` as new locals from
+`current`'s matching struct fields; `Point { x } = current;` (naming only some fields) is
+explicitly supported and is expected to be the common case. Two related, real extensions —
+destructuring in a function's parameter list, and array destructuring — are written up as
+deliberately deferred rather than silently missing, each flagged as needing its own design pass
+(parameter destructuring interacts with existing arg-count/type checking and codegen's positional-
+parameter assumption; array destructuring needs its own answer for a length mismatch, which a
+struct's named-field shape has no equivalent question for).
+
+Implementation, once the design was settled, turned out small:
+- **`ast.ts`:** one new `Stmt` variant, `StructDestructure { typeName, fields, init, line }`.
+- **`parser.ts`:** `parseStructDestructureStatement()` (`Identifier '{' Identifier { ',' Identifier
+  } '}' '=' Expression ';'`), tried at an `Identifier`-led statement after `parseVarDeclStatement`
+  fails — same snapshot/restore mechanism the parser already uses to fall from `VarDecl` through to
+  a plain assignment/expression statement, extended by one more attempt rather than any new
+  lookahead machinery. No ambiguity with a `StructLiteral` **expression** (`Identifier '{'
+  FieldInit... '}'`): a `FieldInit` requires `Identifier ':' Expression`, so the destructure
+  pattern's bare-identifier field list diverges at the first field and fails/restores instead of
+  being misread.
+- **`checker.ts`:** new `StructDestructure` case in `checkStmts`, reusing `StructLiteral`'s own
+  unknown-struct-type and struct-vs-component diagnostics verbatim (same wording, same shape),
+  plus one destructure-specific check the struct-literal path doesn't need: `Duplicate field` when
+  the same field is named twice (which would otherwise silently redeclare the same local name
+  twice with no error). Destructured names are added to `localScope` like an ordinary `VarDecl`.
+- **`codegen.ts`:** one line — `const { ${fields.join(', ')} } = ${exprToJs(init)};`. This works
+  for free, with no new runtime support needed, because a Crescent struct value already compiles to
+  a plain JS object with matching field-name keys (confirmed by inspecting `StructLiteral`'s
+  existing codegen case) — so native JS destructuring assignment is exactly the right target, and
+  `exprToJs` already handles unwrapping a `state<T>` via `.get()` for the `init` expression for
+  free too (verified: `Point { x, y } = origin;` where `origin` is `state<Point>` compiles to
+  `const { x, y } = origin.get();`).
+
+Added `examples/struct_destructuring.crs` (a `state<Point>`, a function that destructures it and
+builds a summary string, wired through `on_mount` so the summary renders on first paint) plus
+`scripts/test-struct-destructuring.js` (a real jsdom mount asserting the rendered text), wired into
+`package.json`'s `test` script. Five new checker fixtures: `unknown-struct-destructure-type.crs`,
+`unknown-struct-destructure-field.crs`, `duplicate-struct-destructure-field.crs`,
+`component-as-struct-destructure.crs` (all negative), and `correct-struct-destructure-ok.crs`
+(positive — both a full-field and a partial-field destructure). `docs/Crescent_Grammar.md` updated:
+new §2.5 disambiguation-rule writeup, the `Statement`/`VarDecl` production in §6 extended with
+`StructDestructureStatement`, and a new "Resolved" entry in §10 alongside the existing string-
+interpolation one. `TODO.md`'s "Destructuring" bullet changed from `[ ]` to `[~]` (partial) with a
+note on exactly what shipped and what's still open.
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-struct-destructuring.patch`.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 201 PASS, 0 FAIL, exit 0 (up from 195 before this
+session — the 5 new checker-fixture cases plus the 1 new e2e mount test, no regressions anywhere).
+Manually verified before wiring anything into `test-checker.js`: parsed the feature's AST shape by
+hand, ran the checker against both the new example and each new fixture individually to confirm the
+*exact* diagnostic (or lack of one) before writing the corresponding assertion, and inspected the
+raw generated JS for the example to confirm the `state<T>`-unwrapping codegen behavior mentioned
+above — the same "verify the actual behavior before asserting it" discipline used in every prior
+session's fixture work.
+
+**Decisions:** Allowed partial-field destructuring (naming only some of a struct's fields) rather
+than requiring every field to be named, unlike a struct *literal*, which does require every field.
+The two aren't the same shape of problem: a literal that's missing a field can't construct a valid
+value of the type, but a destructure that only wants `x` and not `y` isn't creating an incomplete
+value — it's just choosing not to bind a name for a field it doesn't need. Reused `StructLiteral`'s
+diagnostic wording verbatim for the two errors that are conceptually identical (unknown struct
+type, struct-vs-component), rather than writing new, subtly-different phrasing for the same
+underlying mistake. Did not attempt to type-check `init` against `typeName` (e.g. flagging
+`Point { x, y } = "not a point";`) — `init` is typically a plain identifier (an existing struct-
+typed variable), which the checker's literal-shaped-only type-matching machinery can't evaluate
+anyway (same boundary noted in every prior type-check session); a real expression-type-inference
+pass, if one is ever built, would be the natural place to close this gap too.
+
+**Problems:** None. No pre-existing behavior needed to change; this was purely additive.
+
+**Remaining:** Per this session's own design write-up: function-parameter destructuring and array
+destructuring are both still fully open, each needing its own design pass rather than inheriting
+this feature's specific answers. `TODO.md` §12's next items after "Destructuring" (Tuples, Enums,
+Pattern matching, ...) are all still untouched. §5 Types has no remaining `[ ]` boxes, but §5's
+other subsections (`Scope / Names` → cross-module symbol resolution; `Null Safety` → most of its
+five sub-items; `Structs` → complete/missing/extra-field validation, assignment compatibility;
+`Reactivity`, `Components`, `Diagnostics`) all still have real open work.
+
+**Next step:** Both directions are legitimate per `TODO.md` §16's alternating framing. A natural
+continuation of *this* session would be designing array destructuring next (`docs/Crescent_
+Design.md` already sketches the open question — what happens on a length mismatch — that a real
+design session would need to resolve before implementing). Equally legitimate: switch back to
+hardening, since this was only one language-feature session and §5's other subsections have
+several small, well-scoped-looking items (e.g. `Structs`' "Missing-field diagnostics"/"Extra-field
+diagnostics" look like they may already substantially exist under different names — worth checking
+what's actually still missing there before assuming they're unstarted).
+
+---
+
+### Older session
+
+**AI:** Claude
+
 **Task:** Continuing from the previous session (its diff already committed upstream as `dc9dd27`
 by this session's start). Followed `TODO.md` §16's priority order into §5 Types' last open box:
 **"More precise diagnostic messages."** Unlike the last few sessions, this box wasn't a bare
@@ -593,8 +722,9 @@ Added `unknown-state-type.crs` (a `state<BogusType> x = "hello";` fixture) and, 
 *suppression* of the redundant `Type mismatch` diagnostic is the actual point of this fix, and a
 presence-only assertion would pass even if both diagnostics fired.
 
-**Commit:** Not committed — working tree contains this focused diff. Handed over as
-`crescent-precise-diagnostic-messages.patch`.
+**Commit:** Handed over as `crescent-precise-diagnostic-messages.patch`; the maintainer applied and
+committed it upstream as `develop`'s `9b9f18a` ("feat: Add precise diagnostic messages") between
+sessions.
 
 **Tests:** `npx tsc --noEmit` clean. `npm test`: 195 PASS, 0 FAIL, exit 0 (up from 194 before this
 session — exactly the 1 new fixture-driven case, no regressions anywhere, including "all real

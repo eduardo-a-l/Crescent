@@ -626,10 +626,17 @@ touching the parser.
   renders — padding, decimal places, etc.) — there's no concrete need for it yet, and it's a
   materially different, larger feature (a mini format-spec mini-language) than "embed an
   expression," which is why it isn't bundled into this bullet's `[x]`.
-- [ ] **Destructuring** — struct destructuring, array destructuring, in both variable declarations
+- [~] **Destructuring** — struct destructuring, array destructuring, in both variable declarations
   and function parameters. (Supersedes the old flat "Destructuring" bullet from earlier revisions
   of this roadmap — same idea, spelled out.) Worth designing before tuples/enums below, since both
-  of those become much more useful once values can be destructured.
+  of those become much more useful once values can be destructured. **Struct destructuring in local
+  variable declarations is implemented** — `Point { x, y } = current;`, including partial-field
+  selection (`Point { x } = current;`) — see `docs/Crescent_Design.md`'s "Struct Destructuring"
+  subsection and `docs/Crescent_Grammar.md` §2.5/§6/§10 for the language semantics and grammar.
+  Still open, deliberately deferred as separate design work rather than assumed to inherit this
+  feature's answers: destructuring in a function's parameter list, and array destructuring (which
+  needs its own answer for a length mismatch that struct destructuring's field-based shape doesn't
+  have an equivalent question for).
 - [ ] **Tuples** — tuple types, tuple literals, tuple indexing, and tuple destructuring (building
   on the destructuring item above). Consider whether Crescent actually needs tuples as a distinct
   concept or whether structs already cover the same need less anonymously — decide deliberately,

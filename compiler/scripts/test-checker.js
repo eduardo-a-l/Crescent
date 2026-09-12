@@ -259,6 +259,30 @@ const cases = [
     pattern: /Type mismatch: element of argument 'values' of function 'sum' at index 2 expects 'int' but received a 'string' value/,
     label: 'a function call with an inline array-literal argument containing a mismatched element',
   },
+  {
+    file: 'unknown-struct-destructure-type.crs',
+    severity: 'error',
+    pattern: /Unknown struct type 'Ghost'/,
+    label: 'a struct destructure naming an unknown struct type',
+  },
+  {
+    file: 'unknown-struct-destructure-field.crs',
+    severity: 'error',
+    pattern: /Unknown field 'z' on struct 'Point'/,
+    label: 'a struct destructure naming a field that does not exist on the struct',
+  },
+  {
+    file: 'duplicate-struct-destructure-field.crs',
+    severity: 'error',
+    pattern: /Duplicate field 'x' in struct destructure of 'Point'/,
+    label: 'a struct destructure naming the same field twice',
+  },
+  {
+    file: 'component-as-struct-destructure.crs',
+    severity: 'error',
+    pattern: /'Card' is a component, not a struct — it cannot be used in a struct destructure/,
+    label: 'a struct destructure naming a component instead of a struct',
+  },
 ];
 
 for (const c of cases) {
@@ -288,6 +312,12 @@ const unknownStateTypeDiagnostics = diagnosticsFor('unknown-state-type.crs');
 assert(
   unknownStateTypeDiagnostics.length === 1 && unknownStateTypeDiagnostics[0].message === "Unknown type 'BogusType'",
   `unknown-state-type.crs: an unknown declared state type reports exactly one 'Unknown type' diagnostic, not a redundant 'Type mismatch' against the initializer too, got ${JSON.stringify(unknownStateTypeDiagnostics)}`
+);
+
+const correctStructDestructureDiagnostics = diagnosticsFor('correct-struct-destructure-ok.crs');
+assert(
+  correctStructDestructureDiagnostics.length === 0,
+  `correct-struct-destructure-ok.crs: a full-field and a partial-field struct destructure both produce no diagnostics, got ${JSON.stringify(correctStructDestructureDiagnostics)}`
 );
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));

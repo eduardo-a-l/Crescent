@@ -461,6 +461,31 @@ function checkStmts(
         }
         localScope.add(stmt.name);
         break;
+      case 'StructDestructure': {
+        checkExpr(stmt.init, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        const structInfo = globalScope.get(stmt.typeName);
+        if (!structInfo) {
+          diagnostics.push(err(`Unknown struct type '${stmt.typeName}'`, where, stmt.line));
+        } else if (structInfo.kind !== 'struct') {
+          diagnostics.push(err(`'${stmt.typeName}' is a component, not a struct — it cannot be used in a struct destructure`, where, stmt.line));
+        } else {
+          const structDecl = structInfo.decl as AST.StructDecl;
+          const declaredFieldNames = new Set(structDecl.fields.map((f) => f.name));
+          const seen = new Set<string>();
+          for (const f of stmt.fields) {
+            if (seen.has(f)) {
+              diagnostics.push(err(`Duplicate field '${f}' in struct destructure of '${stmt.typeName}'`, where, stmt.line));
+              continue;
+            }
+            seen.add(f);
+            if (!declaredFieldNames.has(f)) {
+              diagnostics.push(err(`Unknown field '${f}' on struct '${stmt.typeName}'`, where, stmt.line));
+            }
+          }
+        }
+        for (const f of stmt.fields) localScope.add(f);
+        break;
+      }
       case 'Assignment':
         checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);

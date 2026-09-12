@@ -368,6 +368,12 @@ export class Parser {
       } catch (e) {
         this.restore(snap);
       }
+      const destructureSnap = this.snapshot();
+      try {
+        return this.parseStructDestructureStatement();
+      } catch (e) {
+        this.restore(destructureSnap);
+      }
       return this.parseAssignmentOrExprStatement();
     }
     if (this.check('IF')) return this.parseIfStatement();
@@ -384,6 +390,21 @@ export class Parser {
     const init = this.parseExpression();
     this.expect('SEMI');
     return { kind: 'VarDecl', type, name, init, line: 0 };
+  }
+
+  private parseStructDestructureStatement(): AST.Stmt {
+    const typeName = this.expect('IDENTIFIER').value;
+    this.expect('LBRACE');
+    const fields: string[] = [this.expect('IDENTIFIER').value];
+    while (this.check('COMMA')) {
+      this.advance();
+      fields.push(this.expect('IDENTIFIER').value);
+    }
+    this.expect('RBRACE');
+    this.expect('ASSIGN');
+    const init = this.parseExpression();
+    this.expect('SEMI');
+    return { kind: 'StructDestructure', typeName, fields, init, line: 0 };
   }
 
   private parseAssignmentOrExprStatement(): AST.Stmt {

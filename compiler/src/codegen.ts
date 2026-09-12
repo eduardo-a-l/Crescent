@@ -260,6 +260,8 @@ function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<str
   switch (stmt.kind) {
     case 'VarDecl':
       return `let ${stmt.name} = ${exprToJs(stmt.init, stateNames)};`;
+    case 'StructDestructure':
+      return `const { ${stmt.fields.join(', ')} } = ${exprToJs(stmt.init, stateNames)};`;
     case 'Assignment':
       return assignmentToJs(stmt, stateNames, derivedNames);
     case 'PostfixStmt':

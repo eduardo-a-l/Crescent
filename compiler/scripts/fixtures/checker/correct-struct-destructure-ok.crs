@@ -1,0 +1,23 @@
+struct Point {
+    int x;
+    int y;
+}
+
+component Fine {
+    state<Point> origin = Point { x: 0, y: 0 };
+    state<string> summary = "";
+
+    void describe() {
+        Point { x, y } = origin;
+        summary = "x is " + x + ", y is " + y;
+    }
+
+    void describe_x_only() {
+        Point { x } = origin;
+        summary = "x is " + x;
+    }
+
+    view {
+        <p>{summary}</p>
+    }
+}

@@ -105,6 +105,51 @@ struct User {
 Once declared, a struct can be used as a type anywhere (`state<User>`, function params, array
 element types, etc.) and constructed with the struct-literal syntax shown in §13.2.
 
+### Struct Destructuring
+
+A local variable declaration can destructure a struct value's fields directly into new local
+variables, instead of naming a single variable and reading `.field` off it repeatedly:
+
+```c
+struct Point {
+    int x;
+    int y;
+}
+
+void log_position(state<Point> current) {
+    Point { x, y } = current;
+    console.log(x);
+    console.log(y);
+}
+```
+
+`Point { x, y } = current;` declares two new local variables, `x` and `y`, whose types are taken
+from the matching fields (`int` and `int`) on `Point`, and whose values come from reading those
+fields off whatever `current` evaluates to. It reads like — and is checked like — the mirror image
+of a struct literal (`Point { x: 1, y: 2 }`): same `TypeName '{' ... '}'` shape, but a list of bare
+field names instead of `name: value` pairs, and appearing on the left of `=` instead of the right.
+
+Destructuring a **subset** of a struct's fields is allowed and is the common case — you name only
+the fields you actually need:
+
+```c
+Point { x } = current;  // only binds x; current's y field is simply not read
+```
+
+The named type must be a real struct (not a component) and every named field must actually exist
+on it — both are checked exactly like the equivalent errors for a struct literal (`Unknown struct
+type`, `Unknown field`), plus one destructuring-specific check: naming the same field twice
+(`Duplicate field`) is an error, since it would otherwise silently redeclare the same local name.
+
+This is scoped deliberately narrowly for now — a **local variable declaration only**. Two related
+extensions are intentionally not part of this: destructuring directly in a function's parameter
+list (`void log_position(Point { x, y })`), and array destructuring (`[first, second] = items;`).
+Both are real, likely-wanted features, but each needs its own design pass — parameter destructuring
+interacts with how a function's declared parameter *names* are used elsewhere (arg-count/type
+checking, codegen's plain positional-parameter assumption), and array destructuring needs its own
+answer for a length mismatch (error? silently bind `null`/leave unbound? a rest pattern?) rather
+than inheriting whatever answer struct destructuring happens to pick. See `TODO.md` §12 for both.
+
 ---
 
 ## 3. Reactive State (`state<T>`)
