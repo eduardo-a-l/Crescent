@@ -14,7 +14,29 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session picked up the specific follow-up the previous session's own `TODO.md` note
+Latest session was a `TODO.md`-only planning session, at the maintainer's request: no code was
+changed. Added a new `Core Language Evolution` item, **"Additional loop forms & loop control"**,
+documenting a real, previously-untracked gap found by inspecting the parser/grammar directly (per
+`AGENTS.md` §3's "inspect the existing implementation" step): Crescent's only loop is the for-each
+`for (Type item in iterable)` form (`ForStatement`/`TemplateFor` in `docs/Crescent_Grammar.md`) —
+there is no traditional C-style counting `for`, no `while`/`do-while`, and confirmed via `grep`
+across `compiler/src/` that there is also no `break`/`continue` statement of any kind. Not designed
+or implemented — the new bullet lays out open questions per `AGENTS.md` §4 ("Do not invent language
+semantics"): whether a counting `for` belongs in `view {}` blocks at all given `TemplateFor`'s
+reactive identity comes from its `key` clause (a counting loop has no natural per-iteration
+identity to key on); per-iteration vs. shared loop-variable binding once closures exist; how
+`while`'s condition should interact with the already-tracked null-narrowing-through-`if` gap; and
+what `break`/`continue` mean for the existing for-each loop plus whether labeled variants are in
+scope for v0.x. Also reviewed the `Ecosystem, Runtime & Peripheral Ideas` list (the previous
+session's `num`/`float`/`double`/`decimal` additions) and the `Types` section's existing
+"Complete assignment compatibility" `[ ]` item to confirm neither already covered this — they
+don't; loops are an independent, previously-blank spot in the roadmap. `npm test` re-run to confirm
+the doc-only change didn't regress anything: 211 PASS, 0 FAIL, unchanged. Not committed — see
+`crescent-todo-loop-forms.patch` for a transferable copy (a single-file `TODO.md` diff; no source
+changed this session, so there is nothing to test beyond the "did the suite still pass" check
+above).
+
+Before that: Latest session picked up the specific follow-up the previous session's own `TODO.md` note
 prescribed: narrowing through `&&`/`||`-joined conditions. By this session's start, the
 else-branch narrowing fix (previous session) was already committed upstream (`acb11e0`). Renamed
 `narrowingTarget` (single `string | null` result) to `narrowingTargets` (returns `string[]`) and
