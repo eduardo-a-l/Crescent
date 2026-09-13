@@ -14,7 +14,38 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session audited `Null Safety`'s five open items — per its own previous session's "Next
+Latest session picked up the specific follow-up the previous session's own `TODO.md` note
+prescribed: narrowing through `&&`/`||`-joined conditions. By this session's start, the
+else-branch narrowing fix (previous session) was already committed upstream (`acb11e0`). Renamed
+`narrowingTarget` (single `string | null` result) to `narrowingTargets` (returns `string[]`) and
+added a case that recurses into `Binary` nodes whose operator matches the branch's own combinator —
+`&&` for the `then` branch, `||` for the `else` branch, symmetric to the existing `!=`/`==`
+single-condition case — so `if (x != null && y != null) { ... }` narrows both `x` and `y` in the
+`then` branch, `if (x == null || y == null) { ... } else { ... }` narrows both in the `else` branch,
+and either recurses to any depth (`a != null && b != null && c != null` narrows all three). Both
+call sites (`checkStmts`'s `If` case and `checkTemplateNode`'s `TemplateIf` case) were updated
+identically — same shared-logic situation as the previous session's else-branch fix. A sibling
+condition that isn't itself a recognizable null-check (e.g. `second.length > 0` inside `first !=
+null && second.length > 0`) is deliberately left un-narrowed, matching the existing single-condition
+behavior of only narrowing operands that are themselves `!=`/`==` `null` comparisons (or bare
+identifiers, for `then`). 3 new fixtures: `guarded-nullable-and-then-branch-ok.crs` (positive, `&&`
+in both a function body and a view block), `guarded-nullable-or-else-branch-ok.crs` (positive, `||`
++ `else`, same two contexts), `guarded-nullable-and-partial-warns.crs` (negative, confirms the
+unguarded sibling of an `&&` still warns). `TODO.md`'s `Null Safety` section updated: the previously
+separate "Correct narrowing through logical conditions" `[ ]` item is now folded into "Flow-sensitive
+null narrowing" and "Correct narrowing through `if`" as done, with ternary narrowing and
+post-guard-clause reachability narrowing left as the explicitly open remaining items (unchanged from
+before — neither was touched this session). Also added two new, deliberately unstarted `TODO.md`
+items under `Core Language Evolution` at the maintainer's request: a Dart-style `num` numeric type
+(a common supertype of `int`/`float` for contexts that accept either), and a three-way
+`float`/`double`/`decimal` distinction (today Crescent only has a single `float` numeric type — see
+`docs/Crescent_Design.md` §2 "Primitives"). Neither was designed or implemented this session; both
+are flagged as open design questions per `AGENTS.md` §4's "Do not invent language semantics" rule —
+see `TODO.md` for the specific open questions each raises. Full suite: 211 PASS, 0 FAIL, up from
+208, no regressions. Not committed — see `crescent-null-safety-logical-narrowing.patch` for a
+transferable copy.
+
+Before that: Latest session audited `Null Safety`'s five open items — per its own previous session's "Next
 step" suggestion — the same way `Structs` was audited two sessions ago. By this session's start,
 the const-reassignment fix had already been committed upstream (`8625e74`). Found a real, genuine
 bug (not just a stale checkbox this time): `narrowingTarget` only ever narrowed the **consequent**

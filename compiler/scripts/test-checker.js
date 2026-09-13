@@ -329,6 +329,24 @@ assert(
   `guarded-nullable-else-branch-ok.crs: an if (x == null) {...} else {...} correctly narrows x as non-null in the else branch, in both a function body and a view block, got ${JSON.stringify(guardedElseDiagnostics)}`
 );
 
+const guardedAndThenDiagnostics = diagnosticsFor('guarded-nullable-and-then-branch-ok.crs');
+assert(
+  guardedAndThenDiagnostics.length === 0,
+  `guarded-nullable-and-then-branch-ok.crs: an if (x != null && y != null) guard narrows both x and y in the then branch, in both a function body and a view block, got ${JSON.stringify(guardedAndThenDiagnostics)}`
+);
+
+const guardedOrElseDiagnostics = diagnosticsFor('guarded-nullable-or-else-branch-ok.crs');
+assert(
+  guardedOrElseDiagnostics.length === 0,
+  `guarded-nullable-or-else-branch-ok.crs: an if (x == null || y == null) {...} else {...} narrows both x and y in the else branch, in both a function body and a view block, got ${JSON.stringify(guardedOrElseDiagnostics)}`
+);
+
+const guardedAndPartialDiagnostics = diagnosticsFor('guarded-nullable-and-partial-warns.crs');
+assert(
+  hasDiagnostic(guardedAndPartialDiagnostics, 'warning', /'second' is nullable \(string\?\) and is accessed here without a null check/),
+  `guarded-nullable-and-partial-warns.crs: an if (x != null && ...) guard only narrows x, not an unguarded sibling accessed on the right side of &&, got ${JSON.stringify(guardedAndPartialDiagnostics)}`
+);
+
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
 assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);
 

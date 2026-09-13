@@ -1,0 +1,18 @@
+component Pair {
+    state<string?> first = null;
+    state<string?> second = null;
+
+    void greet() {
+        if (first != null && second != null) {
+            console.log(first);
+            console.log(second);
+        }
+    }
+
+    view {
+        if (first != null && second != null) {
+            <p>{first}</p>
+            <p>{second}</p>
+        }
+    }
+}

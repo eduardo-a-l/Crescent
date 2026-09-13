@@ -267,14 +267,21 @@ interface NarrowState {
   narrowed: Set<string>;
 }
 
-function narrowingTarget(test: AST.Expr, nullable: Map<string, AST.CrescentType>, branch: 'then' | 'else' = 'then'): string | null {
+function narrowingTargets(test: AST.Expr, nullable: Map<string, AST.CrescentType>, branch: 'then' | 'else' = 'then'): string[] {
   const op = branch === 'then' ? '!=' : '==';
-  if (branch === 'then' && test.kind === 'Identifier' && nullable.has(test.name)) return test.name;
+  if (branch === 'then' && test.kind === 'Identifier' && nullable.has(test.name)) return [test.name];
   if (test.kind === 'Binary' && test.op === op) {
-    if (test.left.kind === 'Identifier' && nullable.has(test.left.name) && test.right.kind === 'NullLiteral') return test.left.name;
-    if (test.right.kind === 'Identifier' && nullable.has(test.right.name) && test.left.kind === 'NullLiteral') return test.right.name;
+    if (test.left.kind === 'Identifier' && nullable.has(test.left.name) && test.right.kind === 'NullLiteral') return [test.left.name];
+    if (test.right.kind === 'Identifier' && nullable.has(test.right.name) && test.left.kind === 'NullLiteral') return [test.right.name];
   }
-  return null;
+  const combinator = branch === 'then' ? '&&' : '||';
+  if (test.kind === 'Binary' && test.op === combinator) {
+    return [
+      ...narrowingTargets(test.left, nullable, branch),
+      ...narrowingTargets(test.right, nullable, branch),
+    ];
+  }
+  return [];
 }
 
 function checkExpr(
@@ -521,17 +528,17 @@ function checkStmts(
         break;
       case 'If': {
         checkExpr(stmt.test, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
-        const thenTarget = narrowingTarget(stmt.test, narrow.nullable, 'then');
+        const thenTargets = narrowingTargets(stmt.test, narrow.nullable, 'then');
         const consequentNarrow: NarrowState = {
           nullable: narrow.nullable,
-          narrowed: thenTarget ? new Set(narrow.narrowed).add(thenTarget) : narrow.narrowed,
+          narrowed: thenTargets.length ? new Set([...narrow.narrowed, ...thenTargets]) : narrow.narrowed,
         };
         checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
         if (stmt.alternate) {
-          const elseTarget = narrowingTarget(stmt.test, narrow.nullable, 'else');
+          const elseTargets = narrowingTargets(stmt.test, narrow.nullable, 'else');
           const alternateNarrow: NarrowState = {
             nullable: narrow.nullable,
-            narrowed: elseTarget ? new Set(narrow.narrowed).add(elseTarget) : narrow.narrowed,
+            narrowed: elseTargets.length ? new Set([...narrow.narrowed, ...elseTargets]) : narrow.narrowed,
           };
           checkStmts(stmt.alternate, localScope, globalScope, functions, alternateNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
         }
@@ -601,17 +608,17 @@ function checkTemplateNode(
     }
     case 'TemplateIf': {
       checkExpr(node.test, scope, globalScope, functions, narrow, where, line, diagnostics);
-      const thenTarget = narrowingTarget(node.test, narrow.nullable, 'then');
+      const thenTargets = narrowingTargets(node.test, narrow.nullable, 'then');
       const consequentNarrow: NarrowState = {
         nullable: narrow.nullable,
-        narrowed: thenTarget ? new Set(narrow.narrowed).add(thenTarget) : narrow.narrowed,
+        narrowed: thenTargets.length ? new Set([...narrow.narrowed, ...thenTargets]) : narrow.narrowed,
       };
       for (const c of node.consequent) checkTemplateNode(c, scope, globalScope, functions, consequentNarrow, where, diagnostics);
       if (node.alternate) {
-        const elseTarget = narrowingTarget(node.test, narrow.nullable, 'else');
+        const elseTargets = narrowingTargets(node.test, narrow.nullable, 'else');
         const alternateNarrow: NarrowState = {
           nullable: narrow.nullable,
-          narrowed: elseTarget ? new Set(narrow.narrowed).add(elseTarget) : narrow.narrowed,
+          narrowed: elseTargets.length ? new Set([...narrow.narrowed, ...elseTargets]) : narrow.narrowed,
         };
         for (const c of node.alternate) checkTemplateNode(c, scope, globalScope, functions, alternateNarrow, where, diagnostics);
       }

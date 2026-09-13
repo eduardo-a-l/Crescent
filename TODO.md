@@ -212,25 +212,25 @@
   `x` inside the `else` branch too (previously always used the un-narrowed outer state, producing a
   false-positive "accessed without a null check" warning on exactly the pattern
   `docs/Crescent_Design.md` §11's own example shows as the intended, safe usage — see
-  `guarded-nullable-else-branch-ok.crs`). Still `[~]` rather than `[x]`: logical conditions
-  (`&&`/`||`) and ternary expressions (`x != null ? x.foo : default`) are not narrowed at all yet —
-  see the next two items.
-- [~] Correct narrowing through `if` — see the note above; the plain single-condition case (both
-  branches, both directions: bare identifier/`!=`/`==` against `null`) is now correct in both
-  statement-level `if` (`checkStmts`'s `If` case) and view-block `if` (`checkTemplateNode`'s
-  `TemplateIf` case) — both were fixed identically, since they shared the exact same
-  consequent-only narrowing bug. What's still missing: narrowing that should persist *after* an
-  `if` with no `else` and an early `return`/exit in the un-narrowed branch (e.g. `if (x == null) {
-  return; } console.log(x.foo);` — `x` should be narrowed for the rest of the function after that
-  point, which requires tracking reachability, not just per-branch scoping — genuinely a separate,
-  larger piece of work).
-- [ ] Correct narrowing through logical conditions — `if (x != null && x.foo)` and
-  `if (x == null || x.foo)` are not narrowed: `narrowingTarget` only inspects a single `Binary`
-  comparison against `NullLiteral`, not a `&&`/`||`-joined pair of conditions. Worth doing as its
-  own follow-up now that the single-condition, both-branches case above is fixed — the pattern-
-  matching in `narrowingTarget` would need to recurse into `Binary` nodes with `op === '&&'` (for
-  `if`) / `op === '||'` (for the equivalent negated form), each side individually checked for a
-  narrowable sub-condition.
+  `guarded-nullable-else-branch-ok.crs`). This session added narrowing through `&&`/`||`-joined
+  conditions on top of that: `if (x != null && y != null) { ... }` now narrows both `x` and `y` in
+  the `then` branch, and `if (x == null || y == null) { ... } else { ... }` now narrows both in the
+  `else` branch (De Morgan's-symmetric to the `&&`/`then` case), each combinator recursing to any
+  depth (`a != null && b != null && c != null` narrows all three). A sibling condition that isn't
+  itself a narrowable null-check (e.g. `second.length > 0` inside `first != null && second.length >
+  0`) is left alone, as before — only the operands that are themselves recognizable null-checks are
+  narrowed (`guarded-nullable-and-partial-warns.crs`). Still `[~]` rather than `[x]`: ternary
+  expressions (`x != null ? x.foo : default`) are not narrowed at all yet — see the next item.
+- [~] Correct narrowing through `if` — see the note above; the single-condition case (both
+  branches, both directions: bare identifier/`!=`/`==` against `null`) and the `&&`/`||`-joined
+  multi-condition case are now both correct in statement-level `if` (`checkStmts`'s `If` case) and
+  view-block `if` (`checkTemplateNode`'s `TemplateIf` case) — both were fixed identically each time,
+  since they share the same narrowing logic (`narrowingTargets()`). What's still missing: narrowing
+  through ternary expressions (`x != null ? x.foo : default`), and narrowing that should persist
+  *after* an `if` with no `else` and an early `return`/exit in the un-narrowed branch (e.g. `if (x
+  == null) { return; } console.log(x.foo);` — `x` should be narrowed for the rest of the function
+  after that point, which requires tracking reachability, not just per-branch scoping — genuinely a
+  separate, larger piece of work).
 - [x] Prevent invalid nullable access — already implemented: `checkExpr`'s `Member`/`Index` cases
   both check `narrow.nullable`/`narrow.narrowed` and emit the "is nullable (...) and is accessed
   here without a null check" warning (`unguarded-nullable.crs`). Corrected the checkbox this
@@ -766,6 +766,29 @@ touching the parser.
 - [ ] More expressive collection operations
 - [ ] Spread syntax
 - [ ] Additional primitive types if justified
+- [ ] A Dart-style `num` numeric type — a common supertype of `int` and `float` for contexts that
+  should accept either without the caller picking one (e.g. a function parameter that just adds two
+  numeric values). Not designed yet; open questions before this should be implemented: does `num`
+  participate in the existing literal-shaped type-matching checks (`checkValueTypeMatch` and
+  friends) as its own type, or purely as an assignability rule ("an `int` or `float` value is
+  assignable to a `num`-typed target")? What does codegen emit for arithmetic on a `num`-typed
+  value — does JS's single `number` type make this a no-op at runtime, with all the work living in
+  the checker? Does an `int` narrow back out of a `num` automatically, or does that need an explicit
+  cast? Resolve these against `docs/Crescent_Design.md` §2 "Primitives" before touching the
+  lexer/parser/checker — see `AGENTS.md` §4's "Do not invent language semantics" rule.
+- [ ] A `float` / `double` / `decimal` distinction — today Crescent has a single `float` primitive
+  (see `docs/Crescent_Design.md` §2 "Primitives"); it does not distinguish single- vs
+  double-precision floating point, nor offer an exact/decimal type for money-like values that
+  shouldn't be subject to binary floating-point rounding. Not designed yet; open questions: is
+  `float` kept as an alias for one of the new, more precise names (and if so, which — `double`
+  seems the more common everyday default in other C-style languages) or deprecated in favor of
+  explicit `double`/`decimal`? What does `decimal` compile to in JS codegen, given JS has no native
+  arbitrary-precision decimal type — a library dependency (e.g. `decimal.js`) in the generated
+  runtime, or is `decimal` deferred until arithmetic on it can be implemented correctly rather than
+  silently lowered to a plain `number` and losing the exactness that was the point of adding it?
+  Resolve deliberately — see `AGENTS.md` §4 and §6 (this is exactly the kind of change that needs a
+  design-document decision before implementation, not an implementation that quietly redefines what
+  `float` means).
 - [ ] A standard router (`route "/users/:id" { <User/> }`-style) once module
   semantics are stable — this is closer to "does Crescent feel like a complete
   frontend platform" than a core language feature, so treat it as ecosystem
