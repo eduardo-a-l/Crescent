@@ -1,0 +1,17 @@
+struct User {
+    string name;
+}
+
+component Broken {
+    state<User?> user = null;
+
+    void greet() {
+        if (user == null) {
+            console.log(user.name);
+        }
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

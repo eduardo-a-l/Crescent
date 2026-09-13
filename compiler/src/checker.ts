@@ -267,9 +267,10 @@ interface NarrowState {
   narrowed: Set<string>;
 }
 
-function narrowingTarget(test: AST.Expr, nullable: Map<string, AST.CrescentType>): string | null {
-  if (test.kind === 'Identifier' && nullable.has(test.name)) return test.name;
-  if (test.kind === 'Binary' && test.op === '!=') {
+function narrowingTarget(test: AST.Expr, nullable: Map<string, AST.CrescentType>, branch: 'then' | 'else' = 'then'): string | null {
+  const op = branch === 'then' ? '!=' : '==';
+  if (branch === 'then' && test.kind === 'Identifier' && nullable.has(test.name)) return test.name;
+  if (test.kind === 'Binary' && test.op === op) {
     if (test.left.kind === 'Identifier' && nullable.has(test.left.name) && test.right.kind === 'NullLiteral') return test.left.name;
     if (test.right.kind === 'Identifier' && nullable.has(test.right.name) && test.left.kind === 'NullLiteral') return test.right.name;
   }
@@ -520,13 +521,20 @@ function checkStmts(
         break;
       case 'If': {
         checkExpr(stmt.test, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
-        const target = narrowingTarget(stmt.test, narrow.nullable);
+        const thenTarget = narrowingTarget(stmt.test, narrow.nullable, 'then');
         const consequentNarrow: NarrowState = {
           nullable: narrow.nullable,
-          narrowed: target ? new Set(narrow.narrowed).add(target) : narrow.narrowed,
+          narrowed: thenTarget ? new Set(narrow.narrowed).add(thenTarget) : narrow.narrowed,
         };
         checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
-        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
+        if (stmt.alternate) {
+          const elseTarget = narrowingTarget(stmt.test, narrow.nullable, 'else');
+          const alternateNarrow: NarrowState = {
+            nullable: narrow.nullable,
+            narrowed: elseTarget ? new Set(narrow.narrowed).add(elseTarget) : narrow.narrowed,
+          };
+          checkStmts(stmt.alternate, localScope, globalScope, functions, alternateNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
+        }
         break;
       }
       case 'For': {
@@ -593,13 +601,20 @@ function checkTemplateNode(
     }
     case 'TemplateIf': {
       checkExpr(node.test, scope, globalScope, functions, narrow, where, line, diagnostics);
-      const target = narrowingTarget(node.test, narrow.nullable);
+      const thenTarget = narrowingTarget(node.test, narrow.nullable, 'then');
       const consequentNarrow: NarrowState = {
         nullable: narrow.nullable,
-        narrowed: target ? new Set(narrow.narrowed).add(target) : narrow.narrowed,
+        narrowed: thenTarget ? new Set(narrow.narrowed).add(thenTarget) : narrow.narrowed,
       };
       for (const c of node.consequent) checkTemplateNode(c, scope, globalScope, functions, consequentNarrow, where, diagnostics);
-      if (node.alternate) for (const c of node.alternate) checkTemplateNode(c, scope, globalScope, functions, narrow, where, diagnostics);
+      if (node.alternate) {
+        const elseTarget = narrowingTarget(node.test, narrow.nullable, 'else');
+        const alternateNarrow: NarrowState = {
+          nullable: narrow.nullable,
+          narrowed: elseTarget ? new Set(narrow.narrowed).add(elseTarget) : narrow.narrowed,
+        };
+        for (const c of node.alternate) checkTemplateNode(c, scope, globalScope, functions, alternateNarrow, where, diagnostics);
+      }
       return;
     }
     case 'TemplateFor': {

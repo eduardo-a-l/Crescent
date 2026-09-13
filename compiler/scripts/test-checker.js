@@ -122,6 +122,12 @@ const cases = [
     label: 'a nullable value accessed without a narrowing guard',
   },
   {
+    file: 'unguarded-nullable-in-null-branch.crs',
+    severity: 'warning',
+    pattern: /'user' is nullable \(User\?\) and is accessed here without a null check/,
+    label: "a nullable value accessed inside the then-branch of 'if (x == null)', where it is known to be null",
+  },
+  {
     file: 'unknown-generic-type.crs',
     severity: 'error',
     pattern: /Unknown type 'Response<int>' referenced by variable 'pending'/,
@@ -316,6 +322,12 @@ for (const c of cases) {
 
 const guardedDiagnostics = diagnosticsFor('guarded-nullable-ok.crs');
 assert(guardedDiagnostics.length === 0, `guarded-nullable-ok.crs: an if (x != null) guard suppresses the nullable-access warning, got ${JSON.stringify(guardedDiagnostics)}`);
+
+const guardedElseDiagnostics = diagnosticsFor('guarded-nullable-else-branch-ok.crs');
+assert(
+  guardedElseDiagnostics.length === 0,
+  `guarded-nullable-else-branch-ok.crs: an if (x == null) {...} else {...} correctly narrows x as non-null in the else branch, in both a function body and a view block, got ${JSON.stringify(guardedElseDiagnostics)}`
+);
 
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
 assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);

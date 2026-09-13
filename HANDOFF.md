@@ -14,8 +14,29 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session picked up the small, well-scoped item the previous session had specifically flagged
-and spec'd out: **forbidding `const` reassignment**. By this session's start, "Assignment
+Latest session audited `Null Safety`'s five open items — per its own previous session's "Next
+step" suggestion — the same way `Structs` was audited two sessions ago. By this session's start,
+the const-reassignment fix had already been committed upstream (`8625e74`). Found a real, genuine
+bug (not just a stale checkbox this time): `narrowingTarget` only ever narrowed the **consequent**
+branch of an `if`, for both statement-level `if` (`checkStmts`) and view-block `if`
+(`checkTemplateNode`'s `TemplateIf`) — so `if (x == null) { ... } else { <use x here> }`, exactly
+the pattern `docs/Crescent_Design.md` §11's own example shows as the intended safe usage (with `!=`
+instead of `==`, but symmetric), produced a false-positive "accessed without a null check" warning
+in the `else` branch. Fixed: `narrowingTarget` now takes a `branch: 'then' | 'else'` parameter and
+recognizes `==` for the `else` direction (symmetric to the existing `!=` for `then`); both `If` and
+`TemplateIf` now build a separate `alternateNarrow`/pass it to the `else` branch instead of reusing
+the un-narrowed outer `narrow`. Also discovered "Prevent invalid nullable access" was already fully
+implemented and unchecked (like three `Structs` boxes before it) — corrected that too. 2 new
+fixtures (one negative confirming the *then*-branch of `== null` still correctly warns, one positive
+covering the *else*-branch fix in both a function body and a view block). Full suite: 208 PASS, 0
+FAIL, up from 206, no regressions. Explicitly left open and documented in `TODO.md`: narrowing
+through logical `&&`/`||` conditions, narrowing through ternary expressions, and narrowing that
+should persist past an early-return guard clause — none of these were touched, each is its own
+separate piece of work. **Not committed** — see `crescent-null-safety-else-branch-narrowing.patch`
+for a transferable copy.
+
+Before that: picked up the small, well-scoped item the previous session had specifically flagged
+and spec'd out: **forbidding `const` reassignment**. By that session's start, "Assignment
 compatibility" (previous session) had already been committed upstream as `8c844f5`. Implemented
 exactly per the TODO note's own prescription: a `constNames: Set<string>` built alongside the
 existing `derivedNames` in `checkComponentDecl`, threaded through `checkStmts` the same way, and
@@ -27,8 +48,8 @@ testing the old (buggy) permissive behavior, which is no longer true — replace
 *read* instead, and added a new `const-reassignment-forbidden.crs` fixture covering both the
 `Assignment` and `PostfixStmt` paths. `TODO.md`'s note checked off with a short "fixed as spec'd"
 update. Full suite: 206 PASS, 0 FAIL, up from 205, no regressions (confirmed no real example
-anywhere reassigns a `const`). **Not committed** — see `crescent-forbid-const-reassignment.patch`
-for a transferable copy.
+anywhere reassigns a `const`). Committed upstream as `8625e74` ("feat: Add forbid const
+reassignment") between sessions.
 
 Before that: went back to hardening the checker after one language-feature session (struct
 destructuring, previous session — already committed upstream as `03158e7` by this session's
@@ -628,6 +649,102 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 **AI:** Claude
 
+**Task:** Continuing from the previous session (its diff already committed upstream as `8625e74`
+by this session's start). That session's own "Next step" note listed auditing `Null Safety` first,
+since the same "maybe already done, just unchecked" possibility found in `Structs` (two sessions
+ago) hadn't been ruled out there. Did exactly that: read every line of `narrowingTarget` and its
+call sites in `checkStmts`'s `If` case and `checkTemplateNode`'s `TemplateIf` case before assuming
+anything about what the five `Null Safety` boxes did or didn't cover.
+
+**Result:** One box was indeed already fully done and just unchecked — "Prevent invalid nullable
+access" (`checkExpr`'s `Member`/`Index` cases already warn on an unguarded nullable access,
+exercised by `unguarded-nullable.crs`) — corrected that checkbox the same way three `Structs` boxes
+were corrected earlier. But this audit also turned up something the `Structs` audit didn't: an
+actual, live bug, not just bookkeeping. `narrowingTarget` was only ever called to narrow the
+**consequent** (`then`) branch of an `if`; the `alternate` (`else`) branch, in both the
+statement-level `If` case and the view-block `TemplateIf` case, always passed the original,
+un-narrowed `narrow` straight through. That means `if (x == null) { ... } else { <use x here> }` —
+exactly the pattern `docs/Crescent_Design.md` §11's own worked example shows as the intended,
+compiler-verified-safe usage, just with `!=` instead of `==` — produced a false-positive "accessed
+without a null check" warning on every use of `x` inside that `else` branch. The bug was invisible
+in the test suite until now because no existing fixture or example happened to combine `== null`
+(rather than `!= null`) with an `else` branch that reads the narrowed variable.
+
+Fixed by making `narrowingTarget` branch-aware: it now takes a `branch: 'then' | 'else'` parameter
+(defaulting to `'then'` so any caller not yet updated keeps its old behavior — though in practice
+every caller was updated). For `'then'`, the recognized patterns are unchanged (bare nullable
+identifier, `x != null`, `null != x`). For `'else'`, the single new pattern is `x == null` / `null
+== x` — the direct negation, and the natural symmetric counterpart to what already existed. Both
+`checkStmts`'s `If` case and `checkTemplateNode`'s `TemplateIf` case were updated identically (they
+had the exact same bug, since both were built from the same original single-target,
+consequent-only design): each now computes a `thenTarget` for the consequent narrow scope (as
+before) and, when there's an `alternate`/`node.alternate`, a separate `elseTarget` for a distinct
+`alternateNarrow`/narrow scope passed only to that branch.
+
+Manually verified before writing any fixture, same discipline as every prior session: built a
+scratch component with `state<User?> user`, both a function-body `if (user == null) {...} else
+{console.log(user.name);}` and the equivalent view-block `if`, plus a second function using
+`user.name` inside the *then* branch of `if (user == null)` (where `user` is still genuinely
+possibly-null and the warning should still fire) — ran it through `checkFile` directly and
+confirmed exactly one warning, on exactly the right line, in exactly the right function. Added
+`guarded-nullable-else-branch-ok.crs` (positive — the else-branch fix, in both a function body and
+a view block) and `unguarded-nullable-in-null-branch.crs` (negative — confirms the then-branch of
+`== null` still correctly warns, so the fix didn't accidentally suppress the case it's supposed to
+still catch). Matching `test-checker.js` cases added.
+
+`TODO.md`'s `Null Safety` section rewritten with per-item notes: `Flow-sensitive null narrowing` and
+`Correct narrowing through if` both moved to `[~]` (this specific gap fixed, but logical
+`&&`/`||` conditions and ternary expressions still entirely unnarrowed, and narrowing doesn't yet
+persist past an early-return guard clause — each flagged as its own separate follow-up rather than
+attempted here); `Correct narrowing through logical conditions` stays `[ ]` with a sketch of what
+it would need (`narrowingTarget` recursing into `&&`/`||`-joined `Binary` nodes); `Prevent invalid
+nullable access` moved to `[x]`; `Test nested/control-flow cases` stays `[ ]` (for loops, nested
+`if`s, and interprocedural narrowing are all still untested, distinct from the single-level cases
+now covered).
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-null-safety-else-branch-narrowing.patch`.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 208 PASS, 0 FAIL, exit 0 (up from 206 before this
+session — exactly the 2 new fixture-driven cases, no regressions anywhere, including "all real
+examples pass the semantic checker cleanly" — meaning no existing example's `if`/`else` combined
+with a nullable variable in a way that newly trips or newly passes the check; the bug this session
+fixed simply hadn't been exercised by any of them).
+
+**Decisions:** Kept the fix to the single, symmetric missing pattern (`==` mirroring the existing
+`!=`) rather than trying to also add logical-condition or ternary narrowing in the same pass — each
+of those is a materially different piece of pattern-matching work (recursing into `&&`/`||`, or
+restructuring `checkExpr`'s `Ternary` case to thread per-branch narrow states through an
+expression rather than a statement list), and bundling them together risked turning one clean,
+verifiable fix into a larger, harder-to-review change. Used a `branch` parameter on the existing
+`narrowingTarget` function rather than writing a separate `elseNarrowingTarget` function, since the
+two share almost all their logic (only the comparison operator and the bare-identifier special case
+differ) and parameterizing kept the "single source of truth for how narrowing patterns are
+recognized" property the rest of the checker's type-matching functions already follow (e.g.
+`checkValueTypeMatch`'s `verb` parameter, from an earlier session).
+
+**Problems:** None. The fix was small and precisely targeted once the bug was actually found;
+finding it required reading the narrowing code carefully rather than just checking off boxes.
+
+**Remaining:** `Null Safety` now has one `[x]`, two `[~]`, and two `[ ]` items — see `TODO.md` for
+the specifics of what's left in each partial item. `TODO.md` §12's "Destructuring" (array/parameter
+destructuring), and `Reactivity`'s five untouched `[ ]` items, are all still open from before.
+
+**Next step:** The natural, smallest continuation of this exact session would be "Correct narrowing
+through logical conditions" — the TODO note already sketches the approach (`narrowingTarget`
+recursing into `&&`/`||`). Ternary narrowing is a reasonable alternative next hardening step, though
+it touches `checkExpr` rather than `checkStmts`/`checkTemplateNode` and would need its own
+"is this actually worth the complexity" judgment call, since ternaries are less central to the
+if/else-guard idiom `docs/Crescent_Design.md` §11 actually demonstrates. On the language-feature
+side, array destructuring remains the standing `TODO.md` §12 candidate if this session's own
+"alternate with feature work" instinct applies again.
+
+---
+
+### Older session
+
+**AI:** Claude
+
 **Task:** Continuing from the previous session (its diff already committed upstream as `8c844f5`
 by this session's start). That session's own "Next step" note offered two hardening candidates
 specifically: auditing `Null Safety`'s open items, or fixing the `const`-reassignment gap it had
@@ -671,8 +788,9 @@ instead, which is the actually-valid thing to do with a `const`. Added
 `const` members) as the new negative fixture, plus matching `test-checker.js` cases and an updated
 assertion message on the positive fixture.
 
-**Commit:** Not committed — working tree contains this focused diff. Handed over as
-`crescent-forbid-const-reassignment.patch`.
+**Commit:** Handed over as `crescent-forbid-const-reassignment.patch`; the maintainer applied and
+committed it upstream as `develop`'s `8625e74` ("feat: Add forbid const reassignment") between
+sessions.
 
 **Tests:** `npx tsc --noEmit` clean. `npm test`: 206 PASS, 0 FAIL, exit 0 (up from 205 before this
 session — exactly the 1 new fixture-driven case; `correct-assignment-ok.crs` still counts as one

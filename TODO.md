@@ -206,11 +206,41 @@
 ## Null Safety
 
 - [~] Basic nullable checks
-- [ ] Flow-sensitive null narrowing
-- [ ] Correct narrowing through `if`
-- [ ] Correct narrowing through logical conditions
-- [ ] Prevent invalid nullable access
-- [ ] Test nested/control-flow cases
+- [~] Flow-sensitive null narrowing — was only implemented for the "truthy" direction (bare `if
+  (x)`, `if (x != null)`/`if (null != x)` narrow `x` inside the `if` branch). This session added
+  the symmetric "falsy" direction: `if (x == null) { ... } else { <x narrowed here> }` now narrows
+  `x` inside the `else` branch too (previously always used the un-narrowed outer state, producing a
+  false-positive "accessed without a null check" warning on exactly the pattern
+  `docs/Crescent_Design.md` §11's own example shows as the intended, safe usage — see
+  `guarded-nullable-else-branch-ok.crs`). Still `[~]` rather than `[x]`: logical conditions
+  (`&&`/`||`) and ternary expressions (`x != null ? x.foo : default`) are not narrowed at all yet —
+  see the next two items.
+- [~] Correct narrowing through `if` — see the note above; the plain single-condition case (both
+  branches, both directions: bare identifier/`!=`/`==` against `null`) is now correct in both
+  statement-level `if` (`checkStmts`'s `If` case) and view-block `if` (`checkTemplateNode`'s
+  `TemplateIf` case) — both were fixed identically, since they shared the exact same
+  consequent-only narrowing bug. What's still missing: narrowing that should persist *after* an
+  `if` with no `else` and an early `return`/exit in the un-narrowed branch (e.g. `if (x == null) {
+  return; } console.log(x.foo);` — `x` should be narrowed for the rest of the function after that
+  point, which requires tracking reachability, not just per-branch scoping — genuinely a separate,
+  larger piece of work).
+- [ ] Correct narrowing through logical conditions — `if (x != null && x.foo)` and
+  `if (x == null || x.foo)` are not narrowed: `narrowingTarget` only inspects a single `Binary`
+  comparison against `NullLiteral`, not a `&&`/`||`-joined pair of conditions. Worth doing as its
+  own follow-up now that the single-condition, both-branches case above is fixed — the pattern-
+  matching in `narrowingTarget` would need to recurse into `Binary` nodes with `op === '&&'` (for
+  `if`) / `op === '||'` (for the equivalent negated form), each side individually checked for a
+  narrowable sub-condition.
+- [x] Prevent invalid nullable access — already implemented: `checkExpr`'s `Member`/`Index` cases
+  both check `narrow.nullable`/`narrow.narrowed` and emit the "is nullable (...) and is accessed
+  here without a null check" warning (`unguarded-nullable.crs`). Corrected the checkbox this
+  session — same "already done, never marked off" situation found in `Structs` two sessions ago.
+- [ ] Test nested/control-flow cases — `for` loop bodies, nested `if`s, and narrowing across a
+  function-call boundary (does calling a function reset/preserve narrowing of a variable it reads?
+  it should reset, since the checker has no interprocedural analysis, but this isn't explicitly
+  tested) are all still untested territory. The two straightforward single-level cases (this
+  session's `if (x == null) {...} else {...}`, and the pre-existing `if (x != null) {...}`) are now
+  both covered by fixtures, but genuinely nested/multi-statement narrowing isn't.
 
 ## Structs
 
