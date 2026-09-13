@@ -263,17 +263,16 @@
 - [ ] Lifecycle/reactivity validation
 - [ ] Reactive CSS expression validation
 - [ ] Component context validation for `provide` / `inject`
-- [ ] `const` reassignment is not forbidden — noticed while implementing "Assignment compatibility"
-  under `Structs` above (`correct-assignment-ok.crs` has to include a `const` reassignment as a
-  *passing* case, since nothing currently rejects it). A `ConstDecl` member is only ever
-  distinguished from `StateDecl`/`ProvideDecl` by which keyword declared it; `checkAssignmentTarget`
-  doesn't currently look at `m.kind` at all, so `const string title = "X"; ... title = "Y";` passes
-  the checker with no diagnostic even though the whole point of `const` (as opposed to `state`) is
-  presumably that it shouldn't be reassignable after initialization. Small, well-scoped fix once
-  picked up: `checkAssignmentTarget` (or `checkComponentDecl`, wherever `const` names get tracked)
-  needs a `constNames: Set<string>` alongside the existing `derivedNames`, and an
-  `Assignment`/`PostfixStmt` target matching a name in it should report something like `Cannot
-  assign to const '<name>'; it can only be set at declaration`.
+- [x] `const` reassignment is now forbidden — fixed exactly as spec'd in this note (which a previous
+  session left after noticing the gap while implementing "Assignment compatibility" under
+  `Structs` above). Added a `constNames: Set<string>` built alongside the existing `derivedNames` in
+  `checkComponentDecl`, threaded through `checkStmts` the same way, and checked in
+  `checkAssignmentTarget` for both an `Assignment` target and a `PostfixStmt` target (`max_items++;`
+  on a `const int` is caught too, not just plain `= `). Message: `Cannot assign to const '<name>';
+  it can only be set at declaration`. `correct-assignment-ok.crs`'s previous const-reassignment case
+  (documented at the time as testing today's, arguably-wrong, permissive behavior) was replaced with
+  a const *read* instead, since reassignment is no longer a passing case; a new
+  `const-reassignment-forbidden.crs` fixture covers both the `Assignment` and `PostfixStmt` paths.
 
 ## Components
 

@@ -14,7 +14,23 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session went back to hardening the checker after one language-feature session (struct
+Latest session picked up the small, well-scoped item the previous session had specifically flagged
+and spec'd out: **forbidding `const` reassignment**. By this session's start, "Assignment
+compatibility" (previous session) had already been committed upstream as `8c844f5`. Implemented
+exactly per the TODO note's own prescription: a `constNames: Set<string>` built alongside the
+existing `derivedNames` in `checkComponentDecl`, threaded through `checkStmts` the same way, and
+checked in `checkAssignmentTarget` for both an `Assignment` target and a `PostfixStmt` target (so
+`max_items++;` on a `const int` is caught too, not just `title = "x";`). Message: `Cannot assign to
+const '<name>'; it can only be set at declaration`. Had to update the previous session's own
+`correct-assignment-ok.crs` fixture — it had a `const` reassignment as a documented *passing* case,
+testing the old (buggy) permissive behavior, which is no longer true — replaced it with a `const`
+*read* instead, and added a new `const-reassignment-forbidden.crs` fixture covering both the
+`Assignment` and `PostfixStmt` paths. `TODO.md`'s note checked off with a short "fixed as spec'd"
+update. Full suite: 206 PASS, 0 FAIL, up from 205, no regressions (confirmed no real example
+anywhere reassigns a `const`). **Not committed** — see `crescent-forbid-const-reassignment.patch`
+for a transferable copy.
+
+Before that: went back to hardening the checker after one language-feature session (struct
 destructuring, previous session — already committed upstream as `03158e7` by this session's
 start). Reviewed `Structs` and `Null Safety` for the next well-scoped item and found something
 worth a note before picking one: three of `Structs`' four open `[ ]` boxes — "Complete field
@@ -35,8 +51,8 @@ correct/non-literal/compound/nullable/`const` reassignment — all of which shou
 as a side effect of writing that positive fixture, that reassigning a `const` isn't forbidden by
 anything today; noted as a new, separate, well-scoped `TODO.md` item under Reactivity rather than
 fixed here (out of scope for a "type compatibility" task — that's a mutability question). Full
-suite: 205 PASS, 0 FAIL, up from 201, no regressions. **Not committed** — see
-`crescent-assignment-compatibility.patch` for a transferable copy.
+suite: 205 PASS, 0 FAIL, up from 201, no regressions. Committed upstream as `8c844f5` ("feat: Add
+assignment compatibility") between sessions.
 
 Before that: picked a `TODO.md` §12 **language-feature** item — **struct destructuring** in
 local variable declarations — rather than continuing to hardened the checker, per §16's own note
@@ -612,6 +628,92 @@ this session per `AGENTS.md` §15 ("do not begin a second major feature")._
 
 **AI:** Claude
 
+**Task:** Continuing from the previous session (its diff already committed upstream as `8c844f5`
+by this session's start). That session's own "Next step" note offered two hardening candidates
+specifically: auditing `Null Safety`'s open items, or fixing the `const`-reassignment gap it had
+just discovered and fully spec'd out in a `TODO.md` note. Picked the latter — smaller, already
+designed, lower risk of discovering the box was stale like `Structs` turned out to be.
+
+**Result:** Implemented exactly what the previous session's note prescribed, with one small
+addition: a `constNames: Set<string>` built alongside the existing `derivedNames` in
+`checkComponentDecl` (`decl.members.filter((m): m is AST.ConstDecl => m.kind === 'ConstDecl')`,
+mirroring the `derivedNames` line immediately above it), threaded through `checkStmts` as one more
+trailing parameter with a `= new Set()` default (so, same as `memberTypes` before it, no call site
+that doesn't care about `const` had to change). `checkAssignmentTarget` gained a `constNames`
+parameter and now checks it in an `else if` right after the existing `derivedNames` check, keeping
+the two mutually exclusive (a name can't be both `derived` and `const`, so this is just avoiding
+two diagnostics on the same line if it somehow could be). Message: `Cannot assign to const
+'<name>'; it can only be set at declaration`.
+
+The one addition beyond the note's literal text: checked `checkAssignmentTarget`'s two call sites in
+`checkStmts` and found `PostfixStmt` (`x++`/`x--`) already went through the exact same function as
+`Assignment` — so `max_items++;` on a `const int` needed covering too, not just `title = "x";`, and
+turned out to already work correctly once `constNames` was threaded through, since both call sites
+share the one function. Verified this by hand before writing the fixture (same "check the real
+behavior before asserting it" discipline as every prior fixture-writing session): built a fixture
+with both a plain-assignment and a postfix `++` against two different `const` members in the same
+component, ran it through `checkFile` directly, and confirmed both diagnostics fired independently
+at their own line numbers, from two different functions.
+
+Also updated the assignment-type-mismatch condition in the `Assignment` case
+(`stmt.op === '=' && stmt.target.kind === 'Identifier' && !derivedNames.has(...)`) to also exclude
+`constNames`, so a `const` reassignment reports exactly the one `Cannot assign to const` diagnostic
+rather than that plus a possibly-also-firing `Type mismatch` on the same line — same "one root-cause
+diagnostic, not a pile-on" principle the precise-diagnostic-messages session established for
+`Unknown type` vs `Type mismatch`.
+
+Had to touch the previous session's own `correct-assignment-ok.crs` fixture: it included a `const`
+reassignment as a documented-passing case, explicitly noting at the time that this was testing
+today's (buggy, permissive) behavior rather than endorsing it. That behavior is now fixed, so the
+case is no longer true — replaced the reassignment with a `const` *read* (`console.log(title);`)
+instead, which is the actually-valid thing to do with a `const`. Added
+`const-reassignment-forbidden.crs` (both the `Assignment` and `PostfixStmt` paths, two different
+`const` members) as the new negative fixture, plus matching `test-checker.js` cases and an updated
+assertion message on the positive fixture.
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-forbid-const-reassignment.patch`.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 206 PASS, 0 FAIL, exit 0 (up from 205 before this
+session — exactly the 1 new fixture-driven case; `correct-assignment-ok.crs` still counts as one
+test, just with different content now). Confirmed via the "all real examples pass the semantic
+checker cleanly" check that no existing example anywhere reassigns a `const` member, so this was
+purely additive with zero risk of breaking a real example.
+
+**Decisions:** Placed the `constNames` check as an `else if` after `derivedNames` in
+`checkAssignmentTarget` rather than two independent `if`s, since a name can only realistically be
+one or the other (a component's `derived`/`const`/`state`/`provide`/`inject` members all share one
+namespace, checked for duplicates elsewhere) — this is a minor defensive choice more than a
+meaningfully different design, since the "both fire" case shouldn't be reachable anyway. Excluded
+`constNames` from the type-mismatch condition in the `Assignment` case for the same
+one-diagnostic-per-mistake principle used elsewhere, rather than leaving it to fire both (which
+would still be "correct" in the sense that both statements are true, but noisier than necessary).
+
+**Problems:** None. Small, exactly-scoped fix; the only real work was double-checking the
+`PostfixStmt` path and updating the one fixture whose behavior assumption changed.
+
+**Remaining:** `Null Safety` still has five of its six items unchecked, not yet audited for the
+same "already-done-but-unchecked" possibility found in `Structs` two sessions ago. `TODO.md` §12's
+"Destructuring" item still has array destructuring and parameter destructuring open. `Reactivity`'s
+other five `[ ]` items (comprehensive state mutation analysis, reactive collection mutation
+validation, derived-state dependency validation, lifecycle/reactivity validation, reactive CSS
+expression validation, `provide`/`inject` component-context validation) are all still untouched.
+
+**Next step:** This was a small, quick hardening session — no strong signal either way on
+alternating with a language feature next per `TODO.md` §16. Reasonable options, roughly in order of
+how well-scoped they currently look: (1) audit `Null Safety`'s five open items the way `Structs` was
+audited two sessions ago, since the same "maybe already done, just unchecked" possibility hasn't
+been ruled out there; (2) design array destructuring, the next `TODO.md` §12 item; (3) pick one of
+`Reactivity`'s remaining open items, though several of those ("Comprehensive state mutation
+analysis," "Lifecycle/reactivity validation") read as larger, less-scoped efforts than this
+session's work and would need their own scoping-down pass before starting.
+
+---
+
+### Older session
+
+**AI:** Claude
+
 **Task:** Continuing from the previous session (its diff already committed upstream as `03158e7`
 by this session's start). That session's own "Next step" note left both directions open —
 designing array destructuring, or going back to hardening §5's other subsections. Chose hardening:
@@ -667,8 +769,9 @@ Added 4 fixtures: `wrong-assignment-type.crs`, `wrong-assignment-array-element-t
 literal, non-literal, compound `+=`, nullable, and `const` reassignment, none of which should
 fire). Matching `test-checker.js` cases added.
 
-**Commit:** Not committed — working tree contains this focused diff. Handed over as
-`crescent-assignment-compatibility.patch`.
+**Commit:** Handed over as `crescent-assignment-compatibility.patch`; the maintainer applied and
+committed it upstream as `develop`'s `8c844f5` ("feat: Add assignment compatibility") between
+sessions.
 
 **Tests:** `npx tsc --noEmit` clean. `npm test`: 205 PASS, 0 FAIL, exit 0 (up from 201 before this
 session — exactly the 4 new fixture-driven cases, no regressions anywhere, including "all real

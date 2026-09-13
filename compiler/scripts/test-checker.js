@@ -301,6 +301,12 @@ const cases = [
     pattern: /'null' assigned to non-nullable type 'int'/,
     label: 'reassigning null to a non-nullable state variable',
   },
+  {
+    file: 'const-reassignment-forbidden.crs',
+    severity: 'error',
+    pattern: /Cannot assign to const 'title'; it can only be set at declaration/,
+    label: 'reassigning a const member with a plain assignment',
+  },
 ];
 
 for (const c of cases) {
@@ -341,7 +347,7 @@ assert(
 const correctAssignmentDiagnostics = diagnosticsFor('correct-assignment-ok.crs');
 assert(
   correctAssignmentDiagnostics.length === 0,
-  `correct-assignment-ok.crs: correctly-typed reassignments, a non-literal reassignment, a compound '+=', and a nullable reassignment all produce no diagnostics, got ${JSON.stringify(correctAssignmentDiagnostics)}`
+  `correct-assignment-ok.crs: correctly-typed reassignments, a non-literal reassignment, a compound '+=', a nullable reassignment, and reading (not reassigning) a const all produce no diagnostics, got ${JSON.stringify(correctAssignmentDiagnostics)}`
 );
 
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));

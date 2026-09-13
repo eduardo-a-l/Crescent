@@ -380,6 +380,7 @@ function checkAssignmentTarget(
   scope: Set<string>,
   globalScope: Map<string, SymbolInfo>,
   derivedNames: Set<string>,
+  constNames: Set<string>,
   where: string,
   line: number,
   diagnostics: Diagnostic[]
@@ -387,6 +388,8 @@ function checkAssignmentTarget(
   if (target.kind === 'Identifier') {
     if (derivedNames.has(target.name)) {
       diagnostics.push(err(`Cannot assign to derived '${target.name}'; reassign one of its dependencies instead`, where, line));
+    } else if (constNames.has(target.name)) {
+      diagnostics.push(err(`Cannot assign to const '${target.name}'; it can only be set at declaration`, where, line));
     }
     return;
   }
@@ -459,7 +462,8 @@ function checkStmts(
   where: string,
   diagnostics: Diagnostic[],
   returnCtx: ReturnContext | null = null,
-  memberTypes: Map<string, AST.CrescentType> = new Map()
+  memberTypes: Map<string, AST.CrescentType> = new Map(),
+  constNames: Set<string> = new Set()
 ): void {
   const localScope = new Set(scope);
   for (const stmt of stmts) {
@@ -499,8 +503,8 @@ function checkStmts(
       case 'Assignment':
         checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
         checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
-        checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, where, stmt.line, diagnostics);
-        if (stmt.op === '=' && stmt.target.kind === 'Identifier' && !derivedNames.has(stmt.target.name)) {
+        checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, constNames, where, stmt.line, diagnostics);
+        if (stmt.op === '=' && stmt.target.kind === 'Identifier' && !derivedNames.has(stmt.target.name) && !constNames.has(stmt.target.name)) {
           const declaredType = memberTypes.get(stmt.target.name);
           if (declaredType) {
             checkAssignmentTypeMatch(declaredType, stmt.value, where, stmt.line, diagnostics, globalScope);
@@ -509,7 +513,7 @@ function checkStmts(
         break;
       case 'PostfixStmt':
         checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
-        checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, where, stmt.line, diagnostics);
+        checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, constNames, where, stmt.line, diagnostics);
         break;
       case 'ExprStatement':
         checkExpr(stmt.expr, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
@@ -521,8 +525,8 @@ function checkStmts(
           nullable: narrow.nullable,
           narrowed: target ? new Set(narrow.narrowed).add(target) : narrow.narrowed,
         };
-        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes);
-        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes);
+        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
+        if (stmt.alternate) checkStmts(stmt.alternate, localScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
         break;
       }
       case 'For': {
@@ -532,7 +536,7 @@ function checkStmts(
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes);
+        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
         break;
       }
       case 'Return':
@@ -721,6 +725,7 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
   const derivedNames = new Set(
     decl.members.filter((m): m is AST.DerivedDecl => m.kind === 'DerivedDecl').map((m) => m.name)
   );
+  const constNames = new Set(decl.members.filter((m): m is AST.ConstDecl => m.kind === 'ConstDecl').map((m) => m.name));
   const narrow: NarrowState = { nullable, narrowed: new Set() };
 
   for (const m of decl.members) {
@@ -760,17 +765,17 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         checkStmts(m.body, fnScope, globalScope, functions, narrow, derivedNames, fnWhere, diagnostics, {
           functionName: m.name,
           returnType: m.returnType,
-        }, memberTypes);
+        }, memberTypes, constNames);
         break;
       }
       case 'OnMountDecl':
-        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_mount`, diagnostics, null, memberTypes);
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_mount`, diagnostics, null, memberTypes, constNames);
         break;
       case 'OnChangeDecl':
         for (const w of m.watched) {
           if (!scope.has(w)) diagnostics.push(err(`Undefined identifier '${w}' watched by on_change`, where, m.line));
         }
-        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_change(${m.watched.join(', ')})`, diagnostics, null, memberTypes);
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_change(${m.watched.join(', ')})`, diagnostics, null, memberTypes, constNames);
         break;
       case 'ViewBlockDecl':
         for (const node of m.nodes) checkTemplateNode(node, scope, globalScope, functions, narrow, `${where}, view`, diagnostics);

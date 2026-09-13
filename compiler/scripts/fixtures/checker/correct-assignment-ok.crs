@@ -23,8 +23,8 @@ component Counter {
         label = "hi";
     }
 
-    void rename() {
-        title = "New title";
+    void log_title() {
+        console.log(title);
     }
 
     view {

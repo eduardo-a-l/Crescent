@@ -1,0 +1,16 @@
+component Counter {
+    const string title = "Counter";
+    const int max_items = 10;
+
+    void rename() {
+        title = "New title";
+    }
+
+    void bump_max() {
+        max_items++;
+    }
+
+    view {
+        <p>{title}</p>
+    }
+}
