@@ -1,0 +1,17 @@
+{
+  "name": "crescent-playground",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser playground for Crescent — compiles a single .crs component server-side and previews it in a sandboxed iframe.",
+  "scripts": {
+    "dev": "node scripts/dev-server.js",
+    "test": "node scripts/test-compile.js"
+  },
+  "dependencies": {
+    "crescent-compiler": "file:../compiler",
+    "esbuild": "^0.28.1"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

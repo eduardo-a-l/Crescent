@@ -14,7 +14,81 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session was a `TODO.md`-only planning session, at the maintainer's request: no code was
+Latest session built the browser playground discussed and scoped in the previous (docs-only)
+session, at the maintainer's explicit request: a new `playground/` directory, sibling to
+`compiler/` and `editors/vscode/` in this same repo (matching the existing "monorepo" pattern
+`editors/vscode/src/extension.js` already uses — see its own comment about locating
+`compiler/dist` relative to itself). Deliberately took the "quick" of the two architectures
+discussed (server compiles, no client-side esbuild-wasm), with the "properly decoupled, published
+package, maybe separate repo" version explicitly deferred and documented as a future option
+rather than a todo — see the new `TODO.md` §11a "Web Playground" section for exactly what's
+deferred and why.
+
+**What was built**, all under `playground/`:
+- `lib/compileToPreview.js` — the only piece of real logic: writes the given source to a temp
+  `main.crs`, calls `compiler/src/webPreview.ts`'s existing `buildPreviewHtml()` unchanged (the
+  same function the VS Code extension's "Open Preview in Browser" command already uses), then
+  flattens `diagnosticsByFile` into a flat array for the client. **Nothing in `compiler/` was
+  modified** — this only consumes its existing public surface (`buildPreviewHtml`/`buildProject`/
+  `checkProject`).
+- `api/compile.js` — the Vercel serverless function entry point (`module.exports = async (req,
+  res) => ...`), a thin HTTP wrapper around the above. Handles non-POST (405), invalid JSON body
+  (400), and any unexpected compiler throw (500) explicitly rather than letting Vercel's default
+  error page show.
+- `scripts/dev-server.js` — a zero-dependency local dev server (plain `http.createServer`) that
+  serves `public/` and mounts the same `api/compile.js` handler at `/api/compile`, so `npm run
+  dev` gives a working local playground without needing the Vercel CLI or an account.
+- `public/index.html` + `style.css` + `app.js` — a plain static page, no framework: a `<textarea>`
+  editor (pre-filled with the `counter.crs` example, or a URL-hash-decoded snippet if the link
+  carries one), a Run button that POSTs to `/api/compile` and renders the returned diagnostics
+  plus sets the result HTML as a sandboxed `<iframe sandbox="allow-scripts">`'s `srcdoc`, and a
+  "Copy share link" button that base64-encodes the current source into the URL hash
+  (`#code=...`, URL-safe alphabet, Unicode-safe via `TextEncoder`/`TextDecoder`) — no backend
+  storage for sharing, matching how the TypeScript Playground/Svelte REPL do it.
+- `scripts/test-compile.js` — a **real** test (not just "it builds"), following
+  `compiler/scripts/test-web.js`'s own jsdom pattern: compiles the actual `Counter` example
+  through the full pipeline, loads the returned HTML into a real `jsdom` window with
+  `runScripts: 'dangerously'`, dispatches a genuine `click` `Event` on the rendered button, and
+  asserts the DOM text actually updated — not a mock. Also covers a warning-only diagnostic
+  (nullable access, still compiles), a fatal parse error (`fatal` field populated, `ok: false`,
+  no crash), and both input-rejection paths (empty / oversized source).
+- `package.json` — `crescent-compiler` as a `file:../compiler` dependency (resolves to
+  `compiler/dist/webPreview.js` once `compiler/` has been built — same requirement `editors/
+  vscode` already has), `esbuild`/`jsdom` versions matched to `compiler/package.json`'s own.
+- `vercel.json` — `outputDirectory: "public"`, registers `api/compile.js` as a function.
+- `README.md` — setup, the exact Vercel "Root Directory: playground" + build-command steps needed
+  because this is a monorepo, current scope limitations, and the "quick now, can migrate to a
+  published package (and possibly a separate repo) later" note the maintainer asked to have
+  written down.
+- Root `.gitignore`: added `.vercel/` (no per-package `.gitignore` inside `playground/` — matches
+  the existing convention that `compiler/` and `editors/vscode/` don't have their own either,
+  relying on the root one; `node_modules/` was already covered there).
+- `TODO.md`: new `# 11a. Web Playground` section (see it for the full list of what's explicitly
+  deferred: multi-file/`import` support, a real code editor, persistence beyond the URL, and the
+  eventual published-package migration).
+
+**Verification actually run** (not just "should work"): `cd playground && npm install` — resolved
+cleanly, including the `file:../compiler` local dependency. `npm test`
+(`scripts/test-compile.js`) — all assertions PASS, including the real jsdom click-and-verify.
+Also started `scripts/dev-server.js` and hit it with real `curl` requests: `GET /` and `GET
+/style.css` served correctly; a real `POST /api/compile` with a valid component returned a
+working preview HTML payload; `GET /api/compile` correctly returned 405; a malformed JSON body
+correctly returned 400; an unknown path correctly returned 404. Compiler's own full suite was
+re-run afterward to confirm the playground didn't disturb anything: `cd compiler && npm test` —
+211 PASS, 0 FAIL, unchanged.
+
+**Not verified** (couldn't be, in this environment): an actual Vercel deployment — no network
+access to vercel.com from this sandbox, so the `vercel.json` config and the README's deployment
+steps are written from documented Vercel conventions (Root Directory, zero-config `api/` function
+detection, `outputDirectory`) but have not been deployed and click-tested end-to-end on Vercel
+itself. Recommend the maintainer do one real deploy and confirm before treating this as fully
+proven.
+
+Not committed — see `crescent-web-playground.patch` for a transferable copy. The patch is large
+(a whole new subdirectory) but is one coherent unit — see `AGENTS.md` §15: this was treated as
+"one feature" (the playground), not combined with anything else.
+
+Before that: Latest session was a `TODO.md`-only planning session, at the maintainer's request: no code was
 changed. Added a new `Core Language Evolution` item, **"Additional loop forms & loop control"**,
 documenting a real, previously-untracked gap found by inspecting the parser/grammar directly (per
 `AGENTS.md` §3's "inspect the existing implementation" step): Crescent's only loop is the for-each

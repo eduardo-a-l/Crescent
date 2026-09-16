@@ -654,6 +654,48 @@ Every important compiler bug should ideally become a regression test.
 
 ---
 
+# 11a. Web Playground
+
+A browser playground lives at `playground/` — a sibling project to `compiler/` and
+`editors/vscode/` in this same repo, deployable to Vercel (Root Directory `playground`; see
+`playground/README.md` for the exact setup). It reuses `compiler/src/webPreview.ts`'s
+`buildPreviewHtml()` unchanged (the same function the VS Code extension's "Open Preview in
+Browser" command calls) via a `file:../compiler` local dependency, so nothing about the compiler
+itself was touched to add this.
+
+- [x] Compile a single pasted component server-side (a Node serverless function writes it to a
+  temp `.crs` file, runs the real checker + codegen + esbuild bundling pipeline, returns the
+  resulting preview HTML and diagnostics as JSON) and render it in a sandboxed `<iframe>`.
+- [x] Shareable links via URL-hash-encoded source (`#code=...`, base64) — no database, no
+  accounts; the same technique the TypeScript Playground and Svelte REPL use.
+- [x] A real test (`playground/scripts/test-compile.js`, jsdom-based, mirrors
+  `compiler/scripts/test-web.js`'s approach) that compiles a genuine component through the whole
+  pipeline and dispatches a real click event against the mounted result, plus coverage for a
+  warning-only diagnostic, a fatal parse error, and input-size rejection.
+- [ ] **Multi-file / `import` support** — deliberately out of scope for the first version; the
+  playground only ever writes what you typed to a single `main.crs`. Supporting Crescent's module
+  system would mean the playground UI needs some notion of multiple files/tabs, which is a real
+  UI design question on its own, not just a backend change.
+- [ ] **A real code editor** — today the editor is a plain `<textarea>`, no syntax highlighting or
+  autocomplete. Swapping in CodeMirror or Monaco is purely a `public/` front-end change; nothing
+  about the compile API would need to change for it.
+- [ ] **Persistence beyond the URL** — no "my snippets" list, no accounts. A share link is exactly
+  as durable as the URL itself. Worth a deliberate decision (and a real backend) later if people
+  want saved/named snippets rather than just link-sharing.
+- [ ] **Migrating off the `file:../compiler` local dependency** — the playground currently
+  compiles against whatever's in `compiler/src` at deploy time, via a same-repo relative
+  dependency (matching how `editors/vscode/src/extension.js` already locates `compiler/dist`
+  relative to itself — see the comment there). The more decoupled alternative is publishing
+  `crescent-compiler` as a real versioned package (npm or GitHub Packages) and having the
+  playground (potentially in its own separate repository at that point) depend on a pinned
+  version like any external consumer would. Deliberately not done now: it adds a real publishing
+  process for a compiler that is still changing quickly pre-1.0, and the same-repo approach costs
+  nothing extra today. Revisit once the compiler's public API (`checkProject`, `buildProject`,
+  `buildPreviewHtml`) is stable enough that a playground rebuild breaking on every compiler commit
+  becomes a real cost.
+
+---
+
 # 12. Language Features to Evaluate
 
 These are deliberately NOT commitments. Each should be designed before implementation.

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crescent Playground</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Crescent Playground</h1>
+      <p class="subtitle">
+        Write a single Crescent component, compile it, and see it render — right in the browser.
+      </p>
+    </header>
+
+    <main>
+      <section class="editor-pane">
+        <div class="pane-toolbar">
+          <button id="run-btn" type="button">Run ▶</button>
+          <button id="share-btn" type="button">Copy share link</button>
+          <span id="share-status" role="status"></span>
+        </div>
+        <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+        <div id="diagnostics" class="diagnostics" aria-live="polite"></div>
+      </section>
+
+      <section class="preview-pane">
+        <div class="pane-toolbar">
+          <span>Preview</span>
+        </div>
+        <iframe
+          id="preview"
+          title="Crescent component preview"
+          sandbox="allow-scripts"
+        ></iframe>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        One component per snippet, no <code>import</code>s yet — see the
+        <a href="https://github.com/eduardo-a-l/Crescent" target="_blank" rel="noopener">Crescent repository</a>
+        for the full language.
+      </p>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

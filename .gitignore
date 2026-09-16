@@ -9,6 +9,9 @@ out/
 web/
 *.js.map
 
+# Vercel
+.vercel/
+
 # IDEs and Editors
 .vscode/*
 !.vscode/settings.json
