@@ -33,6 +33,8 @@
   const runBtn = document.getElementById('run-btn');
   const shareBtn = document.getElementById('share-btn');
   const shareStatus = document.getElementById('share-status');
+  const highlightCode = document.getElementById('highlight-code');
+  const highlightLayer = document.querySelector('.highlight-layer');
 
   function encodeSource(source) {
     const bytes = new TextEncoder().encode(source);
@@ -131,9 +133,30 @@
       });
   }
 
+  function refreshHighlight() {
+    highlightCode.innerHTML = window.CrescentHighlight.toHtml(editor.value);
+  }
+
+  function syncHighlightScroll() {
+    highlightLayer.scrollTop = editor.scrollTop;
+    highlightLayer.scrollLeft = editor.scrollLeft;
+  }
+
   editor.value = sourceFromHash() || DEFAULT_SOURCE;
+  editor.addEventListener('input', refreshHighlight);
+  editor.addEventListener('scroll', syncHighlightScroll);
+  editor.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    editor.value = `${editor.value.slice(0, start)}    ${editor.value.slice(end)}`;
+    editor.selectionStart = editor.selectionEnd = start + 4;
+    refreshHighlight();
+  });
   runBtn.addEventListener('click', run);
   shareBtn.addEventListener('click', share);
 
+  refreshHighlight();
   run();
 })();

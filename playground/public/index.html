@@ -21,7 +21,10 @@
           <button id="share-btn" type="button">Copy share link</button>
           <span id="share-status" role="status"></span>
         </div>
-        <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+        <div class="editor-wrap">
+          <pre class="highlight-layer" aria-hidden="true"><code id="highlight-code"></code></pre>
+          <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+        </div>
         <div id="diagnostics" class="diagnostics" aria-live="polite"></div>
       </section>
 
@@ -45,6 +48,7 @@
       </p>
     </footer>
 
+    <script src="/highlight.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

@@ -1,9 +1,5 @@
 const { compileToPreview } = require('../lib/compileToPreview');
 
-// Vercel's Node.js function runtime parses a JSON request body into `req.body`
-// automatically. Plain `http.Server` (used by scripts/dev-server.js for local
-// development) does not, so this falls back to reading the raw stream itself —
-// both environments share this same handler unmodified.
 async function readJsonBody(req) {
   if (req.body !== undefined && req.body !== null) {
     return typeof req.body === 'string' ? JSON.parse(req.body) : req.body;

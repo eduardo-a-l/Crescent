@@ -14,7 +14,70 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session built the browser playground discussed and scoped in the previous (docs-only)
+Latest session continued directly on the playground, at the maintainer's request ("let's work
+more on it now"): added real syntax highlighting to the editor. Also cleaned up a small violation
+of the user's own stated "no comments inside code" preference from the previous session (a
+comment block in `api/compile.js`) — should have followed that from the start.
+
+**What was built**, all under `playground/`:
+- `public/highlight.js` — a small, dependency-free, hand-written Crescent tokenizer. Keywords/
+  types are lifted directly from `compiler/src/tokens.ts`'s `KEYWORDS` map so they can't casually
+  drift out of sync with the real lexer. Correctly handles Crescent's actual string-interpolation
+  syntax (`"text {expr} text"`, including arbitrarily nested `{}`/`""` inside the interpolation
+  expression itself — implemented as a small stack machine tracking `string`/`brace` frames,
+  mirroring how `compiler/src/lexer.ts`'s own `readInterpolationSource()` balances braces) rather
+  than approximating with a generic language mode. Dual-mode export (CommonJS `module.exports` in
+  Node, `window.CrescentHighlight` in the browser) specifically so it's independently testable
+  without a browser.
+- `public/index.html`/`style.css`/`app.js` updated: the `<textarea>` now sits inside an
+  `.editor-wrap`, transparent, on top of a `<pre>` that shows the highlighted markup underneath —
+  the standard "shadow `<pre>`" trick (e.g. `react-simple-code-editor` uses the same approach), so
+  the real caret/selection/undo-stack is still the browser's native textarea, nothing reimplemented.
+  `app.js` re-runs highlighting on every `input` event, syncs scroll position between the two
+  layers, and now also intercepts Tab to insert a 4-space indent instead of moving focus away
+  (`e.preventDefault()` + manual `selectionStart`/`selectionEnd` splice).
+- **Chose not to reach for CodeMirror/Monaco** for this pass — deliberate, not an oversight: it
+  would mean a CDN dependency (this is a "no framework, no build step" static site, per the
+  existing README), and a generic bundled language mode wouldn't understand Crescent's own
+  interpolation syntax correctly anyway. `TODO.md` §11a's "A real code editor" item now reflects
+  this and reframes what's *actually* still missing: diagnostics-in-the-editor (squiggles from the
+  checker's real output), which needs a real editor component and is a different, larger piece of
+  work than "add a syntax highlighter."
+- Two new real test files:
+  - `scripts/test-highlight.js` — the strongest test in the whole playground: a **lossless
+    round-trip check** (strip every generated `<span>` back out and assert you get the exact
+    original source back, byte for byte) run against **every single file in
+    `compiler/examples/`** (16 real components), not just a synthetic sample — plus explicit
+    coverage for embedded `{expr}` interpolation, a nested object-literal-inside-interpolation
+    edge case, line comments, multi-line block comments, and the HTML escape/unescape helpers.
+  - `scripts/test-app.js` — a jsdom integration test that builds a minimal DOM matching
+    `index.html`'s structure, stubs `fetch`/`clipboard.writeText`/`TextEncoder`/`TextDecoder`
+    (jsdom doesn't provide the latter two by default — had to polyfill from Node's own globals),
+    then `window.eval()`s the actual `highlight.js` and `app.js` source files unmodified and drives
+    them for real: confirms the default example loads and gets highlighted on page load, that
+    editing the textarea live re-highlights it, that Tab actually inserts a 4-space indent at the
+    cursor and prevents the browser's default focus-shift, and — the one I'd have most expected to
+    get wrong on the first try — that clicking "Copy share link" produces a URL whose hash, when
+    decoded with the same URL-safe-base64 + `TextDecoder` scheme, reproduces the exact source that
+    was in the editor at share time.
+- `package.json`'s `test` script now runs all three suites in sequence
+  (`test-highlight.js && test-app.js && test-compile.js`).
+- `TODO.md` §11a updated: syntax highlighting checked off with what it actually covers and
+  deliberately doesn't (autocomplete/inline diagnostics), and the old generic "add CodeMirror or
+  Monaco" framing was replaced with the more accurate "diagnostics-in-the-editor is the real
+  remaining gap" framing.
+
+**Verification actually run**: `npm test` inside `playground/` — 34 assertions across all three
+suites, all PASS (16 lossless round-trips over real example files + 9 explicit highlighter
+assertions + 9 app.js integration assertions + 10 compile-pipeline assertions from before). Also
+restarted `scripts/dev-server.js` and confirmed with real `curl` requests that `highlight.js`
+serves with a 200 and that `index.html` actually contains the new `highlight-code` element (i.e.
+the HTML edit landed, not just the JS). Re-ran `compiler`'s own full suite afterward: 211 PASS, 0
+FAIL, unchanged — this session never touched `compiler/`.
+
+Not committed — see `crescent-playground-syntax-highlighting.patch` for a transferable copy.
+
+Before that: Latest session built the browser playground discussed and scoped in the previous (docs-only)
 session, at the maintainer's explicit request: a new `playground/` directory, sibling to
 `compiler/` and `editors/vscode/` in this same repo (matching the existing "monorepo" pattern
 `editors/vscode/src/extension.js` already uses — see its own comment about locating

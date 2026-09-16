@@ -87,16 +87,71 @@ button:hover {
   border-color: var(--accent);
 }
 
-#editor {
+.editor-wrap {
+  position: relative;
   flex: 1;
-  border: none;
-  resize: none;
+  min-height: 0;
+}
+
+.editor-wrap textarea,
+.highlight-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
   padding: 0.75rem;
+  border: none;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.9rem;
   line-height: 1.5;
   tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+
+.editor-wrap textarea {
+  background: transparent;
+  color: transparent;
+  caret-color: #111;
+  resize: none;
   outline: none;
+  z-index: 1;
+}
+
+.highlight-layer {
+  pointer-events: none;
+  z-index: 0;
+  color: #24292e;
+}
+
+.highlight-layer code {
+  font: inherit;
+}
+
+.tok-keyword {
+  color: #cf222e;
+  font-weight: 600;
+}
+
+.tok-type {
+  color: #953800;
+}
+
+.tok-string {
+  color: #0a3069;
+}
+
+.tok-comment {
+  color: #6e7781;
+  font-style: italic;
+}
+
+.tok-number {
+  color: #0550ae;
+}
+
+.tok-punct-interp {
+  color: #8250df;
+  font-weight: 600;
 }
 
 .diagnostics {

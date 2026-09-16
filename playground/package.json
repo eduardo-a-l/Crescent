@@ -5,7 +5,7 @@
   "description": "Browser playground for Crescent — compiles a single .crs component server-side and previews it in a sandboxed iframe.",
   "scripts": {
     "dev": "node scripts/dev-server.js",
-    "test": "node scripts/test-compile.js"
+    "test": "node scripts/test-highlight.js && node scripts/test-app.js && node scripts/test-compile.js"
   },
   "dependencies": {
     "crescent-compiler": "file:../compiler",

@@ -676,9 +676,28 @@ itself was touched to add this.
   playground only ever writes what you typed to a single `main.crs`. Supporting Crescent's module
   system would mean the playground UI needs some notion of multiple files/tabs, which is a real
   UI design question on its own, not just a backend change.
-- [ ] **A real code editor** — today the editor is a plain `<textarea>`, no syntax highlighting or
-  autocomplete. Swapping in CodeMirror or Monaco is purely a `public/` front-end change; nothing
-  about the compile API would need to change for it.
+- [x] **Syntax highlighting for the editor** — `public/highlight.js` is a small, dependency-free,
+  hand-written Crescent tokenizer (keywords/types lifted directly from `compiler/src/tokens.ts`'s
+  `KEYWORDS`, so it can't silently drift out of sync in an obvious way) rendered underneath a
+  transparent `<textarea>` (the standard "shadow `<pre>`" trick — see `public/style.css`'s
+  `.editor-wrap`), plus Tab-to-indent. Deliberately *not* CodeMirror/Monaco: no CDN dependency, and
+  it understands Crescent's actual string-interpolation syntax (`"text {expr} text"`, including
+  nested braces inside the interpolation) correctly, which a generic "close enough" language mode
+  wouldn't. Real tests in `scripts/test-highlight.js` (a lossless round-trip check — strip the
+  generated markup and get back the exact original source — run against every file in
+  `compiler/examples/`, plus explicit interpolation/comment/nesting cases) and
+  `scripts/test-app.js` (jsdom, drives the actual `public/app.js` + `public/highlight.js`: initial
+  load, live re-highlighting on input, the Tab handler, and the share-link encode round trip).
+  Autocomplete is still not attempted — a real "no code intelligence" gap, not just cosmetics;
+  see the next item below.
+- [ ] **A real code editor** — the current one is a genuine syntax-highlighting textarea (see
+  above), but it does not do autocomplete, bracket-matching, error squiggles inline in the editor,
+  or anything else that needs the checker's own type information rather than just tokenizing text.
+  That would mean piping `checkProject`'s diagnostics (already returned by `/api/compile`) back
+  into editor-decoration positions, which the current plain-`<textarea>`-plus-overlay approach
+  cannot do — inline squiggles need a real editor component (CodeMirror 6 is the natural fit: it
+  can consume an external tokenizer/linter without necessarily needing its own language grammar).
+  Worth doing once diagnostics-in-the-editor feels like the actual missing piece, not before.
 - [ ] **Persistence beyond the URL** — no "my snippets" list, no accounts. A share link is exactly
   as durable as the URL itself. Worth a deliberate decision (and a real backend) later if people
   want saved/named snippets rather than just link-sharing.
