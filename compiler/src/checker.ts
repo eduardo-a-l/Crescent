@@ -511,6 +511,11 @@ function checkStmts(
           diagnostics.push(err(`Unknown type '${typeToString(stmt.type)}' referenced by variable '${stmt.name}'`, where, stmt.line));
         }
         localScope.add(stmt.name);
+        if (stmt.type.kind === 'NullableType') {
+          const nullable = new Map(currentNarrow.nullable);
+          nullable.set(stmt.name, stmt.type);
+          currentNarrow = { nullable, narrowed: currentNarrow.narrowed };
+        }
         break;
       case 'StructDestructure': {
         checkExpr(stmt.init, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
@@ -588,7 +593,13 @@ function checkStmts(
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        checkStmts(stmt.body, bodyScope, globalScope, functions, currentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
+        let bodyNarrow = currentNarrow;
+        if (stmt.itemType.kind === 'NullableType') {
+          const nullable = new Map(currentNarrow.nullable);
+          nullable.set(stmt.itemName, stmt.itemType);
+          bodyNarrow = { nullable, narrowed: currentNarrow.narrowed };
+        }
+        checkStmts(stmt.body, bodyScope, globalScope, functions, bodyNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
         break;
       }
       case 'Return':
@@ -668,8 +679,14 @@ function checkTemplateNode(
       }
       const bodyScope = new Set(scope);
       bodyScope.add(node.itemName);
-      if (node.key) checkExpr(node.key, bodyScope, globalScope, functions, narrow, where, line, diagnostics);
-      for (const c of node.body) checkTemplateNode(c, bodyScope, globalScope, functions, narrow, where, diagnostics);
+      let bodyNarrow = narrow;
+      if (node.itemType.kind === 'NullableType') {
+        const nullable = new Map(narrow.nullable);
+        nullable.set(node.itemName, node.itemType);
+        bodyNarrow = { nullable, narrowed: narrow.narrowed };
+      }
+      if (node.key) checkExpr(node.key, bodyScope, globalScope, functions, bodyNarrow, where, line, diagnostics);
+      for (const c of node.body) checkTemplateNode(c, bodyScope, globalScope, functions, bodyNarrow, where, diagnostics);
       return;
     }
     case 'TextInterpolation':
@@ -821,7 +838,12 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
         if (m.returnType !== 'void' && !typeIsResolvable(m.returnType, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(m.returnType)}' referenced by return type of function '${m.name}'`, fnWhere, m.line));
         }
-        checkStmts(m.body, fnScope, globalScope, functions, narrow, derivedNames, fnWhere, diagnostics, {
+        const fnNullable = new Map(narrow.nullable);
+        for (const p of m.params) {
+          if (p.type.kind === 'NullableType') fnNullable.set(p.name, p.type);
+        }
+        const fnNarrow: NarrowState = { nullable: fnNullable, narrowed: narrow.narrowed };
+        checkStmts(m.body, fnScope, globalScope, functions, fnNarrow, derivedNames, fnWhere, diagnostics, {
           functionName: m.name,
           returnType: m.returnType,
         }, memberTypes, constNames);

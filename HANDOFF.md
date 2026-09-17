@@ -14,6 +14,58 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Extended flow-sensitive null narrowing to cover every remaining kind of nullable binding: local
+variables, function parameters, and `for`-loop item variables. Previously the `nullable` map used
+for narrowing was built once per component from `state`/`derived`/`provide`/`const`/`inject`/
+component-params only — a local `T?` variable or a nullable function parameter was added to the
+existence-checking scope but never added to the nullable map at all, meaning it got **zero**
+null-safety checking: no warning when accessed unguarded, no narrowing when guarded. Same gap for
+a nullable `for`-loop item (`for (string? item in xs)`). The maintainer again asked that
+`playground/` remain untouched (they're working on it externally); this session only touched
+`compiler/`, `TODO.md`, and this file.
+
+**What was fixed**, all in `compiler/src/checker.ts`:
+- `VarDecl` in `checkStmts` now extends the narrowing map with a **new** `Map` (not a mutation of
+  the shared one) when the declared type is nullable, so the extension is scoped to the rest of
+  that block and doesn't leak into sibling scopes that happen to share the same underlying
+  component-level map by reference.
+- `FunctionDecl` in `checkComponentDecl` now builds a per-function nullable map (component-level
+  map + that function's own nullable params) before checking its body, for the same
+  no-shared-mutation reason — the component-level map is the exact same object passed to every
+  sibling function, so mutating it in place would have corrupted their narrowing too.
+- `For` (statement) and `TemplateFor` (view block) both extend the loop body's nullable map when
+  the item type itself is nullable — fixed identically in both places, matching this area's
+  established pattern of parity between the two.
+
+**Tests added** (`compiler/scripts/fixtures/checker/` + `test-checker.js`):
+`unguarded-nullable-local.crs`/`guarded-nullable-local-ok.crs`,
+`unguarded-nullable-param.crs`/`guarded-nullable-param-ok.crs`,
+`unguarded-nullable-for-item.crs`/`guarded-nullable-for-item-ok.crs` (the negative one checks the
+warning fires in *both* the function body and the view block, via an exact count of 2, not just
+`.some()`). Also picked up two items from this section's own "Test nested/control-flow cases" note
+while in the area:
+- `guarded-nullable-nested-and-loop-ok.crs` confirms narrowing composes correctly across nested
+  `if`s and propagates into a `for`-loop body — both already worked, just untested until now.
+- `unsound-nullable-across-call-boundary.crs` **confirms, rather than just fixes or ignores, a real
+  soundness gap**: a function that narrows a nullable state member, calls another function that
+  reassigns it to `null`, then accesses it — the checker currently reports zero diagnostics for
+  this, which is genuinely unsound (that access can be a real null dereference at runtime).
+  Deliberately left unfixed: a correct fix needs actual interprocedural analysis (does this
+  function, or anything it transitively calls, assign to this name anywhere?), which is a
+  meaningfully bigger feature than anything else in this area and deserves its own design decision
+  rather than a quick patch under an unrelated commit. `TODO.md` now states this as a confirmed,
+  open gap instead of the previous "it should reset... but this isn't tested" speculation.
+
+**Verification actually run**: `npx tsc --noEmit` — clean. `npm run build && npm test` in
+`compiler/` — **223 PASS, 0 FAIL** (was 215 at the start of this session; 8 new assertions, all
+passing). Manually confirmed the call-boundary and nested/loop behavior with one-off `.crs` files
+run directly through `checkFile` before writing them up as permanent fixtures, so the TODO note
+describes actually-observed behavior, not a guess.
+
+Not committed — see `crescent-nullable-locals-params.patch` for a transferable copy.
+
+Before that:
+**Current task:**
 Completed terminal-guard null narrowing in the semantic checker. The maintainer explicitly asked
 that playground work remain untouched; this session changed only compiler, docs, roadmap, and
 handoff files.

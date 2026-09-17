@@ -1,0 +1,16 @@
+component Fine {
+    state<bool> ready = true;
+
+    void greet() {
+        string? name = ready ? "Ada" : null;
+        if (name != null) {
+            console.log(name.length);
+        } else {
+            console.log("no name");
+        }
+    }
+
+    view {
+        <p>"ok"</p>
+    }
+}

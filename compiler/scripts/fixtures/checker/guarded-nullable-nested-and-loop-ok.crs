@@ -1,0 +1,21 @@
+component Fine {
+    state<string?> name = null;
+    state<string?> nickname = null;
+    state<string[]> items = ["a", "b"];
+
+    void greet() {
+        if (name != null) {
+            if (nickname != null) {
+                console.log(name.length);
+                console.log(nickname.length);
+            }
+            for (string item in items) {
+                console.log(name.length);
+            }
+        }
+    }
+
+    view {
+        <p>"ok"</p>
+    }
+}

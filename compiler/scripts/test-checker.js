@@ -313,6 +313,18 @@ const cases = [
     pattern: /Cannot assign to const 'title'; it can only be set at declaration/,
     label: 'reassigning a const member with a plain assignment',
   },
+  {
+    file: 'unguarded-nullable-local.crs',
+    severity: 'warning',
+    pattern: /'name' is nullable \(string\?\) and is accessed here without a null check/,
+    label: 'a nullable local variable accessed without a narrowing guard',
+  },
+  {
+    file: 'unguarded-nullable-param.crs',
+    severity: 'warning',
+    pattern: /'name' is nullable \(string\?\) and is accessed here without a null check/,
+    label: 'a nullable function parameter accessed without a narrowing guard',
+  },
 ];
 
 for (const c of cases) {
@@ -369,6 +381,42 @@ const unguardedAfterNonterminalIfDiagnostics = diagnosticsFor('unguarded-nullabl
 assert(
   hasDiagnostic(unguardedAfterNonterminalIfDiagnostics, 'warning', /'message' is nullable \(string\?\) and is accessed here without a null check/),
   `unguarded-nullable-after-nonterminal-if.crs: a non-terminal null branch does not narrow following statements, got ${JSON.stringify(unguardedAfterNonterminalIfDiagnostics)}`
+);
+
+const guardedLocalDiagnostics = diagnosticsFor('guarded-nullable-local-ok.crs');
+assert(
+  guardedLocalDiagnostics.length === 0,
+  `guarded-nullable-local-ok.crs: a locally-declared nullable variable is narrowed by an if guard like any other nullable value, got ${JSON.stringify(guardedLocalDiagnostics)}`
+);
+
+const guardedParamDiagnostics = diagnosticsFor('guarded-nullable-param-ok.crs');
+assert(
+  guardedParamDiagnostics.length === 0,
+  `guarded-nullable-param-ok.crs: a nullable function parameter is narrowed by an if guard like any other nullable value, got ${JSON.stringify(guardedParamDiagnostics)}`
+);
+
+const unguardedForItemDiagnostics = diagnosticsFor('unguarded-nullable-for-item.crs');
+assert(
+  unguardedForItemDiagnostics.filter((d) => d.severity === 'warning' && /'item' is nullable \(string\?\) and is accessed here without a null check/.test(d.message)).length === 2,
+  `unguarded-nullable-for-item.crs: an unguarded nullable for-loop item warns in both the function body and the view block, got ${JSON.stringify(unguardedForItemDiagnostics)}`
+);
+
+const guardedForItemDiagnostics = diagnosticsFor('guarded-nullable-for-item-ok.crs');
+assert(
+  guardedForItemDiagnostics.length === 0,
+  `guarded-nullable-for-item-ok.crs: a nullable for-loop item is narrowed by an if guard in both the function body and the view block, got ${JSON.stringify(guardedForItemDiagnostics)}`
+);
+
+const guardedNestedAndLoopDiagnostics = diagnosticsFor('guarded-nullable-nested-and-loop-ok.crs');
+assert(
+  guardedNestedAndLoopDiagnostics.length === 0,
+  `guarded-nullable-nested-and-loop-ok.crs: narrowing composes correctly across nested ifs and propagates into a for-loop body, got ${JSON.stringify(guardedNestedAndLoopDiagnostics)}`
+);
+
+const unsoundAcrossCallDiagnostics = diagnosticsFor('unsound-nullable-across-call-boundary.crs');
+assert(
+  unsoundAcrossCallDiagnostics.length === 0,
+  `unsound-nullable-across-call-boundary.crs: documents a known, deliberately-unfixed soundness gap — narrowing is not invalidated by a call to a function that reassigns the narrowed value to null, so this currently produces no diagnostics even though 'name.length' can genuinely be a null access at runtime; got ${JSON.stringify(unsoundAcrossCallDiagnostics)}`
 );
 
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');

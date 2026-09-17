@@ -1,0 +1,13 @@
+component Fine {
+    void greet(string? name) {
+        if (name != null) {
+            console.log(name.length);
+        } else {
+            console.log("no name");
+        }
+    }
+
+    view {
+        <p>"ok"</p>
+    }
+}

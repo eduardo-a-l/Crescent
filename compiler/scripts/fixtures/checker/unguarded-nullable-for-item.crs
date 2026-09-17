@@ -1,0 +1,15 @@
+component Broken {
+    state<string?[]> names = ["Ada", null, "Grace"];
+
+    void logAll() {
+        for (string? item in names) {
+            console.log(item.length);
+        }
+    }
+
+    view {
+        for (string? item in names key item) {
+            <p>{item.length}</p>
+        }
+    }
+}

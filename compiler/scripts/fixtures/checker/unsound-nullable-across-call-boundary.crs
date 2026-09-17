@@ -1,0 +1,18 @@
+component Unsound {
+    state<string?> name = null;
+
+    void clearName() {
+        name = null;
+    }
+
+    void greet() {
+        if (name != null) {
+            clearName();
+            console.log(name.length);
+        }
+    }
+
+    view {
+        <p>"ok"</p>
+    }
+}

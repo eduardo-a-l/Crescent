@@ -227,28 +227,50 @@
   (`guarded-nullable-ternary-ok.crs`). A null-branch guard that definitely returns now narrows the
   following statements too: after `if (x == null) { return; }`, `x` is non-null on the fallthrough
   path (`guarded-nullable-early-return-ok.crs`). A non-terminal branch deliberately does not narrow
-  following statements (`unguarded-nullable-after-nonterminal-if.crs`). Still `[~]` rather than
-  `[x]`: nullable locals and function parameters are not yet included in flow tracking.
-- [~] Correct narrowing through `if` — see the note above; the single-condition case (both
+  following statements (`unguarded-nullable-after-nonterminal-if.crs`). This session closed the
+  last explicitly-tracked gap: nullable locals, function parameters, and `for`-loop item variables
+  are now included in flow tracking too — a `VarDecl` of nullable type extends the narrowing map
+  for the rest of its enclosing block (`guarded-nullable-local-ok.crs`/
+  `unguarded-nullable-local.crs`), a `FunctionDecl`'s own nullable params get a per-function
+  narrowing map layered on top of the component's (`guarded-nullable-param-ok.crs`/
+  `unguarded-nullable-param.crs`), and a nullable `for`/`TemplateFor` item variable is narrowable
+  the same way, in both a function body and a view block
+  (`guarded-nullable-for-item-ok.crs`/`unguarded-nullable-for-item.crs`). Each extension builds a
+  *new* `Map` rather than mutating the shared component-level one in place — the component-level
+  `nullable` map is reused by reference across every sibling function body, so mutating it directly
+  would have leaked one function's locals into another's. `[x]` now — every named nullable binding
+  the language has (state/derived/provide/const/inject/component-params, locals, function params,
+  loop items) participates in flow-sensitive narrowing.
+- [x] Correct narrowing through `if` — see the note above; the single-condition case (both
   branches, both directions: bare identifier/`!=`/`==` against `null`) and the `&&`/`||`-joined
   multi-condition case are now both correct in statement-level `if` (`checkStmts`'s `If` case) and
   view-block `if` (`checkTemplateNode`'s `TemplateIf` case) — both were fixed identically each time,
   since they share the same narrowing logic (`narrowingTargets()`). A statement-level `if` with no
   `else` also preserves the false-branch narrowing for following statements when its consequent
   definitely returns; `blockDefinitelyReturns()` handles direct returns and nested `if`s whose
-  branches both return. What's still missing: nullable locals and function parameters are not in
-  the flow-tracking map, and path-sensitive analysis beyond those terminal branches is deliberately
-  out of scope.
+  branches both return. Nullable locals/params/loop-items are now in the flow-tracking map (see
+  above). What's still out of scope, deliberately: path-sensitive analysis beyond those terminal
+  branches (e.g. two nested `if`s on unrelated conditions where the combination happens to imply
+  non-null) — real flow analysis, not something worth chasing without a demonstrated need.
 - [x] Prevent invalid nullable access — already implemented: `checkExpr`'s `Member`/`Index` cases
   both check `narrow.nullable`/`narrow.narrowed` and emit the "is nullable (...) and is accessed
   here without a null check" warning (`unguarded-nullable.crs`). Corrected the checkbox this
   session — same "already done, never marked off" situation found in `Structs` two sessions ago.
-- [ ] Test nested/control-flow cases — `for` loop bodies, nested `if`s, and narrowing across a
-  function-call boundary (does calling a function reset/preserve narrowing of a variable it reads?
-  it should reset, since the checker has no interprocedural analysis, but this isn't explicitly
-  tested) are all still untested territory. The two straightforward single-level cases (this
-  session's `if (x == null) {...} else {...}`, and the pre-existing `if (x != null) {...}`) are now
-  both covered by fixtures, but genuinely nested/multi-statement narrowing isn't.
+- [~] Test nested/control-flow cases — nested `if`s (narrowing composes correctly: a nullable value
+  narrowed by an outer `if` stays narrowed inside a nested `if` on a different variable) and
+  narrowing propagating into a `for` loop body are now both covered and confirmed working
+  (`guarded-nullable-nested-and-loop-ok.crs`). Narrowing across a function-call boundary is now
+  **confirmed, not just suspected**: calling a function that reassigns a narrowed value to `null`
+  does *not* invalidate the narrowing (`unsound-nullable-across-call-boundary.crs` — a component
+  whose `greet()` narrows `name`, calls `clearName()` which sets `name = null`, then accesses
+  `name.length` — the checker currently reports zero diagnostics for this, which is genuinely
+  unsound: that access can be a null dereference at runtime). Deliberately left unfixed rather than
+  quietly worked around: a correct fix needs real interprocedural analysis (does this function, or
+  anything it calls, transitively assign to this narrowed name anywhere in its body?), which is a
+  meaningfully larger feature than anything else in this section — worth a deliberate design
+  decision (how conservative should the invalidation be? what about assignments through a struct
+  method, once those exist?) rather than a quick patch. Still `[~]`, not `[x]`, specifically because
+  of this open soundness gap.
 
 ## Structs
 

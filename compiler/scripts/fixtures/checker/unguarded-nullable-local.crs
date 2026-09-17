@@ -1,0 +1,10 @@
+component Broken {
+    void greet() {
+        string? name = null;
+        console.log(name.length);
+    }
+
+    view {
+        <p>"broken"</p>
+    }
+}
