@@ -416,6 +416,10 @@ view {
 
 ```
 
+The checker also applies short-circuit narrowing while it checks a condition itself: after a left
+operand such as `user_name != null` in `&&`, or `user_name == null` in `||`, `user_name` is treated
+as non-null while the right operand is evaluated.
+
 ---
 
 ## 12. Component Composition (`<slot />`)

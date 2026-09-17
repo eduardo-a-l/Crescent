@@ -340,7 +340,17 @@ function checkExpr(
       return;
     case 'Binary':
       checkExpr(expr.left, scope, globalScope, functions, narrow, where, line, diagnostics);
-      checkExpr(expr.right, scope, globalScope, functions, narrow, where, line, diagnostics);
+      if (expr.op === '&&' || expr.op === '||') {
+        const branch = expr.op === '&&' ? 'then' : 'else';
+        const targets = narrowingTargets(expr.left, narrow.nullable, branch);
+        const rightNarrow: NarrowState = {
+          nullable: narrow.nullable,
+          narrowed: targets.length ? new Set([...narrow.narrowed, ...targets]) : narrow.narrowed,
+        };
+        checkExpr(expr.right, scope, globalScope, functions, rightNarrow, where, line, diagnostics);
+      } else {
+        checkExpr(expr.right, scope, globalScope, functions, narrow, where, line, diagnostics);
+      }
       return;
     case 'Ternary':
       checkExpr(expr.test, scope, globalScope, functions, narrow, where, line, diagnostics);

@@ -14,12 +14,26 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Latest session continued directly on the playground, at the maintainer's request ("let's work
-more on it now"): added real syntax highlighting to the editor. Also cleaned up a small violation
-of the user's own stated "no comments inside code" preference from the previous session (a
-comment block in `api/compile.js`) — should have followed that from the start.
+Completed short-circuit null narrowing in the semantic checker. The maintainer explicitly asked
+that playground work remain untouched; this session changed only compiler, docs, roadmap, and
+handoff files.
 
-**What was built**, all under `playground/`:
+**What was completed this session:**
+- `compiler/src/checker.ts` now gives the right operand of `&&` the facts known when its left
+  operand is true, and the right operand of `||` the facts known when its left operand is false.
+  This makes `value != null && value.length > 0` and `value == null || value.length == 0` safe
+  during checking, including chained logical expressions. The change is deliberately limited to
+  short-circuit evaluation; it does not introduce ternary or post-guard narrowing.
+- `compiler/scripts/fixtures/checker/guarded-nullable-short-circuit-ok.crs` exercises both forms
+  in a function condition and a view condition. `test-checker.js` asserts the fixture has no
+  diagnostics.
+- `docs/Crescent_Design.md` and `TODO.md` now describe the same short-circuit rule and its scope.
+- Verification: `npm run build; node scripts/test-checker.js` and the full `npm test` suite in
+  `compiler/` both passed. The first full-suite attempt was blocked only by sandbox access to its
+  temporary preview directory; the approved rerun passed end-to-end.
+- Current commit: `feat: Add short-circuit null narrowing`.
+
+**Previous session's playground work** (do not modify unless explicitly requested):
 - `public/highlight.js` — a small, dependency-free, hand-written Crescent tokenizer. Keywords/
   types are lifted directly from `compiler/src/tokens.ts`'s `KEYWORDS` map so they can't casually
   drift out of sync with the real lexer. Correctly handles Crescent's actual string-interpolation

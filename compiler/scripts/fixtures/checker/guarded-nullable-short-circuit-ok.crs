@@ -1,0 +1,23 @@
+component Guarded {
+    state<string?> message = null;
+
+    void log_message() {
+        if (message != null && message.length > 0) {
+            console.log(message);
+        }
+
+        if (message == null || message.length == 0) {
+            console.log("empty");
+        }
+    }
+
+    view {
+        if (message != null && message.length > 0) {
+            <p>{message}</p>
+        }
+
+        if (message == null || message.length == 0) {
+            <p>"empty"</p>
+        }
+    }
+}

@@ -347,6 +347,12 @@ assert(
   `guarded-nullable-and-partial-warns.crs: an if (x != null && ...) guard only narrows x, not an unguarded sibling accessed on the right side of &&, got ${JSON.stringify(guardedAndPartialDiagnostics)}`
 );
 
+const guardedShortCircuitDiagnostics = diagnosticsFor('guarded-nullable-short-circuit-ok.crs');
+assert(
+  guardedShortCircuitDiagnostics.length === 0,
+  `guarded-nullable-short-circuit-ok.crs: && and || narrow a nullable value while their right operand is evaluated, in both function and view conditions, got ${JSON.stringify(guardedShortCircuitDiagnostics)}`
+);
+
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
 assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);
 

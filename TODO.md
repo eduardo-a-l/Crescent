@@ -218,8 +218,11 @@
   `else` branch (De Morgan's-symmetric to the `&&`/`then` case), each combinator recursing to any
   depth (`a != null && b != null && c != null` narrows all three). A sibling condition that isn't
   itself a narrowable null-check (e.g. `second.length > 0` inside `first != null && second.length >
-  0`) is left alone, as before — only the operands that are themselves recognizable null-checks are
-  narrowed (`guarded-nullable-and-partial-warns.crs`). Still `[~]` rather than `[x]`: ternary
+  0`) is left alone in the branch body, as before — only the operands that are themselves recognizable
+  null-checks are narrowed (`guarded-nullable-and-partial-warns.crs`). The right operand itself now
+  receives the short-circuit guarantee: `x != null && x.length > 0` and `x == null || x.length == 0`
+  can safely access `x` on their right side, in statement and view conditions
+  (`guarded-nullable-short-circuit-ok.crs`). Still `[~]` rather than `[x]`: ternary
   expressions (`x != null ? x.foo : default`) are not narrowed at all yet — see the next item.
 - [~] Correct narrowing through `if` — see the note above; the single-condition case (both
   branches, both directions: bare identifier/`!=`/`==` against `null`) and the `&&`/`||`-joined
