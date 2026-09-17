@@ -359,6 +359,18 @@ assert(
   `guarded-nullable-ternary-ok.crs: ternary branches narrow a nullable value according to the test, in both function and view expressions, got ${JSON.stringify(guardedTernaryDiagnostics)}`
 );
 
+const guardedEarlyReturnDiagnostics = diagnosticsFor('guarded-nullable-early-return-ok.crs');
+assert(
+  guardedEarlyReturnDiagnostics.length === 0,
+  `guarded-nullable-early-return-ok.crs: a terminal null guard narrows the following statements, including after a nested terminal branch, got ${JSON.stringify(guardedEarlyReturnDiagnostics)}`
+);
+
+const unguardedAfterNonterminalIfDiagnostics = diagnosticsFor('unguarded-nullable-after-nonterminal-if.crs');
+assert(
+  hasDiagnostic(unguardedAfterNonterminalIfDiagnostics, 'warning', /'message' is nullable \(string\?\) and is accessed here without a null check/),
+  `unguarded-nullable-after-nonterminal-if.crs: a non-terminal null branch does not narrow following statements, got ${JSON.stringify(unguardedAfterNonterminalIfDiagnostics)}`
+);
+
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
 assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);
 

@@ -14,11 +14,22 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Completed ternary null narrowing in the semantic checker. The maintainer explicitly asked that
-playground work remain untouched; this session changed only compiler, docs, roadmap, and handoff
-files.
+Completed terminal-guard null narrowing in the semantic checker. The maintainer explicitly asked
+that playground work remain untouched; this session changed only compiler, docs, roadmap, and
+handoff files.
 
 **What was completed this session:**
+- `compiler/src/checker.ts` now preserves false-branch null facts after a statement-level `if`
+  with no `else` when its consequent definitely returns. The deliberately conservative
+  `blockDefinitelyReturns()` recognizes direct returns and nested `if`s whose two branches return.
+- `guarded-nullable-early-return-ok.crs` covers single and nested terminal guards; the companion
+  `unguarded-nullable-after-nonterminal-if.crs` proves a branch that can fall through does not
+  grant the same narrowing.
+- `docs/Crescent_Design.md` and `TODO.md` document the reachability rule and its current limits.
+- Verification so far: `npm run build; node scripts/test-checker.js` in `compiler/`, all passed.
+  Run the full `npm test` suite before committing.
+
+**Previous session's ternary narrowing work:**
 - `compiler/src/checker.ts` now treats ternary consequents as the true branch of their test and
   alternates as the false branch. This makes both `x != null ? x.foo : default` and
   `x == null ? default : x.foo` safe when their nullable access is in the corresponding branch.

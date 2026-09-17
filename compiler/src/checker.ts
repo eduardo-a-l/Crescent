@@ -480,6 +480,14 @@ function checkReturnStmt(
   checkArrayElements(returnType, stmt.value, where, stmt.line, diagnostics, `Type mismatch: element of function '${functionName}' return value`);
 }
 
+function blockDefinitelyReturns(stmts: AST.Stmt[]): boolean {
+  for (const stmt of stmts) {
+    if (stmt.kind === 'Return') return true;
+    if (stmt.kind === 'If' && stmt.alternate && blockDefinitelyReturns(stmt.consequent) && blockDefinitelyReturns(stmt.alternate)) return true;
+  }
+  return false;
+}
+
 function checkStmts(
   stmts: AST.Stmt[],
   scope: Set<string>,
@@ -494,17 +502,18 @@ function checkStmts(
   constNames: Set<string> = new Set()
 ): void {
   const localScope = new Set(scope);
+  let currentNarrow = narrow;
   for (const stmt of stmts) {
     switch (stmt.kind) {
       case 'VarDecl':
-        checkExpr(stmt.init, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.init, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
         if (!typeIsResolvable(stmt.type, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(stmt.type)}' referenced by variable '${stmt.name}'`, where, stmt.line));
         }
         localScope.add(stmt.name);
         break;
       case 'StructDestructure': {
-        checkExpr(stmt.init, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.init, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
         const structInfo = globalScope.get(stmt.typeName);
         if (!structInfo) {
           diagnostics.push(err(`Unknown struct type '${stmt.typeName}'`, where, stmt.line));
@@ -529,8 +538,8 @@ function checkStmts(
         break;
       }
       case 'Assignment':
-        checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
-        checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.value, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.target, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
         checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, constNames, where, stmt.line, diagnostics);
         if (stmt.op === '=' && stmt.target.kind === 'Identifier' && !derivedNames.has(stmt.target.name) && !constNames.has(stmt.target.name)) {
           const declaredType = memberTypes.get(stmt.target.name);
@@ -540,42 +549,50 @@ function checkStmts(
         }
         break;
       case 'PostfixStmt':
-        checkExpr(stmt.target, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.target, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
         checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, constNames, where, stmt.line, diagnostics);
         break;
       case 'ExprStatement':
-        checkExpr(stmt.expr, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.expr, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
         break;
       case 'If': {
-        checkExpr(stmt.test, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
-        const thenTargets = narrowingTargets(stmt.test, narrow.nullable, 'then');
+        checkExpr(stmt.test, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        const thenTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'then');
         const consequentNarrow: NarrowState = {
-          nullable: narrow.nullable,
-          narrowed: thenTargets.length ? new Set([...narrow.narrowed, ...thenTargets]) : narrow.narrowed,
+          nullable: currentNarrow.nullable,
+          narrowed: thenTargets.length ? new Set([...currentNarrow.narrowed, ...thenTargets]) : currentNarrow.narrowed,
         };
         checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
         if (stmt.alternate) {
-          const elseTargets = narrowingTargets(stmt.test, narrow.nullable, 'else');
+          const elseTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'else');
           const alternateNarrow: NarrowState = {
-            nullable: narrow.nullable,
-            narrowed: elseTargets.length ? new Set([...narrow.narrowed, ...elseTargets]) : narrow.narrowed,
+            nullable: currentNarrow.nullable,
+            narrowed: elseTargets.length ? new Set([...currentNarrow.narrowed, ...elseTargets]) : currentNarrow.narrowed,
           };
           checkStmts(stmt.alternate, localScope, globalScope, functions, alternateNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
+        } else if (blockDefinitelyReturns(stmt.consequent)) {
+          const fallthroughTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'else');
+          if (fallthroughTargets.length) {
+            currentNarrow = {
+              nullable: currentNarrow.nullable,
+              narrowed: new Set([...currentNarrow.narrowed, ...fallthroughTargets]),
+            };
+          }
         }
         break;
       }
       case 'For': {
-        checkExpr(stmt.iterable, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.iterable, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
         if (!typeIsResolvable(stmt.itemType, globalScope)) {
           diagnostics.push(err(`Unknown type '${typeToString(stmt.itemType)}' referenced by for-loop item '${stmt.itemName}'`, where, stmt.line));
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        checkStmts(stmt.body, bodyScope, globalScope, functions, narrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
+        checkStmts(stmt.body, bodyScope, globalScope, functions, currentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames);
         break;
       }
       case 'Return':
-        if (stmt.value) checkExpr(stmt.value, localScope, globalScope, functions, narrow, where, stmt.line, diagnostics);
+        if (stmt.value) checkExpr(stmt.value, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
         checkReturnStmt(stmt, returnCtx, where, diagnostics);
         break;
     }

@@ -424,6 +424,10 @@ The same branch-specific narrowing applies to a ternary expression: `user_name !
 user_name.length : 0` can access `user_name` in its consequent, while `user_name == null ? 0 :
 user_name.length` can access it in its alternate.
 
+For a statement-level null guard whose consequent definitely returns, the checker also retains the
+false-branch fact afterward. For example, `if (user_name == null) { return; }` permits safe access
+to `user_name` in the remaining statements of that function or lifecycle block.
+
 ---
 
 ## 12. Component Composition (`<slot />`)

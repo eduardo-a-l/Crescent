@@ -1,0 +1,15 @@
+component Guarded {
+    state<string?> message = null;
+
+    void log_message() {
+        if (message == null) {
+            console.log("missing");
+        }
+
+        console.log(message.length);
+    }
+
+    view {
+        <p>"guarded"</p>
+    }
+}

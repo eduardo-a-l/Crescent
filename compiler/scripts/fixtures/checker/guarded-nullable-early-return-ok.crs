@@ -1,0 +1,29 @@
+component Guarded {
+    state<string?> first = null;
+    state<string?> second = null;
+
+    void log_messages() {
+        if (first == null || second == null) {
+            return;
+        }
+
+        console.log(first.length);
+        console.log(second.length);
+    }
+
+    void log_nested_message() {
+        if (first == null) {
+            if (second == null) {
+                return;
+            } else {
+                return;
+            }
+        }
+
+        console.log(first.length);
+    }
+
+    view {
+        <p>"guarded"</p>
+    }
+}

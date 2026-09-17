@@ -224,17 +224,21 @@
   can safely access `x` on their right side, in statement and view conditions
   (`guarded-nullable-short-circuit-ok.crs`). Ternary expressions now narrow each branch according
   to its test too: `x != null ? x.foo : default` and `x == null ? default : x.foo` are safe
-  (`guarded-nullable-ternary-ok.crs`). Still `[~]` rather than `[x]`: narrowing after an early
-  return/exit is not implemented — see the next item.
+  (`guarded-nullable-ternary-ok.crs`). A null-branch guard that definitely returns now narrows the
+  following statements too: after `if (x == null) { return; }`, `x` is non-null on the fallthrough
+  path (`guarded-nullable-early-return-ok.crs`). A non-terminal branch deliberately does not narrow
+  following statements (`unguarded-nullable-after-nonterminal-if.crs`). Still `[~]` rather than
+  `[x]`: nullable locals and function parameters are not yet included in flow tracking.
 - [~] Correct narrowing through `if` — see the note above; the single-condition case (both
   branches, both directions: bare identifier/`!=`/`==` against `null`) and the `&&`/`||`-joined
   multi-condition case are now both correct in statement-level `if` (`checkStmts`'s `If` case) and
   view-block `if` (`checkTemplateNode`'s `TemplateIf` case) — both were fixed identically each time,
-  since they share the same narrowing logic (`narrowingTargets()`). What's still missing: narrowing
-  after an `if` with no `else` and an early `return`/exit in the un-narrowed branch (e.g. `if (x
-  == null) { return; } console.log(x.foo);` — `x` should be narrowed for the rest of the function
-  after that point, which requires tracking reachability, not just per-branch scoping — genuinely a
-  separate, larger piece of work).
+  since they share the same narrowing logic (`narrowingTargets()`). A statement-level `if` with no
+  `else` also preserves the false-branch narrowing for following statements when its consequent
+  definitely returns; `blockDefinitelyReturns()` handles direct returns and nested `if`s whose
+  branches both return. What's still missing: nullable locals and function parameters are not in
+  the flow-tracking map, and path-sensitive analysis beyond those terminal branches is deliberately
+  out of scope.
 - [x] Prevent invalid nullable access — already implemented: `checkExpr`'s `Member`/`Index` cases
   both check `narrow.nullable`/`narrow.narrowed` and emit the "is nullable (...) and is accessed
   here without a null check" warning (`unguarded-nullable.crs`). Corrected the checkbox this
