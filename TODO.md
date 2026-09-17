@@ -222,15 +222,16 @@
   null-checks are narrowed (`guarded-nullable-and-partial-warns.crs`). The right operand itself now
   receives the short-circuit guarantee: `x != null && x.length > 0` and `x == null || x.length == 0`
   can safely access `x` on their right side, in statement and view conditions
-  (`guarded-nullable-short-circuit-ok.crs`). Still `[~]` rather than `[x]`: ternary
-  expressions (`x != null ? x.foo : default`) are not narrowed at all yet — see the next item.
+  (`guarded-nullable-short-circuit-ok.crs`). Ternary expressions now narrow each branch according
+  to its test too: `x != null ? x.foo : default` and `x == null ? default : x.foo` are safe
+  (`guarded-nullable-ternary-ok.crs`). Still `[~]` rather than `[x]`: narrowing after an early
+  return/exit is not implemented — see the next item.
 - [~] Correct narrowing through `if` — see the note above; the single-condition case (both
   branches, both directions: bare identifier/`!=`/`==` against `null`) and the `&&`/`||`-joined
   multi-condition case are now both correct in statement-level `if` (`checkStmts`'s `If` case) and
   view-block `if` (`checkTemplateNode`'s `TemplateIf` case) — both were fixed identically each time,
   since they share the same narrowing logic (`narrowingTargets()`). What's still missing: narrowing
-  through ternary expressions (`x != null ? x.foo : default`), and narrowing that should persist
-  *after* an `if` with no `else` and an early `return`/exit in the un-narrowed branch (e.g. `if (x
+  after an `if` with no `else` and an early `return`/exit in the un-narrowed branch (e.g. `if (x
   == null) { return; } console.log(x.foo);` — `x` should be narrowed for the rest of the function
   after that point, which requires tracking reachability, not just per-branch scoping — genuinely a
   separate, larger piece of work).

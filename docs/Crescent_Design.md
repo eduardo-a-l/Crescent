@@ -420,6 +420,10 @@ The checker also applies short-circuit narrowing while it checks a condition its
 operand such as `user_name != null` in `&&`, or `user_name == null` in `||`, `user_name` is treated
 as non-null while the right operand is evaluated.
 
+The same branch-specific narrowing applies to a ternary expression: `user_name != null ?
+user_name.length : 0` can access `user_name` in its consequent, while `user_name == null ? 0 :
+user_name.length` can access it in its alternate.
+
 ---
 
 ## 12. Component Composition (`<slot />`)

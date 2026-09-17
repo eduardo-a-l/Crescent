@@ -1,0 +1,13 @@
+component Guarded {
+    state<string?> message = null;
+
+    void log_message() {
+        console.log(message != null ? message.length : 0);
+        console.log(message == null ? 0 : message.length);
+    }
+
+    view {
+        <p>{message != null ? message.length : 0}</p>
+        <p>{message == null ? 0 : message.length}</p>
+    }
+}

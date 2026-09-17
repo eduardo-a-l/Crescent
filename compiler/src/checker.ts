@@ -354,8 +354,18 @@ function checkExpr(
       return;
     case 'Ternary':
       checkExpr(expr.test, scope, globalScope, functions, narrow, where, line, diagnostics);
-      checkExpr(expr.consequent, scope, globalScope, functions, narrow, where, line, diagnostics);
-      checkExpr(expr.alternate, scope, globalScope, functions, narrow, where, line, diagnostics);
+      const consequentTargets = narrowingTargets(expr.test, narrow.nullable, 'then');
+      const consequentNarrow: NarrowState = {
+        nullable: narrow.nullable,
+        narrowed: consequentTargets.length ? new Set([...narrow.narrowed, ...consequentTargets]) : narrow.narrowed,
+      };
+      checkExpr(expr.consequent, scope, globalScope, functions, consequentNarrow, where, line, diagnostics);
+      const alternateTargets = narrowingTargets(expr.test, narrow.nullable, 'else');
+      const alternateNarrow: NarrowState = {
+        nullable: narrow.nullable,
+        narrowed: alternateTargets.length ? new Set([...narrow.narrowed, ...alternateTargets]) : narrow.narrowed,
+      };
+      checkExpr(expr.alternate, scope, globalScope, functions, alternateNarrow, where, line, diagnostics);
       return;
     case 'Call':
       checkExpr(expr.callee, scope, globalScope, functions, narrow, where, line, diagnostics);

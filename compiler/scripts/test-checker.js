@@ -353,6 +353,12 @@ assert(
   `guarded-nullable-short-circuit-ok.crs: && and || narrow a nullable value while their right operand is evaluated, in both function and view conditions, got ${JSON.stringify(guardedShortCircuitDiagnostics)}`
 );
 
+const guardedTernaryDiagnostics = diagnosticsFor('guarded-nullable-ternary-ok.crs');
+assert(
+  guardedTernaryDiagnostics.length === 0,
+  `guarded-nullable-ternary-ok.crs: ternary branches narrow a nullable value according to the test, in both function and view expressions, got ${JSON.stringify(guardedTernaryDiagnostics)}`
+);
+
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
 assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);
 

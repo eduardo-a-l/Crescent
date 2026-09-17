@@ -14,11 +14,23 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
-Completed short-circuit null narrowing in the semantic checker. The maintainer explicitly asked
-that playground work remain untouched; this session changed only compiler, docs, roadmap, and
-handoff files.
+Completed ternary null narrowing in the semantic checker. The maintainer explicitly asked that
+playground work remain untouched; this session changed only compiler, docs, roadmap, and handoff
+files.
 
 **What was completed this session:**
+- `compiler/src/checker.ts` now treats ternary consequents as the true branch of their test and
+  alternates as the false branch. This makes both `x != null ? x.foo : default` and
+  `x == null ? default : x.foo` safe when their nullable access is in the corresponding branch.
+- `compiler/scripts/fixtures/checker/guarded-nullable-ternary-ok.crs` and `test-checker.js` cover
+  both forms in function and view expressions.
+- `docs/Crescent_Design.md` and `TODO.md` now record ternary narrowing as supported; only
+  reachability-based post-guard narrowing remains open in this part of the roadmap.
+- Verification: `npm run build; node scripts/test-checker.js` and the full `npm test` suite in
+  `compiler/` both passed end-to-end.
+- Current commit: `feat: Add ternary null narrowing`.
+
+**Previous session's short-circuit narrowing work:**
 - `compiler/src/checker.ts` now gives the right operand of `&&` the facts known when its left
   operand is true, and the right operand of `||` the facts known when its left operand is false.
   This makes `value != null && value.length > 0` and `value == null || value.length == 0` safe
