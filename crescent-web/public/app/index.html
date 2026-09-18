@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crescent Playground</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <section class="editor-pane">
+        <div class="pane-toolbar">
+          <button id="run-btn" type="button">Run ▶</button>
+          <button id="share-btn" type="button">Copy share link</button>
+          <span id="share-status" role="status"></span>
+        </div>
+        <div class="editor-wrap">
+          <pre class="highlight-layer" aria-hidden="true"><code id="highlight-code"></code></pre>
+          <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+        </div>
+        <div id="diagnostics" class="diagnostics" aria-live="polite"></div>
+      </section>
+
+      <section class="preview-pane">
+        <div class="pane-toolbar">
+          <span>Preview</span>
+        </div>
+        <iframe
+          id="preview"
+          title="Crescent component preview"
+          sandbox="allow-scripts"
+        ></iframe>
+      </section>
+    </main>
+
+    <script src="highlight.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

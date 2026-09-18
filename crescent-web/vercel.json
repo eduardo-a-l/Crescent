@@ -1,0 +1,11 @@
+{
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/((?!api/|app/|images/).*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/compile.js": {
+      "maxDuration": 15
+    }
+  }
+}
