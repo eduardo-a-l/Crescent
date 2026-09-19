@@ -16,8 +16,7 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
       aria-label="Crescent home"
     >
       <img src="/images/crescent-logo.svg" alt="" />
-      <span className="cr-brand-word">crescent</span>
-      {!compact && <span className="cr-brand-sub">language / 0.x</span>}
+      <span className="cr-brand-word">Crescent</span>
     </a>
   );
 }
@@ -75,8 +74,8 @@ export function SiteShell({ active, children, fullBleed = false }: { active: Cre
         {children}
         <footer className="cr-footer">
           <div className="cr-footer-row">
-            <span className="cr-mono">Crescent / a language for the browser</span>
-            <span>Compiler v0.1.0 · TypeScript today · JavaScript output</span>
+            <span className="cr-mono">Crescent - a language for the browser</span>
+            <span>Compiler v0.1.0 · TypeScript · JavaScript output</span>
           </div>
         </footer>
       </div>
