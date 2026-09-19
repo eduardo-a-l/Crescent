@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronRight, CirclePlay, Copy, Download, ExternalLink, FileCode2, Github, Menu, Moon, Play, Radio, Sparkles, Terminal, X } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, CirclePlay, Copy, Download, ExternalLink, FileCode2, Moon, Play, Radio, Sparkles, Terminal, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { goTo, pathFor, type CrescentPage } from '../router';
 
@@ -46,9 +46,7 @@ export function SiteShell({ active, children, fullBleed = false }: { active: Cre
           {pages.map((page) => (
             <NavLink key={page} page={page} active={active === page} />
           ))}
-          <span className="cr-status"><i /> pre-1.0 · compiler 0.1.0</span>
         </nav>
-        <button type="button" className="cr-btn cr-btn-quiet md:hidden" aria-label="Open navigation"><Menu size={16} /></button>
       </header>
       <nav className="cr-mobile-nav" aria-label="Mobile navigation">
         {pages.map((page) => (
@@ -116,4 +114,4 @@ export function MiniMeta({ icon: Icon = Radio, children }: { icon?: typeof Radio
   return <span className="inline-flex items-center gap-2 cr-mono text-[10px] uppercase tracking-[.1em] text-[#9292ae]"><Icon size={12} className="text-[#9a84ff]" />{children}</span>;
 }
 
-export { ArrowUpRight, ChevronRight, CirclePlay, Copy, Download, ExternalLink, FileCode2, Github, Moon, Play, Radio, Sparkles, Terminal, X };
+export { ArrowUpRight, ChevronRight, CirclePlay, Copy, Download, ExternalLink, FileCode2, Moon, Play, Radio, Sparkles, Terminal, X };

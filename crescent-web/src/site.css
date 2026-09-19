@@ -59,8 +59,6 @@
 .cr-btn:hover { transform: translateY(-2px); background: rgba(43,37,78,.9); border-color: rgba(188,178,255,.62); }
 .cr-btn-primary { color: #0c0a1c; background: var(--cr-violet); border-color: var(--cr-violet); }
 .cr-btn-primary:hover { background: #b2a3ff; border-color: #b2a3ff; }
-.cr-btn-quiet { border-color: transparent; background: transparent; color: var(--cr-soft); }
-.cr-btn-quiet:hover { background: rgba(255,255,255,.05); }
 
 .cr-nav {
   position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;
@@ -73,8 +71,6 @@
 .cr-navlinks { display: flex; align-items: center; gap: 5px; }
 .cr-navlink { padding: 8px 11px; border-radius: 6px; color: var(--cr-muted); font-size: 12px; font-weight: 700; transition: color .2s, background .2s; }
 .cr-navlink:hover, .cr-navlink.active { color: var(--cr-text); background: rgba(255,255,255,.06); }
-.cr-status { display: inline-flex; align-items: center; gap: 7px; margin-left: 12px; padding: 7px 10px; border: 1px solid var(--cr-line); border-radius: 999px; color: var(--cr-muted); font: 10px var(--cr-mono); }
-.cr-status i { width: 6px; height: 6px; border-radius: 50%; background: #6f6d7f; }
 .cr-mobile-nav { display: none; }
 
 .cr-kicker { display: inline-flex; align-items: center; gap: 8px; color: var(--cr-violet); font: 11px var(--cr-mono); letter-spacing: .1em; text-transform: uppercase; }
