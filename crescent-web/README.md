@@ -50,6 +50,7 @@ being publicly fetchable at `/app/package.json` is harmless.
 npm install   # needs compiler/ already built once: cd ../compiler && npm run build
 npm run dev   # one command: the full site AND a working /api/compile, via a small Vite dev middleware
 npm test      # the real playground test suite: highlighter round-trips, jsdom click-through, compile pipeline
+npm run test:browser  # a real headless-Chrome test for layout bugs jsdom can't catch (see playground/README.md)
 ```
 
 `npm run dev` wires `/api/compile` into Vite's own dev server (see `apiCompileDevMiddleware` in

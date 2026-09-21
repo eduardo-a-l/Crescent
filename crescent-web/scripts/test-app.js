@@ -43,6 +43,7 @@ async function main() {
   window.navigator.clipboard = { writeText: async (text) => { window.__copiedText = text; } };
   window.TextEncoder = TextEncoder;
   window.TextDecoder = TextDecoder;
+  window.requestAnimationFrame = () => 0;
 
   window.eval(highlightSource);
   window.eval(appSource);

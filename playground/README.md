@@ -42,13 +42,24 @@ From this directory:
 
 ```bash
 npm install
-npm test    # compiles a real component through the pipeline and checks the result with jsdom
+npm test    # highlighter round-trips, jsdom UI tests, and a real end-to-end compile-and-mount test
+npm run test:browser  # a real headless-Chrome test for layout bugs jsdom can't catch (needs a browser Puppeteer can find — see below)
 npm run dev # starts a plain Node dev server at http://localhost:3000, no Vercel CLI required
 ```
 
 `npm install` needs `compiler/` to already be built (`cd ../compiler && npm run build`) — the
 `file:../compiler` dependency points at the compiler's own `dist/` output, not its TypeScript
 source.
+
+`npm run test:browser` uses real `puppeteer` (not `-core`), so the first `npm install` in an
+environment with normal internet access downloads a real Chrome for it automatically — nothing
+to configure. It's kept separate from the main `npm test` because it needs that browser download,
+which some CI/sandboxed environments don't allow; the main suite (jsdom-based) never needs one.
+This test exists specifically to catch layout bugs jsdom cannot: it verifies the syntax-highlight
+overlay's scrollable height exactly matches the real textarea's, including the case where the
+source ends in a trailing newline — a real, previously-shipped bug where the two elements'
+heights differed by exactly one line, causing highlighted text to visually drift out of alignment
+with what you'd actually typed the longer you edited.
 
 ## Deploying to Vercel
 

@@ -98,7 +98,10 @@
     }
   }
 
+  let runSequence = 0;
+
   async function run() {
+    const sequence = ++runSequence;
     runBtn.disabled = true;
     runBtn.textContent = 'Compiling…';
     try {
@@ -108,13 +111,17 @@
         body: JSON.stringify({ source: editor.value }),
       });
       const result = await response.json();
+      if (sequence !== runSequence) return;
       renderDiagnostics(result);
       preview.srcdoc = result.html || '<p style="font-family: sans-serif; color: #888; padding: 1rem;">Nothing to preview.</p>';
     } catch (e) {
+      if (sequence !== runSequence) return;
       renderDiagnostics({ error: `Could not reach the compiler: ${e.message}` });
     } finally {
-      runBtn.disabled = false;
-      runBtn.textContent = 'Run ▶';
+      if (sequence === runSequence) {
+        runBtn.disabled = false;
+        runBtn.textContent = 'Run ▶';
+      }
     }
   }
 
@@ -133,17 +140,24 @@
       });
   }
 
-  function refreshHighlight() {
-    highlightCode.innerHTML = window.CrescentHighlight.toHtml(editor.value);
-  }
-
   function syncHighlightScroll() {
     highlightLayer.scrollTop = editor.scrollTop;
     highlightLayer.scrollLeft = editor.scrollLeft;
   }
 
+  function onEditorContentChanged() {
+    const html = window.CrescentHighlight.toHtml(editor.value);
+    highlightCode.innerHTML = editor.value.endsWith('\n') ? `${html} ` : html;
+    syncHighlightScroll();
+  }
+
+  function scrollSyncLoop() {
+    syncHighlightScroll();
+    requestAnimationFrame(scrollSyncLoop);
+  }
+
   editor.value = sourceFromHash() || DEFAULT_SOURCE;
-  editor.addEventListener('input', refreshHighlight);
+  editor.addEventListener('input', onEditorContentChanged);
   editor.addEventListener('scroll', syncHighlightScroll);
   editor.addEventListener('keydown', (e) => {
     if (e.key !== 'Tab') return;
@@ -152,11 +166,12 @@
     const end = editor.selectionEnd;
     editor.value = `${editor.value.slice(0, start)}    ${editor.value.slice(end)}`;
     editor.selectionStart = editor.selectionEnd = start + 4;
-    refreshHighlight();
+    onEditorContentChanged();
   });
   runBtn.addEventListener('click', run);
   shareBtn.addEventListener('click', share);
 
-  refreshHighlight();
+  onEditorContentChanged();
+  scrollSyncLoop();
   run();
 })();
