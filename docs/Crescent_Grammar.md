@@ -216,6 +216,10 @@ Statement      ::= VarDecl
                   | ExprStatement ';'
                   | IfStatement
                   | ForStatement
+                  | WhileStatement
+                  | DoWhileStatement
+                  | BreakStatement ';'
+                  | ContinueStatement ';'
                   | ReturnStatement ';'
                   | Block
 
@@ -228,9 +232,14 @@ LValue         ::= Identifier { '.' Identifier | '[' Expression ']' }
 AssignOp       ::= '=' | '+=' | '-=' | '*=' | '/='
 
 IfStatement    ::= 'if' '(' Expression ')' Block [ 'else' ( IfStatement | Block ) ]
-ForStatement   ::= 'for' '(' Type Identifier 'in' Expression ')' Block
+ForStatement   ::= 'for' '(' ( VarDecl | Assignment ';' | ExprStatement ';' ) Expression ';' [ Assignment | ExprStatement ] ')' Block
+WhileStatement ::= 'while' '(' Expression ')' Block
+DoWhileStatement ::= 'do' Block 'while' '(' Expression ')'
+BreakStatement ::= 'break'
+ContinueStatement ::= 'continue'
 ReturnStatement ::= 'return' [ Expression ]
 ExprStatement  ::= Expression
+
 
 Expression     ::= Ternary
 Ternary        ::= LogicalOr [ '?' Expression ':' Expression ]

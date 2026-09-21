@@ -1,7 +1,9 @@
 export type TokenType =
   | 'COMPONENT' | 'STATE' | 'DERIVED' | 'PROVIDE' | 'INJECT' | 'CONST' | 'STRUCT'
   | 'VIEW' | 'STYLE' | 'IF' | 'ELSE' | 'FOR' | 'IN' | 'KEY' | 'RETURN'
+  | 'WHILE' | 'DO' | 'BREAK' | 'CONTINUE'
   | 'ASYNC' | 'AWAIT' | 'VOID' | 'TRUE' | 'FALSE' | 'NULL'
+
   | 'ON_MOUNT' | 'ON_CHANGE' | 'SLOT'
   | 'USE' | 'SUPER' | 'AS'
   | 'INT_TYPE' | 'FLOAT_TYPE' | 'STRING_TYPE' | 'BOOL_TYPE'
@@ -39,7 +41,12 @@ export const KEYWORDS: Record<string, TokenType> = {
   for: 'FOR',
   in: 'IN',
   key: 'KEY',
+  while: 'WHILE',
+  do: 'DO',
+  break: 'BREAK',
+  continue: 'CONTINUE',
   return: 'RETURN',
+
   async: 'ASYNC',
   await: 'AWAIT',
   void: 'VOID',

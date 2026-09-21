@@ -31,7 +31,13 @@ export type Stmt =
   | { kind: 'ExprStatement'; expr: Expr; line: number }
   | { kind: 'If'; test: Expr; consequent: Stmt[]; alternate?: Stmt[]; line: number }
   | { kind: 'For'; itemType: CrescentType; itemName: string; iterable: Expr; body: Stmt[]; line: number }
+  | { kind: 'ForC'; init: Stmt; test: Expr; update: Stmt; body: Stmt[]; line: number }
+  | { kind: 'While'; test: Expr; body: Stmt[]; line: number }
+  | { kind: 'DoWhile'; body: Stmt[]; test: Expr; line: number }
+  | { kind: 'Break'; line: number }
+  | { kind: 'Continue'; line: number }
   | { kind: 'Return'; value?: Expr; line: number };
+
 
 export interface Param {
   type: CrescentType;

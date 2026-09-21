@@ -201,13 +201,19 @@ component Counter {
 
 ---
 
-## 5. Control Flow inside `view {}`
+## 5. Control Flow
 
-Crescent lets you use standard C control flow directly inside UI markup.
+Crescent lets you use standard C control flow directly inside UI markup and logic blocks.
 
 ### Conditionals (`if` / `else`)
 
 ```c
+// Inside logic blocks
+if (count > 10) {
+    // ...
+}
+
+// Inside view {}
 view {
     <div>
         if (count > 10) {
@@ -217,10 +223,39 @@ view {
         }
     </div>
 }
-
 ```
 
-### Loops (`for`)
+### Loops
+
+#### Logic Blocks (`MODE_CODE`)
+
+Crescent supports standard C-style loops for imperative logic:
+
+```c
+// C-style counting for
+for (int i = 0; i < 10; i++) {
+    // ...
+}
+
+// While loop
+while (count < 10) {
+    count++;
+}
+
+// Do-while loop
+do {
+    count++;
+} while (count < 10);
+
+// Loop control
+for (int i = 0; i < 10; i++) {
+    if (i == 5) break;
+    if (i % 2 == 0) continue;
+    // ...
+}
+```
+
+#### View Blocks (`MODE_VIEW`)
 
 ```c
 component TodoList {
@@ -234,8 +269,8 @@ component TodoList {
         </ul>
     }
 }
-
 ```
+
 
 ---
 

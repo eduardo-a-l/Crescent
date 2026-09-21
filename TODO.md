@@ -564,11 +564,6 @@ Every important compiler bug should ideally become a regression test.
 
 ## Project Scaffolding & Dev Server (Later)
 
-> Do not start this before the compiler/CLI foundations above (and the
-> semantic checker in §5) are solid. An ecosystem and dev-server workflow
-> built on top of unstable language semantics has to be substantially redone
-> once those semantics settle — sequencing matters here.
-
 - [ ] `crescent new <name>` project scaffolding (a conventional
   `src/App.crs`, `src/components/`, `public/` layout)
 - [ ] `crescent.toml` project configuration (package name/version, build
@@ -591,10 +586,6 @@ Every important compiler bug should ideally become a regression test.
   performance on larger projects.
 
 ## Near-Term VS Code Enablement (v0.x)
-
-> Goal: make Crescent pleasant enough to write, check, build, and preview in VS Code before the
-> semantic checker and full LSP are complete. Early tooling must report the compiler's current
-> behavior faithfully; it must not invent type-system guarantees that the compiler does not have.
 
 - [x] Extract reusable project APIs from `src/index.ts`:
   `checkProject(root)` and `buildProject(root, outDir)` (see `src/project.ts`). `inMemoryFiles?`
@@ -640,11 +631,6 @@ Every important compiler bug should ideally become a regression test.
 - [ ] Implement formatter
 
 ## Language Server
-
-> A complete, incremental LSP remains a major v1.0 milestone. The minimal VS Code diagnostics and
-> preview loop above are intentionally an earlier v0.x deliverable. A trustworthy semantic checker
-> (§5) — ideally producing a typed AST — and the incremental-compilation work under "Project
-> Scaffolding & Dev Server" above are both prerequisites this depends on, not parallel work.
 
 - [ ] LSP architecture
 - [ ] Diagnostics
@@ -699,7 +685,7 @@ itself was touched to add this.
 - [x] Shareable links via URL-hash-encoded source (`#code=...`, base64) — no database, no
   accounts; the same technique the TypeScript Playground and Svelte REPL use.
 - [x] A real test (`playground/scripts/test-compile.js`, jsdom-based, mirrors
-  `compiler/scripts/test-web.js`'s approach) that compiles a genuine component through the whole
+  `compiler/scripts/test-web.js's` approach) that compiles a genuine component through the whole
   pipeline and dispatches a real click event against the mounted result, plus coverage for a
   warning-only diagnostic, a fatal parse error, and input-size rejection.
 - [ ] **Multi-file / `import` support** — deliberately out of scope for the first version; the
@@ -791,7 +777,7 @@ touching the parser.
   feature's answers: destructuring in a function's parameter list, and array destructuring (which
   needs its own answer for a length mismatch that struct destructuring's field-based shape doesn't
   have an equivalent question for).
-- [ ] **Additional loop forms & loop control** — Crescent's only loop today is the for-each `for
+- [~] **Additional loop forms & loop control** — Crescent's only loop today is the for-each `for
   (Type item in iterable)` form (`docs/Crescent_Grammar.md`'s `ForStatement`/`TemplateFor`
   productions); there is no traditional C-style counting `for` (`for (int i = 0; i < n; i++) { ...
   }`), no `while`/`do-while` loop, and no `break`/`continue` statement of any kind — a loop body
@@ -935,8 +921,6 @@ languages'/frameworks' features.
 
 # 13. Features NOT to Add Casually
 
-Do not add these simply because another language has them.
-
 - [ ] Classes
 - [ ] Classical inheritance
 - [ ] Arbitrary object-oriented encapsulation
@@ -953,70 +937,13 @@ Any proposal in this category requires an explicit language-design discussion fi
 
 ## v0.x — Build the Foundation
 
-Goal:
-
-> A usable experimental language implementation whose core semantics are
-> increasingly enforced by the compiler.
-
-Priority:
-
-1. semantic checker
-2. parser/grammar correctness
-3. compiler diagnostics
-4. runtime correctness
-5. codegen coverage
-6. tests
-7. CLI/tooling
-
----
-
 ## v0.x Compiler Maturity
-
-Target:
-
-- [ ] Parser handles the documented grammar reliably
-- [ ] Semantic checker catches major invalid programs
-- [ ] Null safety is reliable
-- [ ] Component/type checking is reliable
-- [ ] Reactivity rules are enforced
-- [ ] Codegen handles the core language
-- [ ] Runtime behavior is well-tested
-- [ ] Compiler errors are understandable
-
----
 
 ## v1.0
 
-The design document currently identifies two major requirements:
-
-- [ ] Trustworthy semantic/type checker
-- [ ] Real editor/LSP experience
-
-Do not declare v1.0 complete merely because many syntax features exist.
-
-The language foundation must be stable enough that users can reasonably build software against it.
-
----
-
 ## Post-v1.0
 
-Prefer:
-
-- bug fixes;
-- additive features;
-- performance improvements;
-- quality-of-life improvements;
-- tooling improvements.
-
-Avoid fundamental redesigns of stabilized v1.0 semantics.
-
----
-
 ## Someday / Maybe
-
-Not commitments, not scheduled on any current milestone — recorded here so
-the idea isn't lost, and explicitly gated on the project reaching a much more
-mature state first.
 
 - [ ] Self-hosting: rewrite meaningful parts of the compiler (lexer, parser,
   checker) in Crescent itself, once the language is mature and expressive
