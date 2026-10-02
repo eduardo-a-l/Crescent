@@ -1,0 +1,17 @@
+component Fine {
+    state<string?> name = "Ada";
+
+    void drain() {
+        while (name != null) {
+            console.log(name.length);
+            name = null;
+        }
+        for (int i = 0; name != null && i < 3; i++) {
+            console.log(name.length);
+        }
+    }
+
+    view {
+        <p>"ok"</p>
+    }
+}

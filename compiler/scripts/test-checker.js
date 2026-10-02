@@ -452,6 +452,48 @@ assert(
   `correct-assignment-ok.crs: correctly-typed reassignments, a non-literal reassignment, a compound '+=', a nullable reassignment, and reading (not reassigning) a const all produce no diagnostics, got ${JSON.stringify(correctAssignmentDiagnostics)}`
 );
 
+const breakOutsideLoopDiagnostics = diagnosticsFor('break-outside-loop.crs');
+assert(
+  hasDiagnostic(breakOutsideLoopDiagnostics, 'error', /'break' can only be used inside a loop/),
+  `break-outside-loop.crs: a break outside any loop is an error, got ${JSON.stringify(breakOutsideLoopDiagnostics)}`
+);
+
+const continueOutsideLoopDiagnostics = diagnosticsFor('continue-outside-loop.crs');
+assert(
+  hasDiagnostic(continueOutsideLoopDiagnostics, 'error', /'continue' can only be used inside a loop/),
+  `continue-outside-loop.crs: a continue outside any loop is an error, got ${JSON.stringify(continueOutsideLoopDiagnostics)}`
+);
+
+const loopsOkDiagnostics = diagnosticsFor('loops-ok.crs');
+assert(
+  loopsOkDiagnostics.length === 0,
+  `loops-ok.crs: for, while, do-while and for-each loops with break/continue (including inside nested ifs and nested loops, a state-variable for header, and an omitted update clause) produce no diagnostics, got ${JSON.stringify(loopsOkDiagnostics)}`
+);
+
+const loopVariableScopeDiagnostics = diagnosticsFor('loop-variable-scoped-to-for.crs');
+assert(
+  hasDiagnostic(loopVariableScopeDiagnostics, 'error', /Undefined identifier 'i'/),
+  `loop-variable-scoped-to-for.crs: a for-loop's declared variable is not visible after the loop, got ${JSON.stringify(loopVariableScopeDiagnostics)}`
+);
+
+const loopUpdateScopeDiagnostics = diagnosticsFor('loop-body-local-not-visible-to-update.crs');
+assert(
+  hasDiagnostic(loopUpdateScopeDiagnostics, 'error', /Undefined identifier 'leftover'/),
+  `loop-body-local-not-visible-to-update.crs: a variable declared inside the loop body is not visible to the for-loop update clause, got ${JSON.stringify(loopUpdateScopeDiagnostics)}`
+);
+
+const guardedWhileDiagnostics = diagnosticsFor('guarded-nullable-while-ok.crs');
+assert(
+  guardedWhileDiagnostics.length === 0,
+  `guarded-nullable-while-ok.crs: a while or for-loop test that null-checks a value narrows it inside the loop body, got ${JSON.stringify(guardedWhileDiagnostics)}`
+);
+
+const unguardedDoWhileDiagnostics = diagnosticsFor('unguarded-nullable-do-while.crs');
+assert(
+  unguardedDoWhileDiagnostics.filter((d) => d.severity === 'warning' && /'name' is nullable \(string\?\) and is accessed here without a null check/.test(d.message)).length === 1,
+  `unguarded-nullable-do-while.crs: a do-while body runs before its test, so the test's null check does not narrow the body, got ${JSON.stringify(unguardedDoWhileDiagnostics)}`
+);
+
 const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
 let totalExampleDiagnostics = 0;
 for (const [relPath, file] of exampleFiles) {

@@ -232,9 +232,12 @@ LValue         ::= Identifier { '.' Identifier | '[' Expression ']' }
 AssignOp       ::= '=' | '+=' | '-=' | '*=' | '/='
 
 IfStatement    ::= 'if' '(' Expression ')' Block [ 'else' ( IfStatement | Block ) ]
-ForStatement   ::= 'for' '(' ( VarDecl | Assignment ';' | ExprStatement ';' ) Expression ';' [ Assignment | ExprStatement ] ')' Block
+ForStatement   ::= ForEachStatement | CForStatement
+ForEachStatement ::= 'for' '(' Type Identifier 'in' Expression ')' Block
+CForStatement  ::= 'for' '(' ( VarDecl | SimpleStatement ';' ) Expression ';' [ SimpleStatement ] ')' Block
+SimpleStatement ::= LValue AssignOp Expression | LValue ( '++' | '--' ) | Expression
 WhileStatement ::= 'while' '(' Expression ')' Block
-DoWhileStatement ::= 'do' Block 'while' '(' Expression ')'
+DoWhileStatement ::= 'do' Block 'while' '(' Expression ')' ';'
 BreakStatement ::= 'break'
 ContinueStatement ::= 'continue'
 ReturnStatement ::= 'return' [ Expression ]

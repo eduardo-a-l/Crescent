@@ -249,11 +249,27 @@ do {
 
 // Loop control
 for (int i = 0; i < 10; i++) {
-    if (i == 5) break;
-    if (i % 2 == 0) continue;
+    if (i == 5) {
+        break;
+    }
+    if (i % 2 == 0) {
+        continue;
+    }
     // ...
 }
 ```
+
+The for-each form `for (Type item in iterable)` is also available in logic blocks.
+
+**Rules (v0.x):**
+
+- Loop bodies are always blocks, like `if` bodies.
+- A `do`-`while` statement ends with a semicolon.
+- A variable declared in a `for` header is scoped to that loop. The generated JavaScript uses `let`, so each iteration has its own binding. Whether closures capturing a loop variable keep this guarantee is open until first-class function types are designed.
+- `break` and `continue` are unlabeled and apply to the innermost enclosing loop, including a for-each loop. Using either outside a loop is a compile error; a function body never inherits an enclosing loop.
+- The `for` header's initializer and update clauses must each compile to a single JavaScript statement; anything else is reported as unsupported by codegen, not generated incorrectly.
+- The checker narrows nullable values in a `while` or `for` body using the loop's test, the same way it does for `if`. A `do`-`while` body runs before its test, so nothing is narrowed there. Nothing is narrowed after a loop, and `break`/`continue` do not yet count as early exits for post-guard narrowing.
+- C-style `for`, `while` and `do`-`while` exist only in logic blocks. `view {}` blocks keep the keyed for-each `for` only.
 
 #### View Blocks (`MODE_VIEW`)
 

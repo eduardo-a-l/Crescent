@@ -256,6 +256,12 @@ function arrayMutatorStmtJs(
   return null;
 }
 
+function loopClauseJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<string>, feature: string): string {
+  const js = stmtToJs(stmt, stateNames, derivedNames).trim();
+  if (js.includes('\n')) unsupported(feature);
+  return js.endsWith(';') ? js.slice(0, -1) : js;
+}
+
 function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<string>): string {
   switch (stmt.kind) {
     case 'VarDecl':
@@ -292,6 +298,35 @@ function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<str
       lines.push('}');
       return lines.join('\n');
     }
+    case 'ForC': {
+      const init = loopClauseJs(stmt.init, stateNames, derivedNames, 'for-loop initializer that expands to multiple statements');
+      const update = stmt.update
+        ? loopClauseJs(stmt.update, stateNames, derivedNames, 'for-loop update that expands to multiple statements')
+        : '';
+      const lines: string[] = [];
+      lines.push(`for (${init}; ${exprToJs(stmt.test, stateNames)}; ${update}) {`);
+      for (const s of stmt.body) lines.push(indentBlock(stmtToJs(s, stateNames, derivedNames), 1));
+      lines.push('}');
+      return lines.join('\n');
+    }
+    case 'While': {
+      const lines: string[] = [];
+      lines.push(`while (${exprToJs(stmt.test, stateNames)}) {`);
+      for (const s of stmt.body) lines.push(indentBlock(stmtToJs(s, stateNames, derivedNames), 1));
+      lines.push('}');
+      return lines.join('\n');
+    }
+    case 'DoWhile': {
+      const lines: string[] = [];
+      lines.push('do {');
+      for (const s of stmt.body) lines.push(indentBlock(stmtToJs(s, stateNames, derivedNames), 1));
+      lines.push(`} while (${exprToJs(stmt.test, stateNames)});`);
+      return lines.join('\n');
+    }
+    case 'Break':
+      return 'break;';
+    case 'Continue':
+      return 'continue;';
     case 'Return':
       return stmt.value ? `return ${exprToJs(stmt.value, stateNames)};` : 'return;';
     default:

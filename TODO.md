@@ -777,35 +777,25 @@ touching the parser.
   feature's answers: destructuring in a function's parameter list, and array destructuring (which
   needs its own answer for a length mismatch that struct destructuring's field-based shape doesn't
   have an equivalent question for).
-- [~] **Additional loop forms & loop control** — Crescent's only loop today is the for-each `for
-  (Type item in iterable)` form (`docs/Crescent_Grammar.md`'s `ForStatement`/`TemplateFor`
-  productions); there is no traditional C-style counting `for` (`for (int i = 0; i < n; i++) { ...
-  }`), no `while`/`do-while` loop, and no `break`/`continue` statement of any kind — a loop body
-  currently has no way to exit early or skip an iteration short of restructuring the logic with an
-  `if`. Not designed yet; open questions before implementing any of these:
-  - **C-style `for`**: does it belong in function bodies only, or also inside `view {}` blocks? The
-    existing `TemplateFor` gets its reactive list-reconciliation identity from the `key Expression`
-    clause on the iterable — a counting loop has no natural "item" to key on, so it's unclear a
-    view-block counting `for` is even meaningful versus just being function-body-only (statement-level
-    `checkStmts`'s `For` case) and left unsupported in `checkTemplateNode`.
-  - Scoping: does the loop variable get a fresh binding per iteration (so a closure created inside
-    the loop body captures that iteration's value, `let`-style) or one shared mutable variable
-    across all iterations (`var`-style)? This matters concretely once first-class function types /
-    closures (see below) exist, since a callback created inside a counting loop is the classic case
-    where this choice is visible.
-  - **`while` / `do-while`**: simpler than counting `for` (no init/increment clause to design), but
-    still needs the same function-body-vs-view-block scoping question answered, and interacts with
-    the reachability-narrowing gap already tracked under §5 Null Safety ("Correct narrowing through
-    `if`") — a `while (x != null) { ... }` should presumably narrow `x` inside its body the same way
-    an `if` does.
-  - **`break` / `continue`**: needs an answer for how they interact with the existing for-each `for`
-    (do they apply there too, or only to the new loop forms?), whether labeled variants
-    (`break outer;`) are in scope at all for v0.x, and what the semantic checker should reject (a
-    `break`/`continue` outside any loop — a real, currently-impossible-to-write diagnostic once the
-    statements exist).
-  - Resolve all of the above against `docs/Crescent_Design.md` §5 "Control Flow inside `view {}`"
-    and the reactivity model before touching the lexer/parser — see `AGENTS.md` §4's "Do not invent
-    language semantics" rule.
+- [x] **Additional loop forms & loop control** — implemented in logic blocks: C-style `for (init;
+  test; update)`, `while`, `do`-`while`, and unlabeled `break`/`continue` (applying to the
+  innermost loop, including the for-each `for`). The rules chosen are written up in
+  `docs/Crescent_Design.md`'s "Loops" subsection; the grammar is in `docs/Crescent_Grammar.md` §6.
+  The checker rejects `break`/`continue` outside a loop, scopes a `for` header's variable to the
+  loop, and narrows nullable values in `while`/`for` bodies from the loop test. Still open,
+  deliberately not decided here:
+  - labeled `break`/`continue`;
+  - C-style `for` / `while` in `view {}` blocks (currently logic blocks only);
+  - whether per-iteration loop-variable binding (what the JS `let` output gives today) is a
+    permanent language guarantee, once closures exist;
+  - treating `break`/`continue` as early exits for post-guard narrowing (`if (x == null) {
+    continue; }` followed by `x.foo` still warns);
+  - `for` clauses that expand to several JS statements (e.g. a state-array mutator call) are
+    reported as unsupported by codegen.
+  Examples and tests: `compiler/examples/loops.crs`, `compiler/scripts/test-loops.js`, and the
+  `loops-ok`, `break-outside-loop`, `continue-outside-loop`, `loop-variable-scoped-to-for`,
+  `loop-body-local-not-visible-to-update`, `guarded-nullable-while-ok` and
+  `unguarded-nullable-do-while` checker fixtures.
 - [ ] **Tuples** — tuple types, tuple literals, tuple indexing, and tuple destructuring (building
   on the destructuring item above). Consider whether Crescent actually needs tuples as a distinct
   concept or whether structs already cover the same need less anonymously — decide deliberately,

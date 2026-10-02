@@ -378,6 +378,10 @@ export class Parser {
     }
     if (this.check('IF')) return this.parseIfStatement();
     if (this.check('FOR')) return this.parseForStatement();
+    if (this.check('WHILE')) return this.parseWhileStatement();
+    if (this.check('DO')) return this.parseDoWhileStatement();
+    if (this.check('BREAK')) return this.parseLoopControlStatement('BREAK', 'Break');
+    if (this.check('CONTINUE')) return this.parseLoopControlStatement('CONTINUE', 'Continue');
     if (this.check('RETURN')) return this.parseReturnStatement();
     return this.parseAssignmentOrExprStatement();
   }
@@ -407,20 +411,20 @@ export class Parser {
     return { kind: 'StructDestructure', typeName, fields, init, line: 0 };
   }
 
-  private parseAssignmentOrExprStatement(): AST.Stmt {
+  private parseAssignmentOrExprStatement(requireSemi: boolean = true): AST.Stmt {
     const expr = this.parseExpression();
     const assignOps: TokenType[] = ['ASSIGN', 'PLUS_ASSIGN', 'MINUS_ASSIGN', 'STAR_ASSIGN', 'SLASH_ASSIGN'];
     if (this.checkAny(assignOps)) {
       const op = this.advance().value;
       const value = this.parseExpression();
-      this.expect('SEMI');
+      if (requireSemi) this.expect('SEMI');
       return { kind: 'Assignment', target: expr, op, value, line: 0 };
     }
     if (expr.kind === 'Postfix') {
-      this.expect('SEMI');
+      if (requireSemi) this.expect('SEMI');
       return { kind: 'PostfixStmt', target: expr.operand, op: expr.op, line: 0 };
     }
-    this.expect('SEMI');
+    if (requireSemi) this.expect('SEMI');
     return { kind: 'ExprStatement', expr, line: 0 };
   }
 
@@ -445,13 +449,81 @@ export class Parser {
   private parseForStatement(): AST.Stmt {
     this.expect('FOR');
     this.expect('LPAREN');
-    const itemType = this.parseType();
-    const itemName = this.expect('IDENTIFIER').value;
-    this.expect('IN');
-    const iterable = this.parseExpression();
+    const headerSnap = this.snapshot();
+    let itemType: AST.CrescentType | null = null;
+    let itemName = '';
+    try {
+      itemType = this.parseType();
+      itemName = this.expect('IDENTIFIER').value;
+      this.expect('IN');
+    } catch (e) {
+      itemType = null;
+      this.restore(headerSnap);
+    }
+    if (itemType) {
+      const iterable = this.parseExpression();
+      this.expect('RPAREN');
+      const body = this.parseBlock();
+      return { kind: 'For', itemType, itemName, iterable, body, line: 0 };
+    }
+    const init = this.parseForInit();
+    const test = this.parseExpression();
+    this.expect('SEMI');
+    let update: AST.Stmt | undefined;
+    if (!this.check('RPAREN')) {
+      const updateLine = this.current.line;
+      update = this.parseAssignmentOrExprStatement(false);
+      update.line = updateLine;
+    }
     this.expect('RPAREN');
     const body = this.parseBlock();
-    return { kind: 'For', itemType, itemName, iterable, body, line: 0 };
+    return { kind: 'ForC', init, test, update, body, line: 0 };
+  }
+
+  private parseForInit(): AST.Stmt {
+    const line = this.current.line;
+    let init: AST.Stmt;
+    if (PRIMITIVE_TYPE_TOKENS.includes(this.current.type)) {
+      init = this.parseVarDeclStatement();
+    } else if (this.check('IDENTIFIER')) {
+      const snap = this.snapshot();
+      try {
+        init = this.parseVarDeclStatement();
+      } catch (e) {
+        this.restore(snap);
+        init = this.parseAssignmentOrExprStatement();
+      }
+    } else {
+      init = this.parseAssignmentOrExprStatement();
+    }
+    init.line = line;
+    return init;
+  }
+
+  private parseWhileStatement(): AST.Stmt {
+    this.expect('WHILE');
+    this.expect('LPAREN');
+    const test = this.parseExpression();
+    this.expect('RPAREN');
+    const body = this.parseBlock();
+    return { kind: 'While', test, body, line: 0 };
+  }
+
+  private parseDoWhileStatement(): AST.Stmt {
+    this.expect('DO');
+    const body = this.parseBlock();
+    this.expect('WHILE');
+    this.expect('LPAREN');
+    const test = this.parseExpression();
+    this.expect('RPAREN');
+    this.expect('SEMI');
+    return { kind: 'DoWhile', body, test, line: 0 };
+  }
+
+  private parseLoopControlStatement(token: TokenType, kind: 'Break' | 'Continue'): AST.Stmt {
+    this.expect(token);
+    this.expect('SEMI');
+    return { kind, line: 0 };
   }
 
   private parseReturnStatement(): AST.Stmt {

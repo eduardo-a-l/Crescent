@@ -1,0 +1,14 @@
+component Broken {
+    state<string?> name = "Ada";
+
+    void drain() {
+        do {
+            console.log(name.length);
+            name = null;
+        } while (name != null);
+    }
+
+    view {
+        <p>"ok"</p>
+    }
+}

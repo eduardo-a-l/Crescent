@@ -1,0 +1,52 @@
+component Fine {
+    state<int> total = 0;
+    state<string[]> names = ["Ada", "Grace"];
+
+    void run() {
+        for (int i = 0; i < 10; i++) {
+            if (i == 5) {
+                break;
+            }
+            if (i % 2 == 0) {
+                continue;
+            }
+            total += i;
+        }
+        for (total = 0; total < 3; total++) {
+            total += 0;
+        }
+        int n = 0;
+        while (n < 10) {
+            n++;
+            if (n == 3) {
+                continue;
+            }
+            if (n == 8) {
+                break;
+            }
+        }
+        do {
+            n--;
+            if (n < 2) {
+                break;
+            }
+        } while (n > 0);
+        for (string name in names) {
+            if (name == "Ada") {
+                continue;
+            }
+            for (int j = 0; j < 3; j++) {
+                if (j == 1) {
+                    break;
+                }
+            }
+        }
+        for (int k = 0; k < 3;) {
+            k++;
+        }
+    }
+
+    view {
+        <p>{total}</p>
+    }
+}

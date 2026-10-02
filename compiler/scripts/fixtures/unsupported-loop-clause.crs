@@ -1,0 +1,13 @@
+component Broken {
+    state<int[]> items = [1];
+
+    void grow() {
+        for (items.push(2); items.length < 3; items.push(3)) {
+            items.length;
+        }
+    }
+
+    view {
+        <p>"ok"</p>
+    }
+}

@@ -14,6 +14,52 @@
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Implemented the loop forms and loop control specified by the previous commit (`6ae4c0e`, which only
+touched the AST, tokens, grammar and design doc): C-style `for`, `while`, `do`-`while`, `break`,
+`continue`. Branch: `feature/while-break-continue-loops`. The playground and editor extensions were
+not touched.
+
+**Spec conflicts found and resolved (design doc is the first source of truth):**
+- The grammar had *replaced* the for-each statement production with the C-style one, although the
+  implementation (and `TODO.md`) still use for-each. Restored it as `ForEachStatement`; `ForStatement`
+  is now either form.
+- The design doc's `do { } while (cond);` ends with a semicolon, the grammar did not. Semicolon is
+  now required (grammar updated).
+- The design doc's example `if (i == 5) break;` has no braces, but the grammar and parser require a
+  block after `if`. The example now uses braces; brace-less `if` was not added.
+
+**What was completed:**
+- `parser.ts`: `while`, `do`-`while`, `break`, `continue`, and a C-style `for`. The `for` header is
+  tried as for-each first (`Type name in`), then falls back to C-style. The init is a declaration,
+  assignment or expression; the update is optional.
+- `ast.ts`: `ForC.update` is optional.
+- `checker.ts`: `checkStmts` takes an `inLoop` flag and now returns its final scope/narrowing so the
+  `for` header's variable stays scoped to the loop (and is invisible to code after it, but visible
+  to the test, update and body; body locals are not visible to the update). `break`/`continue`
+  outside a loop is an error. `while`/`for` bodies are narrowed from the loop test; `do`-`while` is not.
+- `codegen.ts`: emits the matching JS. `for` clauses that would expand to several JS statements throw
+  an unsupported-codegen error.
+
+**Files changed:** `compiler/src/{ast,parser,checker,codegen}.ts`, `docs/Crescent_Design.md`,
+`docs/Crescent_Grammar.md`, `TODO.md`, `HANDOFF.md`, `compiler/package.json` (adds `test-loops.js`),
+new `compiler/examples/loops.crs`, `compiler/scripts/test-loops.js`,
+`compiler/scripts/fixtures/unsupported-loop-clause.crs`, and 7 new files in
+`compiler/scripts/fixtures/checker/`.
+
+**Tests run:** `npx tsc --noEmit` clean; `npm test` in `compiler/`: **241 PASS, 0 FAIL** (223 before
+this work, 18 new).
+
+**Known problems / unfinished:** see the "Still open" list in `TODO.md` under the loops item
+(labeled loops, loops in `view {}`, closure-capture guarantee, `break`/`continue` as early exits for
+narrowing, multi-statement `for` clauses). Not updated, deliberately: the VS Code TextMate keyword
+list (`editors/vscode/syntaxes`) and the playground highlighter, so `while`/`do`/`break`/`continue`
+are not syntax-highlighted there yet.
+
+**Recommended next step:** teach `blockDefinitelyReturns`-style narrowing about `break`/`continue`, or
+update the VS Code grammar keyword list.
+
+Before that:
+**Current task:**
 Extended flow-sensitive null narrowing to cover every remaining kind of nullable binding: local
 variables, function parameters, and `for`-loop item variables. Previously the `nullable` map used
 for narrowing was built once per component from `state`/`derived`/`provide`/`const`/`inject`/
