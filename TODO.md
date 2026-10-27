@@ -227,7 +227,11 @@
   (`guarded-nullable-ternary-ok.crs`). A null-branch guard that definitely returns now narrows the
   following statements too: after `if (x == null) { return; }`, `x` is non-null on the fallthrough
   path (`guarded-nullable-early-return-ok.crs`). A non-terminal branch deliberately does not narrow
-  following statements (`unguarded-nullable-after-nonterminal-if.crs`). This session closed the
+  following statements (`unguarded-nullable-after-nonterminal-if.crs`). `break` and `continue` count as exits too, so
+  `if (x == null) { continue; }` narrows the rest of that loop body (`guarded-nullable-break-continue-ok.crs`);
+  the narrowing does not outlive the loop (`unguarded-nullable-after-loop-guard.crs`), and a `break`
+  that only exits a nested loop does not make the outer guard terminal
+  (`unguarded-nullable-nested-loop-break.crs`). This session closed the
   last explicitly-tracked gap: nullable locals, function parameters, and `for`-loop item variables
   are now included in flow tracking too — a `VarDecl` of nullable type extends the narrowing map
   for the rest of its enclosing block (`guarded-nullable-local-ok.crs`/
@@ -788,8 +792,6 @@ touching the parser.
   - C-style `for` / `while` in `view {}` blocks (currently logic blocks only);
   - whether per-iteration loop-variable binding (what the JS `let` output gives today) is a
     permanent language guarantee, once closures exist;
-  - treating `break`/`continue` as early exits for post-guard narrowing (`if (x == null) {
-    continue; }` followed by `x.foo` still warns);
   - `for` clauses that expand to several JS statements (e.g. a state-array mutator call) are
     reported as unsupported by codegen.
   Examples and tests: `compiler/examples/loops.crs`, `compiler/scripts/test-loops.js`, and the

@@ -7,13 +7,37 @@
 
 ## Current State
 
-**Branch:** `develop`
+**Branch:** `feature/break-continue-narrowing` (off `develop` at `b34a107`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Made `break` and `continue` count as early exits for post-guard null narrowing, the same way
+`return` already did. In `compiler/src/checker.ts`, `blockDefinitelyReturns` became
+`blockDefinitelyExits` and now also treats a direct `Break` or `Continue` statement as exiting the
+block, including inside a nested `if` whose two branches both exit. After
+`if (x == null) { continue; }` (or `break;`), `x` is narrowed for the rest of that block. Narrowing
+is block-local, so it does not outlive the loop, and a `break` inside a nested loop within the guard
+is not a direct statement of the guard's block, so it does not count. Only `checker.ts` changed in
+`compiler/src/`; no parser, codegen or runtime change.
+
+**Tests added** (`compiler/scripts/fixtures/checker/` + `test-checker.js`):
+`guarded-nullable-break-continue-ok.crs` (for, while, do-while and for-each, plus a nested `if`
+whose branches are `break` and `continue`), `unguarded-nullable-after-loop-guard.crs` (exactly one
+warning, after the loop), `unguarded-nullable-nested-loop-break.crs` (exactly one warning).
+Before the change the positive fixture produced 5 false warnings; the two negatives warn the same
+before and after.
+
+**Docs:** `docs/Crescent_Design.md` loop rules and `TODO.md` (Null Safety note; removed the
+resolved bullet from the loops item).
+
+**Known gap left open:** a guard whose branch calls a function that exits is not recognised, and
+narrowing is still not interprocedural (see the confirmed unsound call-boundary case below).
+
+Before that:
+
 Implemented the loop forms and loop control specified by the previous commit (`6ae4c0e`, which only
 touched the AST, tokens, grammar and design doc): C-style `for`, `while`, `do`-`while`, `break`,
 `continue`. Branch: `feature/while-break-continue-loops`. The playground and editor extensions were

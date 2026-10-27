@@ -480,10 +480,10 @@ function checkReturnStmt(
   checkArrayElements(returnType, stmt.value, where, stmt.line, diagnostics, `Type mismatch: element of function '${functionName}' return value`);
 }
 
-function blockDefinitelyReturns(stmts: AST.Stmt[]): boolean {
+function blockDefinitelyExits(stmts: AST.Stmt[]): boolean {
   for (const stmt of stmts) {
-    if (stmt.kind === 'Return') return true;
-    if (stmt.kind === 'If' && stmt.alternate && blockDefinitelyReturns(stmt.consequent) && blockDefinitelyReturns(stmt.alternate)) return true;
+    if (stmt.kind === 'Return' || stmt.kind === 'Break' || stmt.kind === 'Continue') return true;
+    if (stmt.kind === 'If' && stmt.alternate && blockDefinitelyExits(stmt.consequent) && blockDefinitelyExits(stmt.alternate)) return true;
   }
   return false;
 }
@@ -576,7 +576,7 @@ function checkStmts(
             narrowed: elseTargets.length ? new Set([...currentNarrow.narrowed, ...elseTargets]) : currentNarrow.narrowed,
           };
           checkStmts(stmt.alternate, localScope, globalScope, functions, alternateNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
-        } else if (blockDefinitelyReturns(stmt.consequent)) {
+        } else if (blockDefinitelyExits(stmt.consequent)) {
           const fallthroughTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'else');
           if (fallthroughTargets.length) {
             currentNarrow = {

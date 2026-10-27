@@ -268,7 +268,7 @@ The for-each form `for (Type item in iterable)` is also available in logic block
 - A variable declared in a `for` header is scoped to that loop. The generated JavaScript uses `let`, so each iteration has its own binding. Whether closures capturing a loop variable keep this guarantee is open until first-class function types are designed.
 - `break` and `continue` are unlabeled and apply to the innermost enclosing loop, including a for-each loop. Using either outside a loop is a compile error; a function body never inherits an enclosing loop.
 - The `for` header's initializer and update clauses must each compile to a single JavaScript statement; anything else is reported as unsupported by codegen, not generated incorrectly.
-- The checker narrows nullable values in a `while` or `for` body using the loop's test, the same way it does for `if`. A `do`-`while` body runs before its test, so nothing is narrowed there. Nothing is narrowed after a loop, and `break`/`continue` do not yet count as early exits for post-guard narrowing.
+- The checker narrows nullable values in a `while` or `for` body using the loop's test, the same way it does for `if`. A `do`-`while` body runs before its test, so nothing is narrowed there. Nothing is narrowed after a loop. A null guard whose branch definitely exits, by `return`, `break` or `continue`, narrows the rest of its block: after `if (x == null) { continue; }`, `x` is non-null for the remaining statements of that loop body. Only a direct `break` or `continue` in the guard's block counts, so a `break` inside a nested loop within the guard does not.
 - C-style `for`, `while` and `do`-`while` exist only in logic blocks. `view {}` blocks keep the keyed for-each `for` only.
 
 #### View Blocks (`MODE_VIEW`)

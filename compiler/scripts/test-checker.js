@@ -383,6 +383,28 @@ assert(
   `unguarded-nullable-after-nonterminal-if.crs: a non-terminal null branch does not narrow following statements, got ${JSON.stringify(unguardedAfterNonterminalIfDiagnostics)}`
 );
 
+const guardedBreakContinueDiagnostics = diagnosticsFor('guarded-nullable-break-continue-ok.crs');
+assert(
+  guardedBreakContinueDiagnostics.length === 0,
+  `guarded-nullable-break-continue-ok.crs: a null guard that breaks or continues narrows the rest of the loop body in for, while, do-while and for-each loops, got ${JSON.stringify(guardedBreakContinueDiagnostics)}`
+);
+
+const unguardedAfterLoopGuardDiagnostics = diagnosticsFor('unguarded-nullable-after-loop-guard.crs');
+assert(
+  unguardedAfterLoopGuardDiagnostics.length === 1 &&
+    unguardedAfterLoopGuardDiagnostics[0].line === 11 &&
+    /'message' is nullable \(string\?\) and is accessed here without a null check/.test(unguardedAfterLoopGuardDiagnostics[0].message),
+  `unguarded-nullable-after-loop-guard.crs: narrowing from a break guard applies inside the loop body only, not after the loop, got ${JSON.stringify(unguardedAfterLoopGuardDiagnostics)}`
+);
+
+const unguardedNestedLoopBreakDiagnostics = diagnosticsFor('unguarded-nullable-nested-loop-break.crs');
+assert(
+  unguardedNestedLoopBreakDiagnostics.length === 1 &&
+    unguardedNestedLoopBreakDiagnostics[0].line === 12 &&
+    /'message' is nullable \(string\?\) and is accessed here without a null check/.test(unguardedNestedLoopBreakDiagnostics[0].message),
+  `unguarded-nullable-nested-loop-break.crs: a break that only exits a nested loop does not make the outer guard terminal, got ${JSON.stringify(unguardedNestedLoopBreakDiagnostics)}`
+);
+
 const guardedLocalDiagnostics = diagnosticsFor('guarded-nullable-local-ok.crs');
 assert(
   guardedLocalDiagnostics.length === 0,
