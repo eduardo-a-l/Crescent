@@ -264,21 +264,22 @@
   both check `narrow.nullable`/`narrow.narrowed` and emit the "is nullable (...) and is accessed
   here without a null check" warning (`unguarded-nullable.crs`). Corrected the checkbox this
   session — same "already done, never marked off" situation found in `Structs` two sessions ago.
-- [~] Test nested/control-flow cases — nested `if`s (narrowing composes correctly: a nullable value
+- [x] Test nested/control-flow cases — nested `if`s (narrowing composes correctly: a nullable value
   narrowed by an outer `if` stays narrowed inside a nested `if` on a different variable) and
-  narrowing propagating into a `for` loop body are now both covered and confirmed working
-  (`guarded-nullable-nested-and-loop-ok.crs`). Narrowing across a function-call boundary is now
-  **confirmed, not just suspected**: calling a function that reassigns a narrowed value to `null`
-  does *not* invalidate the narrowing (`unsound-nullable-across-call-boundary.crs` — a component
-  whose `greet()` narrows `name`, calls `clearName()` which sets `name = null`, then accesses
-  `name.length` — the checker currently reports zero diagnostics for this, which is genuinely
-  unsound: that access can be a null dereference at runtime). Deliberately left unfixed rather than
-  quietly worked around: a correct fix needs real interprocedural analysis (does this function, or
-  anything it calls, transitively assign to this narrowed name anywhere in its body?), which is a
-  meaningfully larger feature than anything else in this section — worth a deliberate design
-  decision (how conservative should the invalidation be? what about assignments through a struct
-  method, once those exist?) rather than a quick patch. Still `[~]`, not `[x]`, specifically because
-  of this open soundness gap.
+  narrowing propagating into a `for` loop body are covered and working
+  (`guarded-nullable-nested-and-loop-ok.crs`). The call-boundary unsoundness this item used to be
+  held open for is fixed, together with a wider gap found while fixing it: assignment never
+  invalidated narrowing at all, not even within one function. Now an assignment of a possibly-null
+  value ends the narrowing, a call ends the narrowing of every name the callee may assign
+  (per-function summaries in `compiler/src/narrowing.ts`, computed to a fixpoint over the call
+  graph so recursion is handled), loops drop whatever their body or test may null before the first
+  iteration and after the loop, and a guard whose own test calls a nulling function does not
+  narrow. Fixtures: `unguarded-nullable-across-call-boundary.crs`,
+  `unguarded-nullable-after-assignment.crs`, `unguarded-nullable-loop-backedge.crs`,
+  `unguarded-nullable-transitive-call.crs`, `unguarded-nullable-guard-test-call.crs`, and
+  `guarded-nullable-call-ok.crs` for the cases that must stay clean. Still not covered, and
+  documented in the design doc: evaluation order inside a single expression, `derived` values
+  whose dependencies change, `await`, and calls from view expressions or event handlers.
 
 ## Structs
 

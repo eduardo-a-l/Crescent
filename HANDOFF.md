@@ -7,13 +7,57 @@
 
 ## Current State
 
-**Branch:** `feature/import-conflicts` (off `develop` at `fa7d40c`)
+**Branch:** `feature/call-boundary-narrowing` (off `develop` at `bc71973`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Closed the confirmed null-narrowing soundness gap across function calls, plus a wider one found
+while doing it: assignment never invalidated narrowing at all, even inside one function (`if (x !=
+null) { x = null; x.length; }` produced no diagnostic). The checker now treats narrowing as dead
+once a value may have been set back to null.
+
+How it works. New pure-AST module `compiler/src/narrowing.ts` (also now home of
+`blockDefinitelyExits`, moved out of `checker.ts`):
+- `computeFunctionEffects` builds, for every function of a component, the set of names it may
+  assign a possibly-null value to: direct assignments (`x = value` where `value` is not a
+  literal, struct or array literal or template string), minus the function's own params and
+  locals, then closed over the call graph by a fixpoint so chains and recursion work.
+- `nullifiedByStmts(stmts, effects, mode)` and `nullifiedByExpr` return the names a piece of code
+  may null, including via calls. Mode `fallthrough` skips `if` branches that always exit; mode
+  `full` includes everything and is used for loops.
+`checker.ts` uses them in four places: after every statement the nullified names are dropped from
+`narrowed`; on entry to a loop (`for`, C-style `for`, `while`, `do`-`while`) whatever its test,
+update or body may null is dropped, which covers the back-edge, and the same set is dropped after
+the loop through the generic post-statement rule; an `if` drops names nullified by its own test
+before narrowing its branches and refuses to narrow a name its test may null (`if (x != null &&
+reset())`); effects are cached per component in a `WeakMap` keyed by the `functions` map, so
+`checkStmts` signatures did not change.
+
+Tests (`compiler/scripts/fixtures/checker/` + `test-checker.js`, exact warning lines asserted via a
+new `assertWarnedLines` helper): `unguarded-nullable-across-call-boundary.crs` (renamed from
+`unsound-nullable-across-call-boundary.crs`, whose assertion used to document the gap),
+`unguarded-nullable-after-assignment.crs`, `unguarded-nullable-loop-backedge.crs`,
+`unguarded-nullable-transitive-call.crs`, `unguarded-nullable-guard-test-call.crs`, and
+`guarded-nullable-call-ok.crs` for what must stay clean (calls that assign other names or
+non-null literals, a callee that only assigns its own parameter, a guard branch that exits after a
+nulling call, a loop test that re-narrows each iteration, `continue` after a nulling call). Every
+`.crs` under `compiler/examples` still has zero nullable warnings.
+
+Docs: `docs/Crescent_Design.md` section 11 states the rules and the limits; `TODO.md` marks
+"Test nested/control-flow cases" done and lists the fixtures. The old paragraph below about this
+being "deliberately left unfixed" is superseded.
+
+Known limits, all documented and none yet addressed: evaluation order inside one expression
+(`reset() + x.length` after a guard is not caught); a narrowed `derived` value is not invalidated
+when the state it depends on changes; `await` does not invalidate narrowing of component state;
+calls from view expressions or event handlers are not analysed; a possibly-null assignment of an
+identifier or ternary is conservatively treated as nulling even when the right side is non-null.
+
+Before that:
+
 Reported conflicting names created by `use` declarations, which previously produced no diagnostic
 at all. In `compiler/src/checker.ts`, `checkFile` now tracks which module each imported name came
 from and emits an error on the `use` line when an import's bound name (the item name, or its `as`

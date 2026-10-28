@@ -1,5 +1,6 @@
 import * as AST from './ast';
 import { FileImports, LoadedFile } from './modules';
+import { FunctionEffects, blockDefinitelyExits, computeFunctionEffects, nullifiedByExpr, nullifiedByStmts } from './narrowing';
 
 export interface Diagnostic {
   severity: 'error' | 'warning';
@@ -480,12 +481,32 @@ function checkReturnStmt(
   checkArrayElements(returnType, stmt.value, where, stmt.line, diagnostics, `Type mismatch: element of function '${functionName}' return value`);
 }
 
-function blockDefinitelyExits(stmts: AST.Stmt[]): boolean {
-  for (const stmt of stmts) {
-    if (stmt.kind === 'Return' || stmt.kind === 'Break' || stmt.kind === 'Continue') return true;
-    if (stmt.kind === 'If' && stmt.alternate && blockDefinitelyExits(stmt.consequent) && blockDefinitelyExits(stmt.alternate)) return true;
+const functionEffectsCache = new WeakMap<Map<string, AST.FunctionDecl>, FunctionEffects>();
+
+function effectsFor(functions: Map<string, AST.FunctionDecl>): FunctionEffects {
+  let effects = functionEffectsCache.get(functions);
+  if (!effects) {
+    effects = computeFunctionEffects(functions);
+    functionEffectsCache.set(functions, effects);
   }
-  return false;
+  return effects;
+}
+
+function dropNarrowed(narrow: NarrowState, names: Set<string>): NarrowState {
+  if (names.size === 0) return narrow;
+  let hit = false;
+  for (const n of narrow.narrowed) {
+    if (names.has(n)) {
+      hit = true;
+      break;
+    }
+  }
+  if (!hit) return narrow;
+  return { nullable: narrow.nullable, narrowed: new Set([...narrow.narrowed].filter((n) => !names.has(n))) };
+}
+
+function withoutNames(targets: string[], names: Set<string>): string[] {
+  return targets.filter((t) => !names.has(t));
 }
 
 function checkStmts(
@@ -563,17 +584,19 @@ function checkStmts(
         break;
       case 'If': {
         checkExpr(stmt.test, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
-        const thenTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'then');
+        const testNullified = nullifiedByExpr(stmt.test, effectsFor(functions));
+        const afterTest = dropNarrowed(currentNarrow, testNullified);
+        const thenTargets = withoutNames(narrowingTargets(stmt.test, afterTest.nullable, 'then'), testNullified);
         const consequentNarrow: NarrowState = {
-          nullable: currentNarrow.nullable,
-          narrowed: thenTargets.length ? new Set([...currentNarrow.narrowed, ...thenTargets]) : currentNarrow.narrowed,
+          nullable: afterTest.nullable,
+          narrowed: thenTargets.length ? new Set([...afterTest.narrowed, ...thenTargets]) : afterTest.narrowed,
         };
         checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
         if (stmt.alternate) {
-          const elseTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'else');
+          const elseTargets = withoutNames(narrowingTargets(stmt.test, afterTest.nullable, 'else'), testNullified);
           const alternateNarrow: NarrowState = {
-            nullable: currentNarrow.nullable,
-            narrowed: elseTargets.length ? new Set([...currentNarrow.narrowed, ...elseTargets]) : currentNarrow.narrowed,
+            nullable: afterTest.nullable,
+            narrowed: elseTargets.length ? new Set([...afterTest.narrowed, ...elseTargets]) : afterTest.narrowed,
           };
           checkStmts(stmt.alternate, localScope, globalScope, functions, alternateNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
         } else if (blockDefinitelyExits(stmt.consequent)) {
@@ -594,43 +617,54 @@ function checkStmts(
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        let bodyNarrow = currentNarrow;
+        const loopEntry = dropNarrowed(currentNarrow, nullifiedByStmts(stmt.body, effectsFor(functions), 'full'));
+        let bodyNarrow = loopEntry;
         if (stmt.itemType.kind === 'NullableType') {
-          const nullable = new Map(currentNarrow.nullable);
+          const nullable = new Map(loopEntry.nullable);
           nullable.set(stmt.itemName, stmt.itemType);
-          bodyNarrow = { nullable, narrowed: currentNarrow.narrowed };
+          bodyNarrow = { nullable, narrowed: loopEntry.narrowed };
         }
         checkStmts(stmt.body, bodyScope, globalScope, functions, bodyNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
         break;
       }
       case 'ForC': {
         const initState = checkStmts([stmt.init], localScope, globalScope, functions, currentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
-        checkExpr(stmt.test, initState.scope, globalScope, functions, initState.narrow, where, stmt.line, diagnostics);
-        const testTargets = narrowingTargets(stmt.test, initState.narrow.nullable, 'then');
+        const loopNarrow = dropNarrowed(initState.narrow, nullifiedByStmts([stmt], effectsFor(functions), 'full'));
+        checkExpr(stmt.test, initState.scope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
+        const testTargets = withoutNames(
+          narrowingTargets(stmt.test, loopNarrow.nullable, 'then'),
+          nullifiedByExpr(stmt.test, effectsFor(functions))
+        );
         const bodyNarrow: NarrowState = {
-          nullable: initState.narrow.nullable,
-          narrowed: testTargets.length ? new Set([...initState.narrow.narrowed, ...testTargets]) : initState.narrow.narrowed,
+          nullable: loopNarrow.nullable,
+          narrowed: testTargets.length ? new Set([...loopNarrow.narrowed, ...testTargets]) : loopNarrow.narrowed,
         };
         checkStmts(stmt.body, initState.scope, globalScope, functions, bodyNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
         if (stmt.update) {
-          checkStmts([stmt.update], initState.scope, globalScope, functions, initState.narrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
+          checkStmts([stmt.update], initState.scope, globalScope, functions, loopNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
         }
         break;
       }
       case 'While': {
-        checkExpr(stmt.test, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
-        const testTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'then');
+        const loopNarrow = dropNarrowed(currentNarrow, nullifiedByStmts([stmt], effectsFor(functions), 'full'));
+        checkExpr(stmt.test, localScope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
+        const testTargets = withoutNames(
+          narrowingTargets(stmt.test, loopNarrow.nullable, 'then'),
+          nullifiedByExpr(stmt.test, effectsFor(functions))
+        );
         const bodyNarrow: NarrowState = {
-          nullable: currentNarrow.nullable,
-          narrowed: testTargets.length ? new Set([...currentNarrow.narrowed, ...testTargets]) : currentNarrow.narrowed,
+          nullable: loopNarrow.nullable,
+          narrowed: testTargets.length ? new Set([...loopNarrow.narrowed, ...testTargets]) : loopNarrow.narrowed,
         };
         checkStmts(stmt.body, localScope, globalScope, functions, bodyNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
         break;
       }
-      case 'DoWhile':
-        checkStmts(stmt.body, localScope, globalScope, functions, currentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
-        checkExpr(stmt.test, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+      case 'DoWhile': {
+        const loopNarrow = dropNarrowed(currentNarrow, nullifiedByStmts([stmt], effectsFor(functions), 'full'));
+        checkStmts(stmt.body, localScope, globalScope, functions, loopNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
+        checkExpr(stmt.test, localScope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
         break;
+      }
       case 'Break':
       case 'Continue':
         if (!inLoop) {
@@ -642,6 +676,7 @@ function checkStmts(
         checkReturnStmt(stmt, returnCtx, where, diagnostics);
         break;
     }
+    currentNarrow = dropNarrowed(currentNarrow, nullifiedByStmts([stmt], effectsFor(functions), 'fallthrough'));
   }
   return { scope: localScope, narrow: currentNarrow };
 }

@@ -435,10 +435,51 @@ assert(
   `guarded-nullable-nested-and-loop-ok.crs: narrowing composes correctly across nested ifs and propagates into a for-loop body, got ${JSON.stringify(guardedNestedAndLoopDiagnostics)}`
 );
 
-const unsoundAcrossCallDiagnostics = diagnosticsFor('unsound-nullable-across-call-boundary.crs');
+function nullableWarningLines(diagnostics) {
+  return diagnostics
+    .filter((d) => d.severity === 'warning' && /is nullable \(.*\) and is accessed here without a null check/.test(d.message))
+    .map((d) => d.line);
+}
+
+function assertWarnedLines(file, expected, label) {
+  const diagnostics = diagnosticsFor(file);
+  const lines = nullableWarningLines(diagnostics);
+  assert(
+    diagnostics.length === lines.length && JSON.stringify(lines) === JSON.stringify(expected),
+    `${file}: ${label}; expected nullable warnings on lines ${JSON.stringify(expected)}, got ${JSON.stringify(diagnostics)}`
+  );
+}
+
+assertWarnedLines(
+  'unguarded-nullable-across-call-boundary.crs',
+  [11],
+  'a call to a function that reassigns a narrowed value to null invalidates the narrowing'
+);
+assertWarnedLines(
+  'unguarded-nullable-after-assignment.crs',
+  [8, 17, 24, 35],
+  'assigning a possibly-null value invalidates narrowing, including for locals, after an early-return guard, and after a branch that assigns'
+);
+assertWarnedLines(
+  'unguarded-nullable-loop-backedge.crs',
+  [10, 19, 28, 39],
+  'a null assignment or nulling call inside a loop invalidates narrowing on the next iteration and after the loop'
+);
+assertWarnedLines(
+  'unguarded-nullable-transitive-call.crs',
+  [28, 35],
+  'invalidation follows calls transitively, including through mutually recursive functions'
+);
+assertWarnedLines(
+  'unguarded-nullable-guard-test-call.crs',
+  [11],
+  'a call inside a guard test that nulls the checked value stops the guard from narrowing'
+);
+
+const guardedCallOkDiagnostics = diagnosticsFor('guarded-nullable-call-ok.crs');
 assert(
-  unsoundAcrossCallDiagnostics.length === 0,
-  `unsound-nullable-across-call-boundary.crs: documents a known, deliberately-unfixed soundness gap — narrowing is not invalidated by a call to a function that reassigns the narrowed value to null, so this currently produces no diagnostics even though 'name.length' can genuinely be a null access at runtime; got ${JSON.stringify(unsoundAcrossCallDiagnostics)}`
+  guardedCallOkDiagnostics.length === 0,
+  `guarded-nullable-call-ok.crs: calls that assign other names, non-null literals, or only their own parameter keep narrowing, a guard branch that exits does not carry its nulling calls forward, and a loop test re-narrows each iteration, got ${JSON.stringify(guardedCallOkDiagnostics)}`
 );
 
 const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');

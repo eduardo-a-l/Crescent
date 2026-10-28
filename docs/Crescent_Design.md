@@ -479,6 +479,23 @@ For a statement-level null guard whose consequent definitely returns, the checke
 false-branch fact afterward. For example, `if (user_name == null) { return; }` permits safe access
 to `user_name` in the remaining statements of that function or lifecycle block.
 
+**Narrowing does not survive anything that may set the value back to `null`.** An assignment
+`x = value` ends the narrowing of `x` unless `value` is a literal, a struct or array literal or a
+template string, which are known to be non-null. A call to one of the component's own functions
+ends the narrowing of every name that function may assign, directly or through the functions it
+calls, with its own parameters and locals not counting. This applies in the rest of the enclosing
+block, in a loop from its second iteration onward and after the loop, and in a guard's own branches
+when the test itself contains such a call, as in `if (x != null && reset())`. A branch that always
+exits by `return`, `break` or `continue` does not carry its assignments or calls to the statements
+after the `if`. The analysis is deliberately conservative: it does not follow control flow past
+this and it treats any possibly-null assignment as nulling the name.
+
+Known limits, none of which change the checker's behaviour yet: the order of evaluation inside a
+single expression is not tracked (so `f(x.length, reset())` is fine but `reset() + x.length` after
+a guard is not caught); narrowing of a `derived` value is not invalidated when the state it depends
+on changes; `await` does not invalidate narrowing of component state; and calls made from view
+expressions or event handlers are not analysed.
+
 ---
 
 ## 12. Component Composition (`<slot />`)
