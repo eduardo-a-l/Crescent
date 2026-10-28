@@ -119,7 +119,11 @@
 - [ ] More module error diagnostics
 - [ ] Clearly define module semantics in the language specification
 - [ ] Test larger module graphs
-- [ ] Test duplicate/conflicting declarations across modules
+- [x] Test duplicate/conflicting declarations across modules — an import whose bound name (item name
+  or `as` alias) is already taken by an earlier `use` or by a local top-level declaration is now a
+  compile error on the `use` line; the same name in two modules that no file imports together stays
+  fine, and an alias resolves a conflict (`compiler/scripts/test-import-conflicts.js`,
+  `compiler/scripts/fixtures/import-conflicts/`)
 
 ---
 
@@ -251,8 +255,8 @@
   view-block `if` (`checkTemplateNode`'s `TemplateIf` case) — both were fixed identically each time,
   since they share the same narrowing logic (`narrowingTargets()`). A statement-level `if` with no
   `else` also preserves the false-branch narrowing for following statements when its consequent
-  definitely returns; `blockDefinitelyReturns()` handles direct returns and nested `if`s whose
-  branches both return. Nullable locals/params/loop-items are now in the flow-tracking map (see
+  definitely returns; `blockDefinitelyExits()` handles direct `return`, `break` and `continue` statements and
+  nested `if`s whose branches both exit. Nullable locals/params/loop-items are now in the flow-tracking map (see
   above). What's still out of scope, deliberately: path-sensitive analysis beyond those terminal
   branches (e.g. two nested `if`s on unrelated conditions where the combination happens to imply
   non-null) — real flow analysis, not something worth chasing without a demonstrated need.

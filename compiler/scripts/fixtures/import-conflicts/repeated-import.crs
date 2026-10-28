@@ -1,0 +1,8 @@
+use a::Thing;
+use a::Thing;
+
+component Main {
+    view {
+        <p>"main"</p>
+    }
+}

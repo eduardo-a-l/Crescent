@@ -1,0 +1,7 @@
+use lib::{Library as Imported};
+
+component Library {
+    view {
+        <p>"local"</p>
+    }
+}

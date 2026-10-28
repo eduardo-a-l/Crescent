@@ -7,13 +7,34 @@
 
 ## Current State
 
-**Branch:** `feature/break-continue-narrowing` (off `develop` at `b34a107`)
+**Branch:** `feature/import-conflicts` (off `develop` at `fa7d40c`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Reported conflicting names created by `use` declarations, which previously produced no diagnostic
+at all. In `compiler/src/checker.ts`, `checkFile` now tracks which module each imported name came
+from and emits an error on the `use` line when an import's bound name (the item name, or its `as`
+alias) is already bound by an earlier import in the same file, or equals a top-level `component` or
+`struct` declared in that file; the first binding is kept. `FileImports` in `compiler/src/modules.ts`
+gained a `line` field so the diagnostic points at the right `use`. The same name declared in two
+modules that no single file imports together is still fine, because each file compiles to its own
+JS module, and an `as` alias resolves a conflict.
+
+**Tests added:** `compiler/scripts/test-import-conflicts.js` (wired into `npm test` after
+`test-missing-import.js`) with fixtures in `compiler/scripts/fixtures/import-conflicts/`:
+conflicting imports, a repeated import, import vs local declaration (all exactly one error, on the
+expected line), plus aliased and unrelated-module cases that must stay clean. Before the change the
+conflicting-import and import-vs-local scenarios produced zero diagnostics.
+
+**Docs:** new "Name conflicts" paragraph in `docs/Crescent_Grammar.md`; `TODO.md` checkbox for
+duplicate/conflicting declarations across modules marked done; fixed a stale
+`blockDefinitelyReturns()` reference there (renamed `blockDefinitelyExits()` last task).
+
+Before that:
+
 Made `break` and `continue` count as early exits for post-guard null narrowing, the same way
 `return` already did. In `compiler/src/checker.ts`, `blockDefinitelyReturns` became
 `blockDefinitelyExits` and now also treats a direct `Break` or `Continue` statement as exiting the

@@ -484,6 +484,13 @@ compile error naming the full chain, e.g. `Circular import: a.crs -> b.crs -> a.
 runs across the whole project before any file is code-generated, so a cycle anywhere aborts the
 entire build rather than only the files involved.
 
+**Name conflicts.** The name an import binds in a file (the item's own name, or its `as` alias)
+must be unique within that file. It is a compile error if that name is already bound by another
+`use` in the same file, even from the same module, or if it equals the name of a top-level
+`component` or `struct` declared in the file. The diagnostic is reported on the `use` line and
+suggests renaming with `as`. Declaring the same name in two modules is not itself a conflict; only
+a single file that binds both is, and an alias resolves it.
+
 **No re-export chaining in v0.1.** An imported name must resolve to an actual `ComponentDecl` or
 `StructDecl` in the target file — importing a name that the target file itself only imported via
 its own `use` is not supported yet (the target's own `UseDecl` entries are ignored when resolving

@@ -931,6 +931,8 @@ export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, impo
     if (decl.kind === 'StructDecl') globalScope.set(decl.name, { kind: 'struct', decl });
   }
 
+  const localDeclNames = new Set(topLevelDecls.map((d) => d.name));
+  const importedFrom = new Map<string, string>();
   for (const imp of imports) {
     const targetFile = files.get(imp.targetRelPath);
     if (!targetFile) continue;
@@ -939,7 +941,30 @@ export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, impo
         (d): d is AST.ComponentDecl | AST.StructDecl =>
           (d.kind === 'ComponentDecl' || d.kind === 'StructDecl') && d.name === n.imported
       );
-      if (found) globalScope.set(n.local, { kind: n.kind, decl: found });
+      if (!found) continue;
+      const priorSource = importedFrom.get(n.local);
+      if (priorSource !== undefined) {
+        diagnostics.push(
+          err(
+            `Import '${n.local}' from '${imp.targetRelPath}' conflicts with '${n.local}' already imported from '${priorSource}'; rename one of them with 'as'`,
+            `file '${file.relPath}'`,
+            imp.line
+          )
+        );
+        continue;
+      }
+      if (localDeclNames.has(n.local)) {
+        diagnostics.push(
+          err(
+            `Import '${n.local}' from '${imp.targetRelPath}' conflicts with the top-level declaration '${n.local}' in '${file.relPath}'; rename the import with 'as'`,
+            `file '${file.relPath}'`,
+            imp.line
+          )
+        );
+        continue;
+      }
+      importedFrom.set(n.local, imp.targetRelPath);
+      globalScope.set(n.local, { kind: n.kind, decl: found });
     }
   }
 

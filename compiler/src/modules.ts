@@ -67,6 +67,7 @@ export interface ResolvedImportName {
 export interface FileImports {
   targetRelPath: string;
   names: ResolvedImportName[];
+  line: number;
 }
 
 export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFile>): FileImports[] {
@@ -99,7 +100,7 @@ export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFi
       });
     }
 
-    result.push({ targetRelPath, names });
+    result.push({ targetRelPath, names, line: decl.line });
   }
 
   return result;
