@@ -1,0 +1,49 @@
+component AwaitOk {
+    state<string?> name = "Ada";
+
+    async string get_text() {
+        return "t";
+    }
+
+    async void guard_after_await() {
+        string t = await get_text();
+        if (name != null) {
+            console.log(name.length);
+        }
+    }
+
+    async void early_return_after_await() {
+        string t = await get_text();
+        if (name == null) {
+            return;
+        }
+        console.log(name.length);
+    }
+
+    async void use_before_await() {
+        if (name != null) {
+            console.log(name.length);
+            string t = await get_text();
+        }
+    }
+
+    async void local_survives_await() {
+        string? local = "x";
+        if (local != null) {
+            string t = await get_text();
+            console.log(local.length);
+        }
+    }
+
+    async void exiting_branch_awaits() {
+        if (name == null) {
+            string t = await get_text();
+            return;
+        }
+        console.log(name.length);
+    }
+
+    view {
+        <p>"awaitok"</p>
+    }
+}

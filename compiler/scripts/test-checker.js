@@ -476,6 +476,18 @@ assertWarnedLines(
   'a call inside a guard test that nulls the checked value stops the guard from narrowing'
 );
 
+assertWarnedLines(
+  'unguarded-nullable-after-await.crs',
+  [12, 18, 25, 34],
+  'an await invalidates narrowing of component state, also when it sits in the guard test or later in a loop body, and for derived values'
+);
+
+const guardedAwaitOkDiagnostics = diagnosticsFor('guarded-nullable-await-ok.crs');
+assert(
+  guardedAwaitOkDiagnostics.length === 0,
+  `guarded-nullable-await-ok.crs: a guard placed after an await, a use before it, a narrowed local, and an await only on an exiting branch all stay clean, got ${JSON.stringify(guardedAwaitOkDiagnostics)}`
+);
+
 const guardedCallOkDiagnostics = diagnosticsFor('guarded-nullable-call-ok.crs');
 assert(
   guardedCallOkDiagnostics.length === 0,

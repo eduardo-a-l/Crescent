@@ -7,13 +7,41 @@
 
 ## Current State
 
-**Branch:** `feature/call-boundary-narrowing` (off `develop` at `bc71973`)
+**Branch:** `feature/await-narrowing` (off `develop` at `3f17336`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Made `await` invalidate null narrowing of component state, the first item left over from the
+call-boundary work. Across an `await` other code can run, so a narrowed `state`, `derived`,
+`provide` or `inject` member is no longer known to be non-null afterwards. Narrowed locals and
+parameters survive, and `const` members are never dropped.
+
+Implementation: `compiler/src/narrowing.ts` visitors gained a `suspend()` hook fired for every
+`Unary` `await` (after its operand), and `nullifiedByStmts`/`nullifiedByExpr` take an optional
+`suspendNames` set that `suspend()` adds wholesale. `checker.ts` computes that set once per
+component in `suspendNamesFor` (members from `memberTypes` minus `constNames`, cached in a
+`WeakMap`), and `checkStmts` now builds two small closures, `nullifiedStmts` and `nullifiedExpr`,
+instead of repeating `effectsFor(functions)` at every call site. Because the existing mechanism
+is reused, an `await` in a statement, in a guard's own test (`if (x != null && await f() == ...)`),
+or anywhere in a loop body (so the second iteration) all work, and an exiting branch that awaits
+does not carry the invalidation forward. The call-effect summaries themselves are unchanged: a
+callee's own awaits do not matter to its callers, only an `await` in the caller's own code.
+
+Tests: `unguarded-nullable-after-await.crs` (four exact warning lines: after an await, guard test
+containing an await, loop with an await, narrowed `derived`) and `guarded-nullable-await-ok.crs`
+(guard placed after the await, early return after the await, use before the await, narrowed local
+across an await, await only on an exiting branch). Examples under `compiler/examples` still have
+zero nullable warnings.
+
+Docs: `docs/Crescent_Design.md` section 11 and the `TODO.md` null-safety entry now list `await` as
+handled. Remaining known limits: evaluation order inside one expression, `derived` values whose
+dependencies change in synchronous code, and calls from view expressions or event handlers.
+
+Before that:
+
 Closed the confirmed null-narrowing soundness gap across function calls, plus a wider one found
 while doing it: assignment never invalidated narrowing at all, even inside one function (`if (x !=
 null) { x = null; x.length; }` produced no diagnostic). The checker now treats narrowing as dead

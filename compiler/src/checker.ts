@@ -1,6 +1,6 @@
 import * as AST from './ast';
 import { FileImports, LoadedFile } from './modules';
-import { FunctionEffects, blockDefinitelyExits, computeFunctionEffects, nullifiedByExpr, nullifiedByStmts } from './narrowing';
+import { FunctionEffects, NullifyMode, blockDefinitelyExits, computeFunctionEffects, nullifiedByExpr, nullifiedByStmts } from './narrowing';
 
 export interface Diagnostic {
   severity: 'error' | 'warning';
@@ -492,6 +492,17 @@ function effectsFor(functions: Map<string, AST.FunctionDecl>): FunctionEffects {
   return effects;
 }
 
+const suspendNamesCache = new WeakMap<Map<string, AST.CrescentType>, Set<string>>();
+
+function suspendNamesFor(memberTypes: Map<string, AST.CrescentType>, constNames: Set<string>): Set<string> {
+  let names = suspendNamesCache.get(memberTypes);
+  if (!names) {
+    names = new Set([...memberTypes.keys()].filter((n) => !constNames.has(n)));
+    suspendNamesCache.set(memberTypes, names);
+  }
+  return names;
+}
+
 function dropNarrowed(narrow: NarrowState, names: Set<string>): NarrowState {
   if (names.size === 0) return narrow;
   let hit = false;
@@ -525,6 +536,10 @@ function checkStmts(
 ): { scope: Set<string>; narrow: NarrowState } {
   const localScope = new Set(scope);
   let currentNarrow = narrow;
+  const effects = effectsFor(functions);
+  const suspendNames = suspendNamesFor(memberTypes, constNames);
+  const nullifiedStmts = (list: AST.Stmt[], mode: NullifyMode) => nullifiedByStmts(list, effects, mode, suspendNames);
+  const nullifiedExpr = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames);
   for (const stmt of stmts) {
     switch (stmt.kind) {
       case 'VarDecl':
@@ -584,7 +599,7 @@ function checkStmts(
         break;
       case 'If': {
         checkExpr(stmt.test, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
-        const testNullified = nullifiedByExpr(stmt.test, effectsFor(functions));
+        const testNullified = nullifiedExpr(stmt.test);
         const afterTest = dropNarrowed(currentNarrow, testNullified);
         const thenTargets = withoutNames(narrowingTargets(stmt.test, afterTest.nullable, 'then'), testNullified);
         const consequentNarrow: NarrowState = {
@@ -617,7 +632,7 @@ function checkStmts(
         }
         const bodyScope = new Set(localScope);
         bodyScope.add(stmt.itemName);
-        const loopEntry = dropNarrowed(currentNarrow, nullifiedByStmts(stmt.body, effectsFor(functions), 'full'));
+        const loopEntry = dropNarrowed(currentNarrow, nullifiedStmts(stmt.body, 'full'));
         let bodyNarrow = loopEntry;
         if (stmt.itemType.kind === 'NullableType') {
           const nullable = new Map(loopEntry.nullable);
@@ -629,11 +644,11 @@ function checkStmts(
       }
       case 'ForC': {
         const initState = checkStmts([stmt.init], localScope, globalScope, functions, currentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
-        const loopNarrow = dropNarrowed(initState.narrow, nullifiedByStmts([stmt], effectsFor(functions), 'full'));
+        const loopNarrow = dropNarrowed(initState.narrow, nullifiedStmts([stmt], 'full'));
         checkExpr(stmt.test, initState.scope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
         const testTargets = withoutNames(
           narrowingTargets(stmt.test, loopNarrow.nullable, 'then'),
-          nullifiedByExpr(stmt.test, effectsFor(functions))
+          nullifiedExpr(stmt.test)
         );
         const bodyNarrow: NarrowState = {
           nullable: loopNarrow.nullable,
@@ -646,11 +661,11 @@ function checkStmts(
         break;
       }
       case 'While': {
-        const loopNarrow = dropNarrowed(currentNarrow, nullifiedByStmts([stmt], effectsFor(functions), 'full'));
+        const loopNarrow = dropNarrowed(currentNarrow, nullifiedStmts([stmt], 'full'));
         checkExpr(stmt.test, localScope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
         const testTargets = withoutNames(
           narrowingTargets(stmt.test, loopNarrow.nullable, 'then'),
-          nullifiedByExpr(stmt.test, effectsFor(functions))
+          nullifiedExpr(stmt.test)
         );
         const bodyNarrow: NarrowState = {
           nullable: loopNarrow.nullable,
@@ -660,7 +675,7 @@ function checkStmts(
         break;
       }
       case 'DoWhile': {
-        const loopNarrow = dropNarrowed(currentNarrow, nullifiedByStmts([stmt], effectsFor(functions), 'full'));
+        const loopNarrow = dropNarrowed(currentNarrow, nullifiedStmts([stmt], 'full'));
         checkStmts(stmt.body, localScope, globalScope, functions, loopNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
         checkExpr(stmt.test, localScope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
         break;
@@ -676,7 +691,7 @@ function checkStmts(
         checkReturnStmt(stmt, returnCtx, where, diagnostics);
         break;
     }
-    currentNarrow = dropNarrowed(currentNarrow, nullifiedByStmts([stmt], effectsFor(functions), 'fallthrough'));
+    currentNarrow = dropNarrowed(currentNarrow, nullifiedStmts([stmt], 'fallthrough'));
   }
   return { scope: localScope, narrow: currentNarrow };
 }

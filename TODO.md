@@ -277,9 +277,11 @@
   narrow. Fixtures: `unguarded-nullable-across-call-boundary.crs`,
   `unguarded-nullable-after-assignment.crs`, `unguarded-nullable-loop-backedge.crs`,
   `unguarded-nullable-transitive-call.crs`, `unguarded-nullable-guard-test-call.crs`, and
-  `guarded-nullable-call-ok.crs` for the cases that must stay clean. Still not covered, and
-  documented in the design doc: evaluation order inside a single expression, `derived` values
-  whose dependencies change, `await`, and calls from view expressions or event handlers.
+  `guarded-nullable-call-ok.crs` for the cases that must stay clean. `await` also
+  invalidates narrowing of component members (`unguarded-nullable-after-await.crs`,
+  `guarded-nullable-await-ok.crs`). Still not covered, and documented in the design doc: evaluation
+  order inside a single expression, `derived` values whose dependencies change in synchronous code,
+  and calls from view expressions or event handlers.
 
 ## Structs
 

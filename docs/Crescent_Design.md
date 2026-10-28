@@ -487,13 +487,15 @@ calls, with its own parameters and locals not counting. This applies in the rest
 block, in a loop from its second iteration onward and after the loop, and in a guard's own branches
 when the test itself contains such a call, as in `if (x != null && reset())`. A branch that always
 exits by `return`, `break` or `continue` does not carry its assignments or calls to the statements
-after the `if`. The analysis is deliberately conservative: it does not follow control flow past
+after the `if`. An `await` ends the narrowing of all component members (`state`, `derived`,
+`provide` and `inject`, but not `const`), because other code can run while the function is
+suspended; narrowed locals and parameters survive it, since nothing else can reach them. The analysis is deliberately conservative: it does not follow control flow past
 this and it treats any possibly-null assignment as nulling the name.
 
 Known limits, none of which change the checker's behaviour yet: the order of evaluation inside a
 single expression is not tracked (so `f(x.length, reset())` is fine but `reset() + x.length` after
 a guard is not caught); narrowing of a `derived` value is not invalidated when the state it depends
-on changes; `await` does not invalidate narrowing of component state; and calls made from view
+on changes in ordinary synchronous code, only across an `await`; and calls made from view
 expressions or event handlers are not analysed.
 
 ---

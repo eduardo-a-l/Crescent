@@ -7,7 +7,10 @@ export type NullifyMode = 'fallthrough' | 'full';
 interface Visitor {
   assign(name: string): void;
   call(name: string): void;
+  suspend(): void;
 }
+
+const NO_NAMES: ReadonlySet<string> = new Set();
 
 export function blockDefinitelyExits(stmts: AST.Stmt[]): boolean {
   for (const stmt of stmts) {
@@ -42,6 +45,7 @@ function visitExpr(expr: AST.Expr, v: Visitor): void {
       return;
     case 'Unary':
       visitExpr(expr.operand, v);
+      if (expr.op === 'await') v.suspend();
       return;
     case 'Binary':
       visitExpr(expr.left, v);
@@ -171,6 +175,7 @@ export function computeFunctionEffects(functions: Map<string, AST.FunctionDecl>)
     visitStmts(fn.body, 'full', {
       assign: (n) => direct.add(n),
       call: (n) => called.add(n),
+      suspend: () => {},
     });
     const locals = new Set<string>(fn.params.map((p) => p.name));
     declaredNames(fn.body, locals);
@@ -200,26 +205,32 @@ export function computeFunctionEffects(functions: Map<string, AST.FunctionDecl>)
   return effects;
 }
 
-export function nullifiedByStmts(stmts: AST.Stmt[], effects: FunctionEffects, mode: NullifyMode): Set<string> {
+export function nullifiedByStmts(
+  stmts: AST.Stmt[],
+  effects: FunctionEffects,
+  mode: NullifyMode,
+  suspendNames: ReadonlySet<string> = NO_NAMES
+): Set<string> {
   const out = new Set<string>();
-  visitStmts(stmts, mode, {
-    assign: (n) => out.add(n),
-    call: (n) => {
-      const e = effects.get(n);
-      if (e) for (const x of e) out.add(x);
-    },
-  });
+  visitStmts(stmts, mode, collector(out, effects, suspendNames));
   return out;
 }
 
-export function nullifiedByExpr(expr: AST.Expr, effects: FunctionEffects): Set<string> {
+export function nullifiedByExpr(expr: AST.Expr, effects: FunctionEffects, suspendNames: ReadonlySet<string> = NO_NAMES): Set<string> {
   const out = new Set<string>();
-  visitExpr(expr, {
+  visitExpr(expr, collector(out, effects, suspendNames));
+  return out;
+}
+
+function collector(out: Set<string>, effects: FunctionEffects, suspendNames: ReadonlySet<string>): Visitor {
+  return {
     assign: (n) => out.add(n),
     call: (n) => {
       const e = effects.get(n);
       if (e) for (const x of e) out.add(x);
     },
-  });
-  return out;
+    suspend: () => {
+      for (const x of suspendNames) out.add(x);
+    },
+  };
 }
