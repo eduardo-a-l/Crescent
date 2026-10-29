@@ -132,29 +132,42 @@ export function detectCycles(files: Map<string, LoadedFile>, allImports: Map<str
   const color = new Map<string, number>();
   for (const key of files.keys()) color.set(key, WHITE);
 
-  function visit(node: string, stack: string[]): void {
-    color.set(node, GRAY);
-    stack.push(node);
-
-    const imports = allImports.get(node) ?? [];
-    const targets = Array.from(new Set(imports.map((i) => i.targetRelPath)));
-    for (const target of targets) {
-      const state = color.get(target);
-      if (state === GRAY) {
-        const cycleStart = stack.indexOf(target);
-        const chain = [...stack.slice(cycleStart), target];
-        const closing = imports.find((i) => i.targetRelPath === target);
-        throw new ModuleError(`Circular import: ${chain.join(' -> ')}`, node, closing ? closing.line : null);
-      }
-      if (state === WHITE) visit(target, stack);
-    }
-
-    stack.pop();
-    color.set(node, BLACK);
+  interface Frame {
+    node: string;
+    imports: FileImports[];
+    targets: string[];
+    next: number;
   }
 
-  for (const key of files.keys()) {
-    if (color.get(key) === WHITE) visit(key, []);
+  for (const start of files.keys()) {
+    if (color.get(start) !== WHITE) continue;
+
+    const stack: Frame[] = [];
+    const enter = (node: string): void => {
+      color.set(node, GRAY);
+      const imports = allImports.get(node) ?? [];
+      stack.push({ node, imports, targets: Array.from(new Set(imports.map((i) => i.targetRelPath))), next: 0 });
+    };
+
+    enter(start);
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (frame.next >= frame.targets.length) {
+        color.set(frame.node, BLACK);
+        stack.pop();
+        continue;
+      }
+
+      const target = frame.targets[frame.next++];
+      const state = color.get(target);
+      if (state === GRAY) {
+        const nodes = stack.map((f) => f.node);
+        const chain = [...nodes.slice(nodes.indexOf(target)), target];
+        const closing = frame.imports.find((i) => i.targetRelPath === target);
+        throw new ModuleError(`Circular import: ${chain.join(' -> ')}`, frame.node, closing ? closing.line : null);
+      }
+      if (state === WHITE) enter(target);
+    }
   }
 }
 

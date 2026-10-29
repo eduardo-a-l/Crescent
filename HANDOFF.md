@@ -7,13 +7,44 @@
 
 ## Current State
 
-**Branch:** `feature/unused-imports` (off `develop` at `814a207`)
+**Branch:** `feature/large-module-graphs` (off `develop` at `2a7f46b`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Tested module graphs at scale ("Test larger module graphs" in `TODO.md`) and fixed the one bug it
+found. A probe over generated import chains showed the checker is fast (3000 files in about 0.6s,
+40000 in about 2.4s) but `detectCycles()` in `compiler/src/modules.ts` threw a raw `RangeError:
+Maximum call stack size exceeded` at about 12000 files, because its `visit` recursed once per file
+in the chain. It is now iterative: an explicit stack of frames (node, its imports, its distinct
+targets, next index) with the same traversal order, so the reported chain, file and line for a
+cycle are identical to before (checked against the 300-file case and by the 272 pre-existing
+tests, including `test-circular-import.js`).
+
+New `compiler/scripts/test-module-graphs.js` (wired into `npm test` after `test-unused-imports.js`)
+generates each project under `os.tmpdir()`, deletes it at the end, and for the buildable ones runs
+the real `buildProject()` and renders the generated JS in JSDOM: a 200-file chain (all 200 nested
+components render in order), a hub with 150 `use` lines (150 leaves rendered, zero diagnostics, so
+no false unused or conflicting imports at that size), a diamond (shared base built once, rendered
+through both a direct import and a `Base as Foundation` alias), nested directories with
+`super::super::super::` and `super::super::` paths, plus check-only cases: a 500-file cycle (chain
+of 501, reported on `c499.crs` line 1) and 12000-file chain and cycle (the two that need the
+iterative `detectCycles`). It takes about 3s.
+
+A note for anyone writing DOM assertions against built output: a view with more than one root node
+is wrapped by the runtime's `fragment` in `<span style="display: contents">`, so select on a class,
+not a bare tag; my first fan-out assertion counted the wrapper (151 instead of 150) and the fix
+was in the test, not the compiler.
+
+Docs: `TODO.md` marks the item done. Remaining open under module work: module errors are fatal and
+suppress every other diagnostic; the module semantics section of the specification
+("Clearly define module semantics in the language specification") is still not written as one
+piece, although the grammar doc now has the individual rules.
+
+Before that:
+
 Added the unused-import warning, the second piece of the open "More module error diagnostics"
 item. `checkFile` in `compiler/src/checker.ts` now remembers every import it actually binds (an
 import rejected as a name conflict is not recorded, so it is reported only as the conflict) and,

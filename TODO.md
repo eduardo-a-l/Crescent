@@ -128,7 +128,13 @@
 - [ ] More module error diagnostics — still open: module errors are fatal and suppress every other
   diagnostic, so fixing one `use` reveals the next one only on the following run
 - [ ] Clearly define module semantics in the language specification
-- [ ] Test larger module graphs
+- [x] Test larger module graphs — `compiler/scripts/test-module-graphs.js` generates projects in a
+  temp directory, builds them with `buildProject()` and renders the output in JSDOM: a 200-file
+  import chain, a hub importing 150 modules, a diamond whose shared base is imported once directly
+  and once through an alias, nested directories reached with several `super::` hops, a 500-file
+  cycle (full chain, reported on the closing `use`), and 12000-file chain and cycle checks. The
+  last two found a real bug: `detectCycles()` was recursive and threw a raw `RangeError` on a
+  long enough chain; it is now iterative with identical output
 - [x] Test duplicate/conflicting declarations across modules — an import whose bound name (item name
   or `as` alias) is already taken by an earlier `use` or by a local top-level declaration is now a
   compile error on the `use` line; the same name in two modules that no file imports together stays
