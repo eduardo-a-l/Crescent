@@ -116,7 +116,15 @@
 - [x] `use` resolution
 - [x] Relative module paths
 - [x] Import-cycle detection
-- [ ] More module error diagnostics
+- [x] Module errors carry a file and line — a missing module, a `use` of an item the target does
+  not define, `super` above the project root, and an import cycle (reported on the `use` that
+  closes it) now set `ModuleError.file`/`.line`, which `FatalDiagnostic` exposes as `file` and
+  `line`; `crescent check` prints `file:line: message` and the VS Code extension underlines that
+  line instead of showing a popup (`compiler/scripts/test-module-diagnostics.js`,
+  `compiler/scripts/fixtures/module-errors/`)
+- [ ] More module error diagnostics — still open: module errors are fatal and suppress every other
+  diagnostic, so fixing one `use` reveals the next one only on the following run; an unused import
+  is not reported at all
 - [ ] Clearly define module semantics in the language specification
 - [ ] Test larger module graphs
 - [x] Test duplicate/conflicting declarations across modules — an import whose bound name (item name

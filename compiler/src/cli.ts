@@ -22,7 +22,9 @@ function printFileDiagnostics(relPath: string, diagnostics: Diagnostic[]): void 
 
 function reportCheck(result: CheckProjectResult): number {
   if (result.fatal) {
-    const prefix = result.fatal.file ? `${result.fatal.file}: ` : 'error: ';
+    const prefix = result.fatal.file
+      ? `${result.fatal.file}${result.fatal.line ? `:${result.fatal.line}` : ''}: `
+      : 'error: ';
     console.error(`${prefix}${result.fatal.message}`);
     return 1;
   }

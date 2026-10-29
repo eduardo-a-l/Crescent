@@ -7,13 +7,46 @@
 
 ## Current State
 
-**Branch:** `feature/await-narrowing` (off `develop` at `3f17336`)
+**Branch:** `feature/module-diagnostics` (off `develop` at `b3ca505`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+First piece of the open "More module error diagnostics" item: module errors now say where they
+are. Before, every `ModuleError` (missing module, missing export, `super` above the root, import
+cycle) became a `FatalDiagnostic` with `file: null` and no line, so `crescent check` printed a bare
+`error: ...` and VS Code could only show a popup, although each error is caused by one specific
+`use` statement.
+
+Changes: `ModuleError` in `compiler/src/modules.ts` now has `file` and `line` (constructor args,
+default null). `resolveUsePath` takes an optional `line`; `resolveFileImports` passes `decl.line`
+for the missing-module, missing-export and `super` errors; `detectCycles` attributes a cycle to the
+file that closes it and the line of its import of the node already on the stack (the last import in
+the reported chain; a self-import is attributed to itself). `FatalDiagnostic` in
+`compiler/src/project.ts` gained `line` (null for parse errors, which already embed their line in
+the message); I removed its comment describing module errors as unattributable. `cli.ts` and
+`index.ts` print `file:line: ` when known. `editors/vscode/src/extension.js` underlines
+`fatal.line` in `fatal.file` and keeps the popup only as a fallback when no file is known; the
+README's Diagnostics section is corrected. Message texts are unchanged, so
+`test-missing-import.js` and `test-circular-import.js` were not touched.
+
+Tests: new `compiler/scripts/test-module-diagnostics.js` (wired into `npm test` after
+`test-import-conflicts.js`) with fixtures under `compiler/scripts/fixtures/module-errors/`: missing
+module, missing export, `super` above root, a two-file cycle (file must be the penultimate file of
+the chain, line 3), a self-import, and a spawn of `crescent check` asserting stderr starts with
+`main.crs:3: ` and exit code 1. Before the change the same data had `file: null`.
+
+Docs: new "Where module errors are reported" paragraph in `docs/Crescent_Grammar.md`; `TODO.md`
+splits the item into this done part and a still-open part.
+
+Still open under that item: module errors remain fatal and suppress every other diagnostic (a
+design question: resolving imports is a precondition for checking), and unused imports are not
+reported. The VS Code change itself was not run in an editor, only the data it consumes was tested.
+
+Before that:
+
 Made `await` invalidate null narrowing of component state, the first item left over from the
 call-boundary work. Across an `await` other code can run, so a narrowed `state`, `derived`,
 `provide` or `inject` member is no longer known to be non-null afterwards. Narrowed locals and

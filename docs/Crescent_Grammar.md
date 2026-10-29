@@ -484,6 +484,13 @@ compile error naming the full chain, e.g. `Circular import: a.crs -> b.crs -> a.
 runs across the whole project before any file is code-generated, so a cycle anywhere aborts the
 entire build rather than only the files involved.
 
+**Where module errors are reported.** A `use` that names a module that does not exist, an item
+the target does not define at its top level, or a path that climbs above the project root with
+`super` is a compile error located at that `use` line. An import cycle is located at the `use`
+that closes it, that is, the last import in the chain, and a file that imports itself at that
+import. These errors are still fatal for the whole project: resolving imports is a precondition
+for checking any file, so while one is present no other diagnostics are produced.
+
 **Name conflicts.** The name an import binds in a file (the item's own name, or its `as` alias)
 must be unique within that file. It is a compile error if that name is already bound by another
 `use` in the same file, even from the same module, or if it equals the name of a top-level

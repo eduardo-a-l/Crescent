@@ -16,7 +16,9 @@ function printDiagnostics(diagnostics: Diagnostic[]): void {
 const result = buildProject(examplesDir, distDir);
 
 if (result.check.fatal) {
-  const prefix = result.check.fatal.file ? `${result.check.fatal.file}: ` : '';
+  const prefix = result.check.fatal.file
+    ? `${result.check.fatal.file}${result.check.fatal.line ? `:${result.check.fatal.line}` : ''}: `
+    : '';
   console.error(`\nFAILED: ${prefix}${result.check.fatal.message}`);
   process.exitCode = 1;
 } else {

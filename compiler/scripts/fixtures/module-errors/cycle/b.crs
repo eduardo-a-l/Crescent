@@ -1,0 +1,9 @@
+
+
+use a::A;
+
+component B {
+    view {
+        <p>"b"</p>
+    }
+}

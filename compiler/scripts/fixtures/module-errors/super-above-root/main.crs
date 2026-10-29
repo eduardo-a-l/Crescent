@@ -1,0 +1,9 @@
+use lib::Lib;
+
+use super::x::Y;
+
+component Main {
+    view {
+        <p>"main"</p>
+    }
+}

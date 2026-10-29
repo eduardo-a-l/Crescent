@@ -1,0 +1,9 @@
+
+
+use main::Main;
+
+component Main {
+    view {
+        <p>"main"</p>
+    }
+}

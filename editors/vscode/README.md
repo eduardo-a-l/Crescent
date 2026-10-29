@@ -95,10 +95,12 @@ checking yet — that's still open, see "Known limitations" below.
   line number, not a column, so there's nothing more precise to underline yet.
 - A parser or lexer error (`LexError`/`ParseError`) is attributed to the specific file that failed
   to parse (`modules.ts`'s `loadAllPrograms()` now attaches the file before rethrowing) and shown
-  as a diagnostic on that file. A module-level error (an import cycle, or `use`-ing a name that
-  isn't exported) doesn't point at one canonical file, since it inherently involves at least two
-  (see `FatalDiagnostic` in `project.ts`) — its message already names them, so it's shown as a
-  popup error instead of being attributed to a guessed file.
+  as a diagnostic on that file. A module-level error (a missing module, a `use` of a name that isn't
+  defined at the top level of its target, `super` above the project root, or an import cycle) is
+  attributed to the `use` statement that causes it, and for a cycle to the `use` that closes it
+  (`ModuleError.file`/`.line`, carried by `FatalDiagnostic` in `project.ts`), so it underlines
+  that line in that file. Like a parse error it is still fatal: it replaces all other diagnostics
+  until it is fixed.
 - Diagnostics reflect what's **on disk**, not unsaved editor buffers — expected for an on-save
   trigger, but means an unsaved edit won't update the squiggles until you save again.
 - If the compiler is rebuilt while an Extension Development Host window is still running, Node's

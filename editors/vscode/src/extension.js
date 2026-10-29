@@ -200,14 +200,10 @@ function refreshDiagnostics(root) {
 
   if (result.fatal) {
     if (result.fatal.file) {
-      const diagnostic = new vscode.Diagnostic(wholeLineRange(0), result.fatal.message, vscode.DiagnosticSeverity.Error);
+      const diagnostic = new vscode.Diagnostic(wholeLineRange(result.fatal.line || 0), result.fatal.message, vscode.DiagnosticSeverity.Error);
       diagnostic.source = 'crescent';
       diagnosticCollection.set(vscode.Uri.file(path.join(root, result.fatal.file)), [diagnostic]);
     } else {
-      // A module-level error (import cycle, missing export/module) doesn't
-      // point at one canonical file — see FatalDiagnostic in project.ts.
-      // Its message already names the files involved, so surface it directly
-      // rather than attributing it to a guessed file.
       vscode.window.showErrorMessage(`Crescent: ${result.fatal.message}`);
     }
     return;

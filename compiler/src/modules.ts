@@ -4,7 +4,16 @@ import * as AST from './ast';
 import { LexError } from './lexer';
 import { parseCrescent, ParseError } from './parser';
 
-export class ModuleError extends Error {}
+export class ModuleError extends Error {
+  file: string | null;
+  line: number | null;
+
+  constructor(message: string, file: string | null = null, line: number | null = null) {
+    super(message);
+    this.file = file;
+    this.line = line;
+  }
+}
 
 export interface LoadedFile {
   relPath: string;
@@ -39,7 +48,7 @@ export function loadAllPrograms(rootDir: string): Map<string, LoadedFile> {
   return files;
 }
 
-export function resolveUsePath(fromFileRelPath: string, segments: string[]): string {
+export function resolveUsePath(fromFileRelPath: string, segments: string[], line: number | null = null): string {
   const fromDir = path.posix.dirname(fromFileRelPath);
   const baseDir = fromDir === '.' ? '' : fromDir;
   const parts = baseDir === '' ? [] : baseDir.split('/');
@@ -47,7 +56,11 @@ export function resolveUsePath(fromFileRelPath: string, segments: string[]): str
   for (const seg of segments) {
     if (seg === 'super') {
       if (parts.length === 0) {
-        throw new ModuleError(`'super' cannot go above the project root (while resolving an import in '${fromFileRelPath}')`);
+        throw new ModuleError(
+          `'super' cannot go above the project root (while resolving an import in '${fromFileRelPath}')`,
+          fromFileRelPath,
+          line
+        );
       }
       parts.pop();
     } else {
@@ -76,11 +89,13 @@ export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFi
   for (const decl of file.program.declarations) {
     if (decl.kind !== 'UseDecl') continue;
 
-    const targetRelPath = resolveUsePath(file.relPath, decl.pathSegments);
+    const targetRelPath = resolveUsePath(file.relPath, decl.pathSegments, decl.line);
     const target = files.get(targetRelPath);
     if (!target) {
       throw new ModuleError(
-        `Cannot find module '${targetRelPath}' (imported from '${file.relPath}' via 'use ${decl.pathSegments.join('::')}::...;')`
+        `Cannot find module '${targetRelPath}' (imported from '${file.relPath}' via 'use ${decl.pathSegments.join('::')}::...;')`,
+        file.relPath,
+        decl.line
       );
     }
 
@@ -91,7 +106,11 @@ export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFi
           (d.kind === 'ComponentDecl' || d.kind === 'StructDecl') && d.name === item.name
       );
       if (!found) {
-        throw new ModuleError(`'${item.name}' is not defined at the top level of '${targetRelPath}' (imported from '${file.relPath}')`);
+        throw new ModuleError(
+          `'${item.name}' is not defined at the top level of '${targetRelPath}' (imported from '${file.relPath}')`,
+          file.relPath,
+          decl.line
+        );
       }
       names.push({
         local: item.alias ?? item.name,
@@ -124,7 +143,8 @@ export function detectCycles(files: Map<string, LoadedFile>, allImports: Map<str
       if (state === GRAY) {
         const cycleStart = stack.indexOf(target);
         const chain = [...stack.slice(cycleStart), target];
-        throw new ModuleError(`Circular import: ${chain.join(' -> ')}`);
+        const closing = imports.find((i) => i.targetRelPath === target);
+        throw new ModuleError(`Circular import: ${chain.join(' -> ')}`, node, closing ? closing.line : null);
       }
       if (state === WHITE) visit(target, stack);
     }
