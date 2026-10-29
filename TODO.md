@@ -122,9 +122,11 @@
   `line`; `crescent check` prints `file:line: message` and the VS Code extension underlines that
   line instead of showing a popup (`compiler/scripts/test-module-diagnostics.js`,
   `compiler/scripts/fixtures/module-errors/`)
+- [x] Unused-import warning — an imported name (or alias) the file never refers to is reported on
+  its `use` line, per item of a braced import (`compiler/src/references.ts`,
+  `compiler/scripts/test-unused-imports.js`, `compiler/scripts/fixtures/unused-imports/`)
 - [ ] More module error diagnostics — still open: module errors are fatal and suppress every other
-  diagnostic, so fixing one `use` reveals the next one only on the following run; an unused import
-  is not reported at all
+  diagnostic, so fixing one `use` reveals the next one only on the following run
 - [ ] Clearly define module semantics in the language specification
 - [ ] Test larger module graphs
 - [x] Test duplicate/conflicting declarations across modules — an import whose bound name (item name

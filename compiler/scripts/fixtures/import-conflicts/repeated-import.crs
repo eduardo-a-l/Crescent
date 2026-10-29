@@ -3,6 +3,6 @@ use a::Thing;
 
 component Main {
     view {
-        <p>"main"</p>
+        <Thing />
     }
 }

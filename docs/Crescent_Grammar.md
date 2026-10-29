@@ -491,6 +491,15 @@ that closes it, that is, the last import in the chain, and a file that imports i
 import. These errors are still fatal for the whole project: resolving imports is a precondition
 for checking any file, so while one is present no other diagnostics are produced.
 
+**Unused imports.** An imported name that the file never refers to produces a warning on its
+`use` line, `Import 'Widget' from 'lib.crs' is never used`, or `Import 'Widget' (as 'W') from
+'lib.crs' is never used` for an aliased one. Every item of a braced `use` is judged separately. A
+name counts as used when it appears as a component tag, in any type position (including nullable,
+array and generic types), as a struct literal or destructure type, or as an identifier. The
+check is deliberately forgiving: it only ever stays silent when in doubt, so a local variable that
+happens to share an imported name hides the warning. An import that is rejected as a name conflict
+is reported only as the conflict.
+
 **Name conflicts.** The name an import binds in a file (the item's own name, or its `as` alias)
 must be unique within that file. It is a compile error if that name is already bound by another
 `use` in the same file, even from the same module, or if it equals the name of a top-level

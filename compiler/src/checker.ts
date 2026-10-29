@@ -1,5 +1,6 @@
 import * as AST from './ast';
 import { FileImports, LoadedFile } from './modules';
+import { collectReferencedNames } from './references';
 import { FunctionEffects, NullifyMode, blockDefinitelyExits, computeFunctionEffects, nullifiedByExpr, nullifiedByStmts } from './narrowing';
 
 export interface Diagnostic {
@@ -983,6 +984,7 @@ export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, impo
 
   const localDeclNames = new Set(topLevelDecls.map((d) => d.name));
   const importedFrom = new Map<string, string>();
+  const boundImports: { local: string; imported: string; from: string; line: number }[] = [];
   for (const imp of imports) {
     const targetFile = files.get(imp.targetRelPath);
     if (!targetFile) continue;
@@ -1014,7 +1016,17 @@ export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, impo
         continue;
       }
       importedFrom.set(n.local, imp.targetRelPath);
+      boundImports.push({ local: n.local, imported: n.imported, from: imp.targetRelPath, line: imp.line });
       globalScope.set(n.local, { kind: n.kind, decl: found });
+    }
+  }
+
+  if (boundImports.length > 0) {
+    const referenced = collectReferencedNames(file.program.declarations);
+    for (const b of boundImports) {
+      if (referenced.has(b.local)) continue;
+      const shown = b.local === b.imported ? `'${b.local}'` : `'${b.imported}' (as '${b.local}')`;
+      diagnostics.push(warn(`Import ${shown} from '${b.from}' is never used`, `file '${file.relPath}'`, b.line));
     }
   }
 

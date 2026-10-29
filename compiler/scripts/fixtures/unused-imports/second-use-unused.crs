@@ -1,0 +1,10 @@
+use lib::Point;
+use lib::Widget;
+
+component Main {
+    state<Point> origin = Point { x: 0, y: 0 };
+
+    view {
+        <p>"main"</p>
+    }
+}

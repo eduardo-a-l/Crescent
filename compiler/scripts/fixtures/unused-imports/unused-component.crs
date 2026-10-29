@@ -1,0 +1,7 @@
+use lib::Widget;
+
+component Main {
+    view {
+        <p>"main"</p>
+    }
+}

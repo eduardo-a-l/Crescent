@@ -1,0 +1,9 @@
+use lib::{Widget as W, Point as P};
+
+component Main {
+    state<P> origin = P { x: 1, y: 2 };
+
+    view {
+        <W />
+    }
+}

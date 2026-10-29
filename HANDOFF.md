@@ -7,13 +7,45 @@
 
 ## Current State
 
-**Branch:** `feature/module-diagnostics` (off `develop` at `b3ca505`)
+**Branch:** `feature/unused-imports` (off `develop` at `814a207`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Added the unused-import warning, the second piece of the open "More module error diagnostics"
+item. `checkFile` in `compiler/src/checker.ts` now remembers every import it actually binds (an
+import rejected as a name conflict is not recorded, so it is reported only as the conflict) and,
+after the import loop, warns on the `use` line for each bound name that the file never refers to:
+`Import 'Widget' from 'lib.crs' is never used`, or `Import 'Widget' (as 'W') from 'lib.crs' is
+never used` for an alias. Items of a braced `use` are judged one by one.
+
+Detection lives in the new `compiler/src/references.ts`: `collectReferencedNames` walks the whole
+file AST generically (every object property and array element, skipping `UseDecl` nodes) and
+collects names from `NamedType`, `GenericType` and `Identifier` (`name`), `StructLiteral` and
+`StructDestructure` (`typeName`) and `Element` (`tag`). Walking generically means a new AST
+position that holds a type or a tag is covered without touching the checker, and it can only err
+toward silence: a local variable or text-free identifier sharing an imported name counts as a use.
+
+Fixtures I had written earlier in `fixtures/import-conflicts/` imported names without using them,
+so they now each render their imports (`<Thing />`, `<OtherThing />`, `<Imported />`); their
+assertions are unchanged. New `compiler/scripts/test-unused-imports.js` (wired into `npm test`
+after `test-module-diagnostics.js`) with fixtures in `compiler/scripts/fixtures/unused-imports/`:
+unused component, struct and alias, a partly-used braced import, a warning on line 2 when line 1
+is used, and clean cases for a component tag, struct type, struct literal, destructure, a struct
+used only in `state<Point?>` and a parameter type, and an alias. The real examples under
+`compiler/examples` (which do import) produce no unused-import warnings.
+
+Docs: new "Unused imports" paragraph in `docs/Crescent_Grammar.md`; `TODO.md` marks the warning
+done and keeps the module-errors-are-fatal point open.
+
+Still open under that item: module errors remain fatal and suppress every other diagnostic. A
+possible follow-up here is making the warning a quick-fix in the VS Code extension; nothing in the
+extension changed, since warnings already flow through `diagnosticsByFile`.
+
+Before that:
+
 First piece of the open "More module error diagnostics" item: module errors now say where they
 are. Before, every `ModuleError` (missing module, missing export, `super` above the root, import
 cycle) became a `FatalDiagnostic` with `file: null` and no line, so `crescent check` printed a bare
