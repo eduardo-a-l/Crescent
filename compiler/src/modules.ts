@@ -25,6 +25,7 @@ export function loadAllPrograms(rootDir: string): Map<string, LoadedFile> {
 
   function walk(dir: string): void {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
