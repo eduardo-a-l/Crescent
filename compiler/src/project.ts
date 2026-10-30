@@ -5,18 +5,18 @@ import { checkFile, Diagnostic } from './checker';
 import { LexError } from './lexer';
 import { ParseError } from './parser';
 import {
-  detectCycles,
   FileImports,
+  findCycles,
   jsRequirePath,
   loadAllPrograms,
   LoadedFile,
-  ModuleError,
-  resolveFileImports,
+  ModuleIssue,
+  resolveFileImportsLenient,
   runtimeRequirePathFor,
 } from './modules';
 
 export interface FatalDiagnostic {
-  stage: 'parse' | 'module';
+  stage: 'parse';
   message: string;
   file: string | null;
   line: number | null;
@@ -48,28 +48,27 @@ export function checkProject(root: string): CheckProjectResult {
   }
 
   const importsByFile = new Map<string, FileImports[]>();
-  try {
-    for (const [relPath, file] of files) {
-      importsByFile.set(relPath, resolveFileImports(file, files));
-    }
-    detectCycles(files, importsByFile);
-  } catch (e) {
-    if (e instanceof ModuleError) {
-      return {
-        ok: false,
-        fatal: { stage: 'module', message: e.message, file: e.file, line: e.line },
-        files,
-        importsByFile,
-        diagnosticsByFile: new Map(),
-      };
-    }
-    throw e;
+  const issuesByFile = new Map<string, ModuleIssue[]>();
+  const unresolvedByFile = new Map<string, Set<string>>();
+  for (const [relPath, file] of files) {
+    const resolved = resolveFileImportsLenient(file, files);
+    importsByFile.set(relPath, resolved.imports);
+    issuesByFile.set(relPath, resolved.issues);
+    unresolvedByFile.set(relPath, resolved.unresolved);
+  }
+  for (const issue of findCycles(files, importsByFile)) {
+    issuesByFile.get(issue.file)!.push(issue);
   }
 
   const diagnosticsByFile = new Map<string, Diagnostic[]>();
   for (const [relPath, file] of files) {
+    const moduleDiagnostics: Diagnostic[] = (issuesByFile.get(relPath) ?? [])
+      .slice()
+      .sort((a, b) => a.line - b.line)
+      .map((issue) => ({ severity: 'error', message: issue.message, where: `file '${relPath}'`, line: issue.line }));
     const fileImports = importsByFile.get(relPath) ?? [];
-    diagnosticsByFile.set(relPath, checkFile(file, files, fileImports));
+    const checked = checkFile(file, files, fileImports, unresolvedByFile.get(relPath));
+    diagnosticsByFile.set(relPath, [...moduleDiagnostics, ...checked]);
   }
 
   return { ok: true, fatal: null, files, importsByFile, diagnosticsByFile };
@@ -106,16 +105,14 @@ export function buildProject(root: string, outDir: string): BuildProjectResult {
     fs.copyFileSync(runtimeSrc, runtimeDest);
   }
 
+  const skipped = new Map<string, string>();
+  const unexpected = new Map<string, string>();
+  const generated = new Map<string, string>();
+
   for (const [relPath, file] of check.files) {
     const diagnostics = check.diagnosticsByFile.get(relPath) ?? [];
-    const errors = diagnostics.filter((d) => d.severity === 'error');
-    if (errors.length > 0) {
-      builds.push({
-        relPath,
-        outFile: null,
-        skippedReason: 'semantic errors must be fixed first',
-        unexpectedError: null,
-      });
+    if (diagnostics.some((d) => d.severity === 'error')) {
+      skipped.set(relPath, 'semantic errors must be fixed first');
       continue;
     }
 
@@ -137,17 +134,57 @@ export function buildProject(root: string, outDir: string): BuildProjectResult {
         }
       }
 
-      const js = generateProgram(file.program, runtimeRequirePathFor(relPath), Array.from(bindingsByTarget.values()));
-      const outFile = path.join(genDir, relPath.replace(/\.crs$/, '.js'));
-      fs.mkdirSync(path.dirname(outFile), { recursive: true });
-      fs.writeFileSync(outFile, js, 'utf-8');
-      builds.push({ relPath, outFile, skippedReason: null, unexpectedError: null });
+      generated.set(relPath, generateProgram(file.program, runtimeRequirePathFor(relPath), Array.from(bindingsByTarget.values())));
     } catch (e) {
       if (e instanceof CodegenError) {
-        builds.push({ relPath, outFile: null, skippedReason: e.message, unexpectedError: null });
+        skipped.set(relPath, e.message);
       } else {
-        builds.push({ relPath, outFile: null, skippedReason: null, unexpectedError: (e as Error).message });
+        unexpected.set(relPath, (e as Error).message);
       }
+    }
+  }
+
+  const unavailable = (relPath: string): boolean => skipped.has(relPath) || unexpected.has(relPath);
+  const blockedBy = new Map<string, string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const relPath of generated.keys()) {
+      if (blockedBy.has(relPath)) continue;
+      for (const imp of check.importsByFile.get(relPath) ?? []) {
+        if (!imp.names.some((n) => n.kind === 'component')) continue;
+        if (unavailable(imp.targetRelPath) || blockedBy.has(imp.targetRelPath)) {
+          blockedBy.set(relPath, imp.targetRelPath);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  for (const relPath of check.files.keys()) {
+    const reason = skipped.get(relPath);
+    if (reason !== undefined) {
+      builds.push({ relPath, outFile: null, skippedReason: reason, unexpectedError: null });
+      continue;
+    }
+    const failure = unexpected.get(relPath);
+    if (failure !== undefined) {
+      builds.push({ relPath, outFile: null, skippedReason: null, unexpectedError: failure });
+      continue;
+    }
+    const blocker = blockedBy.get(relPath);
+    if (blocker !== undefined) {
+      builds.push({ relPath, outFile: null, skippedReason: `'${blocker}', which it imports, was not built`, unexpectedError: null });
+      continue;
+    }
+    try {
+      const outFile = path.join(genDir, relPath.replace(/\.crs$/, '.js'));
+      fs.mkdirSync(path.dirname(outFile), { recursive: true });
+      fs.writeFileSync(outFile, generated.get(relPath)!, 'utf-8');
+      builds.push({ relPath, outFile, skippedReason: null, unexpectedError: null });
+    } catch (e) {
+      builds.push({ relPath, outFile: null, skippedReason: null, unexpectedError: (e as Error).message });
     }
   }
 

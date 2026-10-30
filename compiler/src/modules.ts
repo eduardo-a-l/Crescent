@@ -84,20 +84,49 @@ export interface FileImports {
   line: number;
 }
 
-export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFile>): FileImports[] {
-  const result: FileImports[] = [];
+export interface ModuleIssue {
+  message: string;
+  file: string;
+  line: number;
+}
+
+export interface ResolvedImports {
+  imports: FileImports[];
+  issues: ModuleIssue[];
+  unresolved: Set<string>;
+}
+
+export function resolveFileImportsLenient(file: LoadedFile, files: Map<string, LoadedFile>): ResolvedImports {
+  const imports: FileImports[] = [];
+  const issues: ModuleIssue[] = [];
+  const unresolved = new Set<string>();
 
   for (const decl of file.program.declarations) {
     if (decl.kind !== 'UseDecl') continue;
 
-    const targetRelPath = resolveUsePath(file.relPath, decl.pathSegments, decl.line);
+    const markAllUnresolved = (): void => {
+      for (const item of decl.items) unresolved.add(item.alias ?? item.name);
+    };
+
+    let targetRelPath: string;
+    try {
+      targetRelPath = resolveUsePath(file.relPath, decl.pathSegments, decl.line);
+    } catch (e) {
+      if (!(e instanceof ModuleError)) throw e;
+      issues.push({ message: e.message, file: file.relPath, line: decl.line });
+      markAllUnresolved();
+      continue;
+    }
+
     const target = files.get(targetRelPath);
     if (!target) {
-      throw new ModuleError(
-        `Cannot find module '${targetRelPath}' (imported from '${file.relPath}' via 'use ${decl.pathSegments.join('::')}::...;')`,
-        file.relPath,
-        decl.line
-      );
+      issues.push({
+        message: `Cannot find module '${targetRelPath}' (imported from '${file.relPath}' via 'use ${decl.pathSegments.join('::')}::...;')`,
+        file: file.relPath,
+        line: decl.line,
+      });
+      markAllUnresolved();
+      continue;
     }
 
     const names: ResolvedImportName[] = [];
@@ -107,11 +136,13 @@ export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFi
           (d.kind === 'ComponentDecl' || d.kind === 'StructDecl') && d.name === item.name
       );
       if (!found) {
-        throw new ModuleError(
-          `'${item.name}' is not defined at the top level of '${targetRelPath}' (imported from '${file.relPath}')`,
-          file.relPath,
-          decl.line
-        );
+        issues.push({
+          message: `'${item.name}' is not defined at the top level of '${targetRelPath}' (imported from '${file.relPath}')`,
+          file: file.relPath,
+          line: decl.line,
+        });
+        unresolved.add(item.alias ?? item.name);
+        continue;
       }
       names.push({
         local: item.alias ?? item.name,
@@ -120,18 +151,28 @@ export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFi
       });
     }
 
-    result.push({ targetRelPath, names, line: decl.line });
+    imports.push({ targetRelPath, names, line: decl.line });
   }
 
-  return result;
+  return { imports, issues, unresolved };
 }
 
-export function detectCycles(files: Map<string, LoadedFile>, allImports: Map<string, FileImports[]>): void {
+export function resolveFileImports(file: LoadedFile, files: Map<string, LoadedFile>): FileImports[] {
+  const resolved = resolveFileImportsLenient(file, files);
+  if (resolved.issues.length > 0) {
+    const first = resolved.issues[0];
+    throw new ModuleError(first.message, first.file, first.line);
+  }
+  return resolved.imports;
+}
+
+export function findCycles(files: Map<string, LoadedFile>, allImports: Map<string, FileImports[]>): ModuleIssue[] {
   const WHITE = 0;
   const GRAY = 1;
   const BLACK = 2;
   const color = new Map<string, number>();
   for (const key of files.keys()) color.set(key, WHITE);
+  const issues: ModuleIssue[] = [];
 
   interface Frame {
     node: string;
@@ -165,11 +206,19 @@ export function detectCycles(files: Map<string, LoadedFile>, allImports: Map<str
         const nodes = stack.map((f) => f.node);
         const chain = [...nodes.slice(nodes.indexOf(target)), target];
         const closing = frame.imports.find((i) => i.targetRelPath === target);
-        throw new ModuleError(`Circular import: ${chain.join(' -> ')}`, frame.node, closing ? closing.line : null);
+        issues.push({ message: `Circular import: ${chain.join(' -> ')}`, file: frame.node, line: closing ? closing.line : 1 });
+        continue;
       }
       if (state === WHITE) enter(target);
     }
   }
+
+  return issues;
+}
+
+export function detectCycles(files: Map<string, LoadedFile>, allImports: Map<string, FileImports[]>): void {
+  const issues = findCycles(files, allImports);
+  if (issues.length > 0) throw new ModuleError(issues[0].message, issues[0].file, issues[0].line);
 }
 
 const GEN_ROOT = '/__crescent_gen_root__';

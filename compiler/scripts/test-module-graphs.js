@@ -49,6 +49,16 @@ function chainFiles(n, closeCycle) {
   return files;
 }
 
+function cycleErrors(result) {
+  const found = [];
+  for (const [file, diagnostics] of result.diagnosticsByFile) {
+    for (const d of diagnostics) {
+      if (d.severity === 'error' && /^Circular import:/.test(d.message)) found.push({ file, line: d.line, message: d.message });
+    }
+  }
+  return found;
+}
+
 function buildAndLoad(files) {
   const root = makeProject(files);
   const outDir = path.join(tmpRoot, `out-${counter++}`);
@@ -120,15 +130,16 @@ assert(
 );
 
 const longCycle = checkProject(makeProject(chainFiles(500, true)));
-const longCycleChain = longCycle.fatal ? longCycle.fatal.message.replace(/^Circular import: /, '').split(' -> ') : [];
+const longCycleErrors = cycleErrors(longCycle);
+const longCycleChain = longCycleErrors.length ? longCycleErrors[0].message.replace(/^Circular import: /, '').split(' -> ') : [];
 assert(
-  !longCycle.ok &&
-    longCycle.fatal.stage === 'module' &&
+  longCycle.ok &&
+    longCycleErrors.length === 1 &&
     longCycleChain.length === 501 &&
     longCycleChain[0] === longCycleChain[500] &&
-    longCycle.fatal.file === longCycleChain[499] &&
-    longCycle.fatal.line === 1,
-  `cycle of 500: a cycle spanning 500 files is reported with its full chain on the use that closes it, got ${longCycle.fatal && JSON.stringify({ file: longCycle.fatal.file, line: longCycle.fatal.line, chain: longCycleChain.length })}`
+    longCycleErrors[0].file === longCycleChain[499] &&
+    longCycleErrors[0].line === 1,
+  `cycle of 500: a cycle spanning 500 files is reported once, with its full chain, on the use that closes it, got ${JSON.stringify(longCycleErrors.map((e) => ({ file: e.file, line: e.line, chain: e.message.split(' -> ').length })))}`
 );
 
 let deepChain = null;
@@ -150,9 +161,10 @@ try {
 } catch (e) {
   deepCycleError = e;
 }
+const deepCycleErrors = deepCycle ? cycleErrors(deepCycle) : [];
 assert(
-  deepCycleError === null && !deepCycle.ok && deepCycle.fatal.message.split(' -> ').length === 12001,
-  `cycle of 12000: a 12000-file cycle is reported instead of overflowing the stack, got ${deepCycleError ? deepCycleError.constructor.name : 'ok=' + deepCycle.ok}`
+  deepCycleError === null && deepCycle.ok && deepCycleErrors.length === 1 && deepCycleErrors[0].message.split(' -> ').length === 12001,
+  `cycle of 12000: a 12000-file cycle is reported instead of overflowing the stack, got ${deepCycleError ? deepCycleError.constructor.name : deepCycleErrors.length + ' errors'}`
 );
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

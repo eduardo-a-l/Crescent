@@ -7,13 +7,74 @@
 
 ## Current State
 
-**Branch:** `feature/derived-narrowing` (off `develop` at `3159d05`)
+**Branch:** `feature/nonfatal-module-errors` (off `develop` at `9a6dde7`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Module errors are no longer fatal. Before, a missing module, a missing item, `super` above the root
+or an import cycle aborted the whole project with one message, so every other diagnostic only
+appeared after fixing it, one at a time. Now they are ordinary per-file errors on their `use` line
+and only a parse error stays fatal (without a syntax tree for every file there is nothing to
+resolve against).
+
+Design (the note I proposed earlier): import resolution collects issues instead of throwing, and a
+failed import binds nothing; follow-on errors caused by the missing name are suppressed; every
+cycle is reported; the build rule "a file with an error is skipped, the rest still build" is kept
+and made sound.
+
+`compiler/src/modules.ts`: `resolveFileImportsLenient(file, files)` returns `{ imports, issues,
+unresolved }` (`issues` are `{ message, file, line }`, `unresolved` is the set of local names,
+aliases included, whose import failed; items that do resolve in a braced list are kept, and an
+import whose module exists is kept even with zero resolved names so it still counts as a
+dependency). `findCycles` is the old iterative DFS with `issues.push` instead of `throw` and
+`continue` past the back edge, so every cycle is found once. `resolveFileImports` and `detectCycles`
+remain as thin wrappers that throw the first issue, so `test-missing-import.js` and
+`test-circular-import.js` did not change. `compiler/src/project.ts`: `checkProject` resolves every
+file leniently, adds cycle issues to the closing file, turns each issue into an error diagnostic
+(sorted by line, placed before the file's other diagnostics) and passes `unresolved` to `checkFile`.
+`FatalDiagnostic.stage` is now just `'parse'`. `compiler/src/checker.ts`: `checkFile` takes an optional
+fourth argument and filters diagnostics that merely follow from an unresolved name
+(`Undefined identifier`, `Unknown struct type`, `Unknown component`, `Unknown type` containing the
+name) via `isUnresolvedCascade`; it also skips self-imports entirely, because the cycle error already
+explains them and they would otherwise also clash with the file's own declarations.
+
+Build soundness: a hole that already existed for semantic errors showed up here. A file importing a
+skipped file was emitted with `require('./lib')` for a `lib.js` that was never written, so the output
+failed at load time (reproduced before fixing). `buildProject` is now three phases: generate in
+memory, compute the set blocked by a skipped (error, codegen failure or unexpected failure) file
+reached through an import that binds a component, then write only the unblocked files. The skipped
+reason is `'lib.crs', which it imports, was not built`. Struct-only imports do not block, since they
+emit no `require`.
+
+Tests: `compiler/scripts/test-module-diagnostics.js` was rewritten for the new shape (same five
+cases plus the CLI, which now prints `main.crs:3 [error] file 'main.crs': ...` with exit code 1);
+`test-module-graphs.js` (500 and 12000-file cycles) and `test-module-semantics.js` (case-sensitive
+lookup, no re-export) were updated from `fatal` to diagnostics. New `test-module-recovery.js` (15
+checks, wired into `npm test` after `test-module-diagnostics.js`): an unrelated error in another
+file and one in the same file are both reported; three bad `use` lines give three errors on lines
+1, 3, 5; uses of a failed name as a tag, struct literal, state type, array type and nullable type add
+nothing; an unrelated unknown component still errors; an alias of a failed import is silenced; a braced
+import keeps its resolving items; two independent cycles are both reported and a file in a cycle is
+still checked; a parse error is still fatal and reports nothing else; the build rules (transitive
+skipping, struct-only imports, a codegen failure blocking importers, and that every relative require
+in every emitted file points at an emitted file). My first draft of that last group named files
+`codegen-fails.crs` etc. and crashed the test, because a hyphenated name cannot be imported, which is
+exactly the rule I wrote in the spec last task.
+
+Docs: `docs/Crescent_Grammar.md` 11.6 (emit rule), 11.7 (table and the paragraphs on recovery,
+cascades and cycles) and 11.8 rewritten; the VS Code README no longer says module errors replace
+other diagnostics; `TODO.md` updated.
+
+Limits worth knowing: cascades are recognised by message text, so a new "unknown name" diagnostic
+must be added to `isUnresolvedCascade`; the VS Code extension was not run in an editor (it only
+consumes `diagnosticsByFile`, which already carried per-file diagnostics, and `fatal`, which is now
+parse-only).
+
+Before that:
+
 Closed the last substantive null-narrowing limit: a narrowed `derived` value now dies when something
 it depends on is written. A derived value is the only name that changes without being assigned, so
 `if (label != null) { count = 5; label.length; }` with `derived<string?> label = count > 3 ? null :

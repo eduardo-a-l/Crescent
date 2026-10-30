@@ -549,35 +549,51 @@ these requires and the component definitions, so the order in which modules are 
 be observed.
 Import cycles are nonetheless rejected (§11.7), because the language does not define them.
 
+A file is emitted only if it can be: it has no errors, code generation succeeds for it, and every
+module it imports a component from is emitted as well, directly or through other files. Otherwise
+its output would `require` a file that does not exist. A file that imports only structs from a skipped
+file is unaffected, since it emits no `require` for it.
+
 ### 11.7 Diagnostics
 
 | Condition | Severity | Reported at | Effect |
 |---|---|---|---|
 | A file fails to parse | error | that file, with the line in the message | fatal |
-| `use` names a module that does not exist | error | the `use` line | fatal |
-| `use` names an item the target does not define at its top level, including one it only imports | error | the `use` line | fatal |
-| A `super` climbs above the project root | error | the `use` line | fatal |
-| Import cycle, including a file importing itself | error | the `use` that closes the cycle | fatal |
-| An import's bound name clashes with another import or a local declaration | error | the `use` line | that file is not emitted |
-| Two top-level declarations of one file share a name | error | the second declaration | that file is not emitted |
+| `use` names a module that does not exist | error | the `use` line | the file is not emitted |
+| `use` names an item the target does not define at its top level, including one it only imports | error | the `use` line | the file is not emitted |
+| A `super` climbs above the project root | error | the `use` line | the file is not emitted |
+| Import cycle | error | the `use` that closes the cycle | that file is not emitted |
+| An import's bound name clashes with another import or a local declaration | error | the `use` line | the file is not emitted |
+| Two top-level declarations of one file share a name | error | the second declaration | the file is not emitted |
 | An import is never used | warning | the `use` line | none |
 
-A fatal error is found while the project is loaded and its imports are resolved, which has to
-succeed before any file can be checked. While one is present no other diagnostics are produced and
-nothing is emitted, and only the first fatal error found is reported. Any other error belongs to a
-single file: that file is skipped at build time and every other file is still built.
+A parse error is the only fatal one, because without a syntax tree for every file there is nothing
+to resolve imports against. While one is present nothing else is reported and nothing is emitted,
+and only the first one found is reported. Every other error belongs to a file: it is reported next to
+that file's other diagnostics, a file with an error is not emitted, and the rest of the project is
+still checked and, where it does not depend on a file that was skipped, built (§11.6).
 
-The cycle check builds the file-level dependency graph of the whole project before any file is
-generated, so a cycle anywhere stops the build rather than only the files involved. The error
-names the full chain, e.g. `Circular import: a.crs -> b.crs -> a.crs`, and is attributed to the
-last import in that chain, here the `use` in `b.crs`. The check does not depend on the length of the
-chain.
+A `use` that fails binds nothing, and every error in it is reported, not only the first, one per
+failing item, in line order with the file's other diagnostics. In a braced list the items that do
+resolve still work. To avoid piling up errors that only repeat the same mistake, the follow-on errors
+that would arise from the missing name, such as an unknown component for a tag, an unknown struct
+type, an unknown type or an undefined identifier, are not reported for a name whose import failed or
+for the name an alias gave it. An unrelated unknown name is still reported.
+
+Cycles are found on the file-level dependency graph of the whole project, and every cycle is
+reported, not only the first. The error names the full chain, e.g. `Circular import: a.crs -> b.crs ->
+a.crs`, and is attributed to the last import in that chain, here the `use` in `b.crs`. A file that
+imports itself is reported as a cycle and nothing else: its own names are not also reported as
+clashing with themselves. A file in a cycle is still checked like any other. The search does not
+depend on the length of the chain.
 
 ### 11.8 Known limitations
 
 - There are no re-exports, so a name has to be imported from the file that declares it.
-- Fatal module errors hide every other diagnostic, and only one is reported per run.
+- A parse error is fatal for the whole project and hides every other diagnostic.
 - There is no wildcard import and no import path that starts at the project root.
 - A file whose name is not an identifier cannot be imported.
 - Whether a name is used is judged by its spelling, so an unrelated identifier with the same name
   hides an unused-import warning.
+- Follow-on errors are recognised by their message, so a new kind of "unknown name" diagnostic has to
+  be added to the list of silenced ones before it stops cascading from a failed import.

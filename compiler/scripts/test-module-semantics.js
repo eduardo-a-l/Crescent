@@ -36,6 +36,10 @@ function describe(value) {
   return JSON.stringify(value);
 }
 
+function errorsIn(result, file) {
+  return (result.diagnosticsByFile.get(file) || []).filter((d) => d.severity === 'error');
+}
+
 const midSuper = checkProject(
   makeProject({
     'lib.crs': component('Lib'),
@@ -97,9 +101,10 @@ assert(
 );
 
 const caseMismatch = checkProject(makeProject({ 'lib.crs': component('Lib'), 'main.crs': component('Main', ['Lib::Lib']) }));
+const caseErrors = errorsIn(caseMismatch, 'main.crs');
 assert(
-  !caseMismatch.ok && caseMismatch.fatal.stage === 'module' && caseMismatch.fatal.file === 'main.crs' && /Cannot find module 'Lib\.crs'/.test(caseMismatch.fatal.message),
-  `path resolution: module lookup is case-sensitive on every platform, got ${describe(caseMismatch.fatal)}`
+  caseMismatch.ok && caseErrors.length === 1 && caseErrors[0].line === 1 && /Cannot find module 'Lib\.crs'/.test(caseErrors[0].message),
+  `path resolution: module lookup is case-sensitive on every platform, got ${describe(caseErrors)}`
 );
 
 const reexport = checkProject(
@@ -109,9 +114,10 @@ const reexport = checkProject(
     'main.crs': component('Main', ['mid::Lib']),
   })
 );
+const reexportErrors = errorsIn(reexport, 'main.crs');
 assert(
-  !reexport.ok && reexport.fatal.stage === 'module' && reexport.fatal.file === 'main.crs' && /'Lib' is not defined at the top level of 'mid\.crs'/.test(reexport.fatal.message),
-  `visibility: a name that a module only imports is not importable from it, got ${describe(reexport.fatal)}`
+  reexport.ok && reexportErrors.length === 1 && reexportErrors[0].line === 1 && /'Lib' is not defined at the top level of 'mid\.crs'/.test(reexportErrors[0].message),
+  `visibility: a name that a module only imports is not importable from it, got ${describe(reexportErrors)}`
 );
 
 const compiled = buildProject(

@@ -125,8 +125,15 @@
 - [x] Unused-import warning — an imported name (or alias) the file never refers to is reported on
   its `use` line, per item of a braced import (`compiler/src/references.ts`,
   `compiler/scripts/test-unused-imports.js`, `compiler/scripts/fixtures/unused-imports/`)
-- [ ] More module error diagnostics — still open: module errors are fatal and suppress every other
-  diagnostic, so fixing one `use` reveals the next one only on the following run
+- [x] Module errors are no longer fatal — a missing module, a missing item, `super` above the root and
+  an import cycle are ordinary per-file errors on their `use` line, every one is reported (all bad
+  `use` lines in a file, every independent cycle), follow-on "unknown name" errors for a name whose
+  import failed are suppressed, a file in a cycle is still checked, and only a parse error stays
+  fatal (`compiler/scripts/test-module-recovery.js`). Making this sound also fixed a hole that
+  already existed for semantic errors: a file importing a skipped file was emitted with a `require`
+  of a file that was never written, so `buildProject()` now also skips every file that imports a
+  skipped file, through any number of levels, whether it was skipped for an error or for a code
+  generation failure (struct-only imports do not count, they emit no `require`)
 - [x] Clearly define module semantics in the language specification — `docs/Crescent_Grammar.md`
   §11 is now organised as 11.1 Syntax, 11.2 Modules and the project, 11.3 Declarations,
   visibility and scope, 11.4 Path resolution, 11.5 Name binding, 11.6 Compilation model, 11.7

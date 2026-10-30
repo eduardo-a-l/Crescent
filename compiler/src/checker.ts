@@ -1014,7 +1014,26 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
   }
 }
 
-export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, imports: FileImports[]): Diagnostic[] {
+function isUnresolvedCascade(message: string, unresolved: ReadonlySet<string>): boolean {
+  for (const name of unresolved) {
+    if (
+      message.startsWith(`Undefined identifier '${name}'`) ||
+      message === `Unknown struct type '${name}'` ||
+      message === `Unknown component '<${name}>'` ||
+      new RegExp(`^Unknown type '[^']*\\b${name}\\b[^']*'`).test(message)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function checkFile(
+  file: LoadedFile,
+  files: Map<string, LoadedFile>,
+  imports: FileImports[],
+  unresolved: ReadonlySet<string> = new Set()
+): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const globalScope = new Map<string, SymbolInfo>();
 
@@ -1038,9 +1057,14 @@ export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, impo
   const localDeclNames = new Set(topLevelDecls.map((d) => d.name));
   const importedFrom = new Map<string, string>();
   const boundImports: { local: string; imported: string; from: string; line: number }[] = [];
+  const selfImported = new Set<string>();
   for (const imp of imports) {
     const targetFile = files.get(imp.targetRelPath);
     if (!targetFile) continue;
+    if (imp.targetRelPath === file.relPath) {
+      for (const n of imp.names) selfImported.add(n.local);
+      continue;
+    }
     for (const n of imp.names) {
       const found = targetFile.program.declarations.find(
         (d): d is AST.ComponentDecl | AST.StructDecl =>
@@ -1088,5 +1112,6 @@ export function checkFile(file: LoadedFile, files: Map<string, LoadedFile>, impo
     if (decl.kind === 'ComponentDecl') checkComponentDecl(decl, globalScope, diagnostics);
   }
 
-  return diagnostics;
+  const silenced = new Set([...unresolved, ...selfImported]);
+  return silenced.size > 0 ? diagnostics.filter((d) => !isUnresolvedCascade(d.message, silenced)) : diagnostics;
 }
