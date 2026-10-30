@@ -7,13 +7,49 @@
 
 ## Current State
 
-**Branch:** `feature/module-spec` (off `develop` at `a3dea0a`)
+**Branch:** `feature/expression-order-narrowing` (off `develop` at `febdc61`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Closed the "evaluation order inside one expression" limit of the null-narrowing analysis. Before,
+`checkExpr` passed one fixed `narrow` to every sub-expression, so after `if (x == null) { return; }`
+the expression `reset() + x.length` (with `reset()` assigning `x = null`) was accepted: the call that
+nulls `x` comes first but its effect was only applied after the whole statement. The old checker was
+silent on all seven shapes in the new negative fixture (verified by stashing the change).
+
+In `compiler/src/checker.ts`, `checkExpr` now evaluates children left to right and, after each, drops
+from the narrowing the names that child may null (`nullifiedByExpr`, the same effect summaries and
+`await` handling as the statement level), for what comes after it: both operands of a non-short-circuit
+`Binary`, the right side of `&&`/`||` (whose guard targets are also filtered, as `If` tests already
+were), a `Ternary`'s test before its branches, a `Call`'s callee then each argument in order, the
+elements of array literals, the fields of struct literals, the object before the index of an `Index`,
+and the parts of a template string. A child's own access is still checked with the narrowing from before
+it, so `x.length + reset()` and `f(x.length, reset())` stay clean.
+
+Plumbing: `checkExpr` has no `memberTypes`/`constNames`, which `await` handling needs, so the set of
+suspendable names is now registered once per component in `checkComponentDecl` in a `WeakMap` keyed by
+the `functions` map (`suspendNamesByFunctions`, read with `suspendNamesOf`), next to the existing effects
+cache, and `checkStmts` reads it the same way; the old cache keyed by `memberTypes` is gone. No
+signatures changed.
+
+Tests (`test-checker.js`, `assertWarnedLines`): `unguarded-nullable-expression-order.crs` with exactly
+seven warnings, on lines 26, 33, 40, 47, 51, 60 and 67 (binary, call arguments, array literal, struct
+literal, `&&` chain, ternary test, awaited operand), and `guarded-nullable-expression-order-ok.crs`
+for the same shapes with the access first, a call that nulls only another name, and an `await` after
+the access. One of my first drafts of the clean fixture put two such statements in one function and
+correctly warned on the second, because the first one's `reset()` really does null the name for the
+next statement; each case now has its own function. Examples under `compiler/examples` still have zero
+nullable warnings.
+
+Docs: `docs/Crescent_Design.md` section 11 gains the in-expression rule and drops this from its
+limits; `TODO.md` updated. Remaining limits: `derived` values whose dependencies change in synchronous
+code, calls across separate nodes of a view, and event handlers.
+
+Before that:
+
 Wrote the module semantics specification ("Clearly define module semantics in the language
 specification" in `TODO.md`) as two commits: a bug fix the writing exposed, then the spec.
 

@@ -488,6 +488,18 @@ assert(
   `guarded-nullable-await-ok.crs: a guard placed after an await, a use before it, a narrowed local, and an await only on an exiting branch all stay clean, got ${JSON.stringify(guardedAwaitOkDiagnostics)}`
 );
 
+assertWarnedLines(
+  'unguarded-nullable-expression-order.crs',
+  [26, 33, 40, 47, 51, 60, 67],
+  'inside one expression a call or await that comes first invalidates narrowing for what follows it: binary operands, call arguments, array and struct literal elements, an && chain, a ternary test and an awaited operand'
+);
+
+const guardedExpressionOrderOkDiagnostics = diagnosticsFor('guarded-nullable-expression-order-ok.crs');
+assert(
+  guardedExpressionOrderOkDiagnostics.length === 0,
+  `guarded-nullable-expression-order-ok.crs: the same expressions stay clean when the access comes before the call or await, or the call nulls something else, got ${JSON.stringify(guardedExpressionOrderOkDiagnostics)}`
+);
+
 const guardedCallOkDiagnostics = diagnosticsFor('guarded-nullable-call-ok.crs');
 assert(
   guardedCallOkDiagnostics.length === 0,

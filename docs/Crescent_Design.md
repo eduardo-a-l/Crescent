@@ -489,14 +489,23 @@ when the test itself contains such a call, as in `if (x != null && reset())`. A 
 exits by `return`, `break` or `continue` does not carry its assignments or calls to the statements
 after the `if`. An `await` ends the narrowing of all component members (`state`, `derived`,
 `provide` and `inject`, but not `const`), because other code can run while the function is
-suspended; narrowed locals and parameters survive it, since nothing else can reach them. The analysis is deliberately conservative: it does not follow control flow past
-this and it treats any possibly-null assignment as nulling the name.
+suspended; narrowed locals and parameters survive it, since nothing else can reach them.
 
-Known limits, none of which change the checker's behaviour yet: the order of evaluation inside a
-single expression is not tracked (so `f(x.length, reset())` is fine but `reset() + x.length` after
-a guard is not caught); narrowing of a `derived` value is not invalidated when the state it depends
-on changes in ordinary synchronous code, only across an `await`; and calls made from view
-expressions or event handlers are not analysed.
+Inside a single expression the same rules apply in evaluation order, left to right: a call or an
+`await` ends the narrowing of the names it may null for everything that is evaluated after it, but
+not for what was evaluated before. So `x.length + reset()` and `f(x.length, reset())` are fine,
+while `reset() + x.length`, `f(reset(), x.length)`, `[reset(), x.length]`, `Pair { a: reset(), b:
+x.length }`, `x != null && reset() && x.length > 0`, `reset() > 0 ? x.length : 0` and `(await
+slow()) + x.length` all warn after the guard. The operands of an expression and its call
+arguments are taken in the order they are written.
+
+The analysis is deliberately conservative: it does not follow control flow past this and it treats
+any possibly-null assignment as nulling the name.
+
+Known limits, none of which change the checker's behaviour yet: narrowing of a `derived` value is
+not invalidated when the state it depends on changes in ordinary synchronous code, only across an
+`await`; and the calls made from view expressions are ordered only within one expression, not
+across separate nodes of a view, while event handlers are not analysed at all.
 
 ---
 

@@ -296,6 +296,9 @@ function checkExpr(
   line: number,
   diagnostics: Diagnostic[]
 ): void {
+  const effects = effectsFor(functions);
+  const suspendNames = suspendNamesOf(functions);
+  const nullifiedBy = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames);
   switch (expr.kind) {
     case 'IntLiteral':
     case 'FloatLiteral':
@@ -331,52 +334,72 @@ function checkExpr(
           }
         }
       }
-      for (const f of expr.fields) checkExpr(f.value, scope, globalScope, functions, narrow, where, line, diagnostics);
+      let fieldNarrow = narrow;
+      for (const f of expr.fields) {
+        checkExpr(f.value, scope, globalScope, functions, fieldNarrow, where, line, diagnostics);
+        fieldNarrow = dropNarrowed(fieldNarrow, nullifiedBy(f.value));
+      }
       return;
     }
-    case 'ArrayLiteral':
-      for (const el of expr.elements) checkExpr(el, scope, globalScope, functions, narrow, where, line, diagnostics);
+    case 'ArrayLiteral': {
+      let elementNarrow = narrow;
+      for (const el of expr.elements) {
+        checkExpr(el, scope, globalScope, functions, elementNarrow, where, line, diagnostics);
+        elementNarrow = dropNarrowed(elementNarrow, nullifiedBy(el));
+      }
       return;
+    }
     case 'Unary':
       checkExpr(expr.operand, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
-    case 'Binary':
+    case 'Binary': {
       checkExpr(expr.left, scope, globalScope, functions, narrow, where, line, diagnostics);
+      const leftNullified = nullifiedBy(expr.left);
+      const afterLeft = dropNarrowed(narrow, leftNullified);
       if (expr.op === '&&' || expr.op === '||') {
         const branch = expr.op === '&&' ? 'then' : 'else';
-        const targets = narrowingTargets(expr.left, narrow.nullable, branch);
+        const targets = withoutNames(narrowingTargets(expr.left, narrow.nullable, branch), leftNullified);
         const rightNarrow: NarrowState = {
-          nullable: narrow.nullable,
-          narrowed: targets.length ? new Set([...narrow.narrowed, ...targets]) : narrow.narrowed,
+          nullable: afterLeft.nullable,
+          narrowed: targets.length ? new Set([...afterLeft.narrowed, ...targets]) : afterLeft.narrowed,
         };
         checkExpr(expr.right, scope, globalScope, functions, rightNarrow, where, line, diagnostics);
       } else {
-        checkExpr(expr.right, scope, globalScope, functions, narrow, where, line, diagnostics);
+        checkExpr(expr.right, scope, globalScope, functions, afterLeft, where, line, diagnostics);
       }
       return;
-    case 'Ternary':
+    }
+    case 'Ternary': {
       checkExpr(expr.test, scope, globalScope, functions, narrow, where, line, diagnostics);
-      const consequentTargets = narrowingTargets(expr.test, narrow.nullable, 'then');
+      const testNullified = nullifiedBy(expr.test);
+      const afterTest = dropNarrowed(narrow, testNullified);
+      const consequentTargets = withoutNames(narrowingTargets(expr.test, narrow.nullable, 'then'), testNullified);
       const consequentNarrow: NarrowState = {
-        nullable: narrow.nullable,
-        narrowed: consequentTargets.length ? new Set([...narrow.narrowed, ...consequentTargets]) : narrow.narrowed,
+        nullable: afterTest.nullable,
+        narrowed: consequentTargets.length ? new Set([...afterTest.narrowed, ...consequentTargets]) : afterTest.narrowed,
       };
       checkExpr(expr.consequent, scope, globalScope, functions, consequentNarrow, where, line, diagnostics);
-      const alternateTargets = narrowingTargets(expr.test, narrow.nullable, 'else');
+      const alternateTargets = withoutNames(narrowingTargets(expr.test, narrow.nullable, 'else'), testNullified);
       const alternateNarrow: NarrowState = {
-        nullable: narrow.nullable,
-        narrowed: alternateTargets.length ? new Set([...narrow.narrowed, ...alternateTargets]) : narrow.narrowed,
+        nullable: afterTest.nullable,
+        narrowed: alternateTargets.length ? new Set([...afterTest.narrowed, ...alternateTargets]) : afterTest.narrowed,
       };
       checkExpr(expr.alternate, scope, globalScope, functions, alternateNarrow, where, line, diagnostics);
       return;
-    case 'Call':
+    }
+    case 'Call': {
       checkExpr(expr.callee, scope, globalScope, functions, narrow, where, line, diagnostics);
-      for (const a of expr.args) checkExpr(a, scope, globalScope, functions, narrow, where, line, diagnostics);
+      let argNarrow = dropNarrowed(narrow, nullifiedBy(expr.callee));
+      for (const a of expr.args) {
+        checkExpr(a, scope, globalScope, functions, argNarrow, where, line, diagnostics);
+        argNarrow = dropNarrowed(argNarrow, nullifiedBy(a));
+      }
       if (expr.callee.kind === 'Identifier') {
         const calleeFn = functions.get(expr.callee.name);
         if (calleeFn) checkCallArgs(calleeFn, expr.args, where, line, diagnostics);
       }
       return;
+    }
     case 'Member':
       if (expr.object.kind === 'Identifier' && narrow.nullable.has(expr.object.name) && !narrow.narrowed.has(expr.object.name)) {
         diagnostics.push(
@@ -392,16 +415,20 @@ function checkExpr(
         );
       }
       checkExpr(expr.object, scope, globalScope, functions, narrow, where, line, diagnostics);
-      checkExpr(expr.index, scope, globalScope, functions, narrow, where, line, diagnostics);
+      checkExpr(expr.index, scope, globalScope, functions, dropNarrowed(narrow, nullifiedBy(expr.object)), where, line, diagnostics);
       return;
     case 'Postfix':
       checkExpr(expr.operand, scope, globalScope, functions, narrow, where, line, diagnostics);
       return;
-    case 'TemplateString':
+    case 'TemplateString': {
+      let partNarrow = narrow;
       for (const p of expr.parts) {
-        if (p.kind === 'expr') checkExpr(p.expr, scope, globalScope, functions, narrow, where, line, diagnostics);
+        if (p.kind !== 'expr') continue;
+        checkExpr(p.expr, scope, globalScope, functions, partNarrow, where, line, diagnostics);
+        partNarrow = dropNarrowed(partNarrow, nullifiedBy(p.expr));
       }
       return;
+    }
   }
 }
 
@@ -493,15 +520,15 @@ function effectsFor(functions: Map<string, AST.FunctionDecl>): FunctionEffects {
   return effects;
 }
 
-const suspendNamesCache = new WeakMap<Map<string, AST.CrescentType>, Set<string>>();
+const suspendNamesByFunctions = new WeakMap<Map<string, AST.FunctionDecl>, ReadonlySet<string>>();
+const NO_SUSPEND_NAMES: ReadonlySet<string> = new Set();
 
 function suspendNamesFor(memberTypes: Map<string, AST.CrescentType>, constNames: Set<string>): Set<string> {
-  let names = suspendNamesCache.get(memberTypes);
-  if (!names) {
-    names = new Set([...memberTypes.keys()].filter((n) => !constNames.has(n)));
-    suspendNamesCache.set(memberTypes, names);
-  }
-  return names;
+  return new Set([...memberTypes.keys()].filter((n) => !constNames.has(n)));
+}
+
+function suspendNamesOf(functions: Map<string, AST.FunctionDecl>): ReadonlySet<string> {
+  return suspendNamesByFunctions.get(functions) ?? NO_SUSPEND_NAMES;
 }
 
 function dropNarrowed(narrow: NarrowState, names: Set<string>): NarrowState {
@@ -538,7 +565,7 @@ function checkStmts(
   const localScope = new Set(scope);
   let currentNarrow = narrow;
   const effects = effectsFor(functions);
-  const suspendNames = suspendNamesFor(memberTypes, constNames);
+  const suspendNames = suspendNamesOf(functions);
   const nullifiedStmts = (list: AST.Stmt[], mode: NullifyMode) => nullifiedByStmts(list, effects, mode, suspendNames);
   const nullifiedExpr = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames);
   for (const stmt of stmts) {
@@ -889,6 +916,7 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
     decl.members.filter((m): m is AST.DerivedDecl => m.kind === 'DerivedDecl').map((m) => m.name)
   );
   const constNames = new Set(decl.members.filter((m): m is AST.ConstDecl => m.kind === 'ConstDecl').map((m) => m.name));
+  suspendNamesByFunctions.set(functions, suspendNamesFor(memberTypes, constNames));
   const narrow: NarrowState = { nullable, narrowed: new Set() };
 
   for (const m of decl.members) {

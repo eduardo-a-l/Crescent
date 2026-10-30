@@ -303,9 +303,12 @@
   `unguarded-nullable-transitive-call.crs`, `unguarded-nullable-guard-test-call.crs`, and
   `guarded-nullable-call-ok.crs` for the cases that must stay clean. `await` also
   invalidates narrowing of component members (`unguarded-nullable-after-await.crs`,
-  `guarded-nullable-await-ok.crs`). Still not covered, and documented in the design doc: evaluation
-  order inside a single expression, `derived` values whose dependencies change in synchronous code,
-  and calls from view expressions or event handlers.
+  `guarded-nullable-await-ok.crs`). Evaluation order inside one expression is
+  tracked as well: a call or `await` invalidates narrowing for the operands, arguments, literal
+  elements and ternary branches evaluated after it (`unguarded-nullable-expression-order.crs`,
+  `guarded-nullable-expression-order-ok.crs`). Still not covered, and documented in the design doc:
+  `derived` values whose dependencies change in synchronous code, calls across separate nodes of a
+  view, and event handlers.
 
 ## Structs
 

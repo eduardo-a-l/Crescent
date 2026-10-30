@@ -1,0 +1,73 @@
+struct Pair {
+    int a;
+    int b;
+}
+
+component Ordered {
+    state<string?> name = "Ada";
+
+    int reset() {
+        name = null;
+        return 1;
+    }
+
+    int pair(int a, int b) {
+        return a + b;
+    }
+
+    async int slow() {
+        return 1;
+    }
+
+    void in_binary() {
+        if (name == null) {
+            return;
+        }
+        int total = reset() + name.length;
+    }
+
+    void in_call_arguments() {
+        if (name == null) {
+            return;
+        }
+        int total = pair(reset(), name.length);
+    }
+
+    void in_array_literal() {
+        if (name == null) {
+            return;
+        }
+        int[] values = [reset(), name.length];
+    }
+
+    void in_struct_literal() {
+        if (name == null) {
+            return;
+        }
+        Pair p = Pair { a: reset(), b: name.length };
+    }
+
+    void in_and_chain() {
+        if (name != null && reset() > 0 && name.length > 0) {
+            console.log("x");
+        }
+    }
+
+    void in_ternary_test() {
+        if (name == null) {
+            return;
+        }
+        int total = reset() > 0 ? name.length : 0;
+    }
+
+    async void in_await() {
+        if (name == null) {
+            return;
+        }
+        int total = (await slow()) + name.length;
+    }
+
+    view {
+        <p>"ordered"</p>
+    }
+}
