@@ -306,9 +306,11 @@
   `guarded-nullable-await-ok.crs`). Evaluation order inside one expression is
   tracked as well: a call or `await` invalidates narrowing for the operands, arguments, literal
   elements and ternary branches evaluated after it (`unguarded-nullable-expression-order.crs`,
-  `guarded-nullable-expression-order-ok.crs`). Still not covered, and documented in the design doc:
-  `derived` values whose dependencies change in synchronous code, calls across separate nodes of a
-  view, and event handlers.
+  `guarded-nullable-expression-order-ok.crs`). A narrowed `derived` value is invalidated
+  by any write to what it depends on, followed through other derived values and through the
+  functions its initializer calls (`unguarded-nullable-derived-after-write.crs`,
+  `guarded-nullable-derived-ok.crs`). Still not covered, and documented in the design doc: calls
+  across separate nodes of a view, and event handlers.
 
 ## Structs
 

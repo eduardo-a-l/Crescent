@@ -1,0 +1,48 @@
+component DerivedOk {
+    state<int> count = 0;
+    state<int> other = 0;
+    derived<string?> label = count > 3 ? null : "x";
+
+    int bump() {
+        count = 5;
+        return 1;
+    }
+
+    void touch_other() {
+        other = other + 1;
+    }
+
+    void unrelated_write() {
+        if (label != null) {
+            other = 5;
+            other += 1;
+            other++;
+            touch_other();
+            console.log(label.length);
+        }
+    }
+
+    void access_before_write() {
+        if (label != null) {
+            console.log(label.length);
+            count = 5;
+        }
+    }
+
+    void guard_after_write() {
+        count = 5;
+        if (label != null) {
+            console.log(label.length);
+        }
+    }
+
+    void access_before_call_in_expression() {
+        if (label != null) {
+            int total = label.length + bump();
+        }
+    }
+
+    view {
+        <p>"derivedok"</p>
+    }
+}

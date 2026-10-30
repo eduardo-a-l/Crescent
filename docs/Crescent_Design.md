@@ -499,13 +499,21 @@ x.length }`, `x != null && reset() && x.length > 0`, `reset() > 0 ? x.length : 0
 slow()) + x.length` all warn after the guard. The operands of an expression and its call
 arguments are taken in the order they are written.
 
+A `derived` value is the one kind of name that can change without being assigned, because it is
+recomputed from what it depends on. Its dependencies are every name its initializer reads, followed
+through other derived values and through the component functions the initializer calls. A narrowed
+derived value stops being narrowed after any **write** to one of those names, whether or not the
+write could produce a `null`: `count = 5` can turn `count > 3 ? null : "x"` into `null`. A write is an
+assignment of any kind, a compound assignment, `++` or `--`, and a call to a component function
+that does any of these, and also a method call on the name itself, such as `items.push(x)`, which may
+mutate it. The same rules about blocks, loops, the order inside an expression and `await` apply.
+
 The analysis is deliberately conservative: it does not follow control flow past this and it treats
 any possibly-null assignment as nulling the name.
 
-Known limits, none of which change the checker's behaviour yet: narrowing of a `derived` value is
-not invalidated when the state it depends on changes in ordinary synchronous code, only across an
-`await`; and the calls made from view expressions are ordered only within one expression, not
-across separate nodes of a view, while event handlers are not analysed at all.
+Known limits, none of which change the checker's behaviour yet: the calls made from view
+expressions are ordered only within one expression, not across separate nodes of a view, and event
+handlers are not analysed at all.
 
 ---
 

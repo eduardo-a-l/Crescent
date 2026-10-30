@@ -7,13 +7,54 @@
 
 ## Current State
 
-**Branch:** `feature/expression-order-narrowing` (off `develop` at `febdc61`)
+**Branch:** `feature/derived-narrowing` (off `develop` at `3159d05`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Closed the last substantive null-narrowing limit: a narrowed `derived` value now dies when something
+it depends on is written. A derived value is the only name that changes without being assigned, so
+`if (label != null) { count = 5; label.length; }` with `derived<string?> label = count > 3 ? null :
+"x"` was accepted. The old checker was silent on all ten shapes in the new negative fixture
+(verified by stashing the change).
+
+`compiler/src/narrowing.ts` now tracks three things per function instead of one. `FunctionEffect` is
+`{ nulls, writes, reads }`: `nulls` is the old set (assignments of a possibly-null value), `writes`
+is every write to a root identifier (any assignment, compound assignment, `++`/`--`, an assignment
+through a member or index, and a method call on the name itself such as `items.push(x)`), and
+`reads` is every identifier the body mentions. All three exclude the function's own params and
+locals and are closed over the call graph by the same fixpoint. The visitor interface gained
+`write` and `read` hooks, and `computeDerivedDeps(derived, effects)` builds each derived value's
+dependency set from the names its initializer reads plus the `reads` of the functions it calls,
+then closes it over other derived values (so `alias = label`, `label = f(count)` depends on
+`count`). `nullifiedByStmts` and `nullifiedByExpr` take the dependency map as a last argument and,
+after the walk, add every derived name whose dependencies intersect the collected writes to the
+returned set, so every existing mechanism (post-statement drops, loop entry and back-edge, guard
+tests, the in-expression order from the previous task, branches that exit) covers derived values
+with no further change. `checker.ts` registers the map per component in `derivedDepsByFunctions`
+(same `WeakMap`-on-`functions` pattern as the effects and suspend names) and the two closures that
+wrap the collectors pass it in.
+
+Two details that surprised me. The language already forbids `box.v = 5` on a state struct ("reassign
+the whole state instead"), so the struct case in the fixture reassigns the whole struct, which also
+shows that a non-null write invalidates. And a non-null write is precisely why derived needs its own
+rule: the plain `nulls` set deliberately ignores literal assignments to keep narrowing, but a literal
+write to a dependency can still make a derived value null.
+
+Tests (`test-checker.js`, `assertWarnedLines`): `unguarded-nullable-derived-after-write.crs` (ten
+warnings: literal, compound, postfix, a writing call, derived-of-derived, a dependency reached through a
+function the initializer calls, a reassigned struct, a mutating method call, a loop back-edge, and an
+earlier operand of the same expression) and `guarded-nullable-derived-ok.crs` (unrelated writes in
+every form, an access before the write, a guard after the write, an access before a writing call).
+`compiler/examples` still has zero nullable warnings and the 303 earlier tests are unchanged.
+
+Docs: new paragraph in `docs/Crescent_Design.md` section 11, with the limit removed; `TODO.md` updated.
+Remaining limits, all documented: calls across separate nodes of a view, and event handlers.
+
+Before that:
+
 Closed the "evaluation order inside one expression" limit of the null-narrowing analysis. Before,
 `checkExpr` passed one fixed `narrow` to every sub-expression, so after `if (x == null) { return; }`
 the expression `reset() + x.length` (with `reset()` assigning `x = null`) was accepted: the call that

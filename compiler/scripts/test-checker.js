@@ -500,6 +500,18 @@ assert(
   `guarded-nullable-expression-order-ok.crs: the same expressions stay clean when the access comes before the call or await, or the call nulls something else, got ${JSON.stringify(guardedExpressionOrderOkDiagnostics)}`
 );
 
+assertWarnedLines(
+  'unguarded-nullable-derived-after-write.crs',
+  [27, 34, 41, 48, 55, 62, 69, 78, 85, 93],
+  'a narrowed derived value is invalidated by any write to something it depends on: a literal, compound or postfix write, a call that writes, a derived-of-derived chain, a dependency read through a function, a reassigned struct, a mutating method call, a later loop iteration, and an earlier operand of the same expression'
+);
+
+const guardedDerivedOkDiagnostics = diagnosticsFor('guarded-nullable-derived-ok.crs');
+assert(
+  guardedDerivedOkDiagnostics.length === 0,
+  `guarded-nullable-derived-ok.crs: writes to unrelated state, an access before the write, a guard placed after the write and an access before the writing call all stay clean, got ${JSON.stringify(guardedDerivedOkDiagnostics)}`
+);
+
 const guardedCallOkDiagnostics = diagnosticsFor('guarded-nullable-call-ok.crs');
 assert(
   guardedCallOkDiagnostics.length === 0,

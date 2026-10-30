@@ -1,7 +1,16 @@
 import * as AST from './ast';
 import { FileImports, LoadedFile } from './modules';
 import { collectReferencedNames } from './references';
-import { FunctionEffects, NullifyMode, blockDefinitelyExits, computeFunctionEffects, nullifiedByExpr, nullifiedByStmts } from './narrowing';
+import {
+  DerivedDeps,
+  FunctionEffects,
+  NullifyMode,
+  blockDefinitelyExits,
+  computeDerivedDeps,
+  computeFunctionEffects,
+  nullifiedByExpr,
+  nullifiedByStmts,
+} from './narrowing';
 
 export interface Diagnostic {
   severity: 'error' | 'warning';
@@ -298,7 +307,8 @@ function checkExpr(
 ): void {
   const effects = effectsFor(functions);
   const suspendNames = suspendNamesOf(functions);
-  const nullifiedBy = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames);
+  const derivedDeps = derivedDepsOf(functions);
+  const nullifiedBy = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames, derivedDeps);
   switch (expr.kind) {
     case 'IntLiteral':
     case 'FloatLiteral':
@@ -531,6 +541,13 @@ function suspendNamesOf(functions: Map<string, AST.FunctionDecl>): ReadonlySet<s
   return suspendNamesByFunctions.get(functions) ?? NO_SUSPEND_NAMES;
 }
 
+const derivedDepsByFunctions = new WeakMap<Map<string, AST.FunctionDecl>, DerivedDeps>();
+const NO_DERIVED_DEPS: DerivedDeps = new Map();
+
+function derivedDepsOf(functions: Map<string, AST.FunctionDecl>): DerivedDeps {
+  return derivedDepsByFunctions.get(functions) ?? NO_DERIVED_DEPS;
+}
+
 function dropNarrowed(narrow: NarrowState, names: Set<string>): NarrowState {
   if (names.size === 0) return narrow;
   let hit = false;
@@ -566,8 +583,9 @@ function checkStmts(
   let currentNarrow = narrow;
   const effects = effectsFor(functions);
   const suspendNames = suspendNamesOf(functions);
-  const nullifiedStmts = (list: AST.Stmt[], mode: NullifyMode) => nullifiedByStmts(list, effects, mode, suspendNames);
-  const nullifiedExpr = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames);
+  const derivedDeps = derivedDepsOf(functions);
+  const nullifiedStmts = (list: AST.Stmt[], mode: NullifyMode) => nullifiedByStmts(list, effects, mode, suspendNames, derivedDeps);
+  const nullifiedExpr = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames, derivedDeps);
   for (const stmt of stmts) {
     switch (stmt.kind) {
       case 'VarDecl':
@@ -917,6 +935,13 @@ function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, Sy
   );
   const constNames = new Set(decl.members.filter((m): m is AST.ConstDecl => m.kind === 'ConstDecl').map((m) => m.name));
   suspendNamesByFunctions.set(functions, suspendNamesFor(memberTypes, constNames));
+  derivedDepsByFunctions.set(
+    functions,
+    computeDerivedDeps(
+      decl.members.filter((m): m is AST.DerivedDecl => m.kind === 'DerivedDecl').map((m) => ({ name: m.name, init: m.init })),
+      effectsFor(functions)
+    )
+  );
   const narrow: NarrowState = { nullable, narrowed: new Set() };
 
   for (const m of decl.members) {
