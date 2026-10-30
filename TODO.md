@@ -127,7 +127,15 @@
   `compiler/scripts/test-unused-imports.js`, `compiler/scripts/fixtures/unused-imports/`)
 - [ ] More module error diagnostics — still open: module errors are fatal and suppress every other
   diagnostic, so fixing one `use` reveals the next one only on the following run
-- [ ] Clearly define module semantics in the language specification
+- [x] Clearly define module semantics in the language specification — `docs/Crescent_Grammar.md`
+  §11 is now organised as 11.1 Syntax, 11.2 Modules and the project, 11.3 Declarations,
+  visibility and scope, 11.4 Path resolution, 11.5 Name binding, 11.6 Compilation model, 11.7
+  Diagnostics (one table of every module diagnostic with its severity, location and effect) and
+  11.8 Known limitations. Each rule it states that was not already covered is pinned by
+  `compiler/scripts/test-module-semantics.js`. Writing it corrected the grammar, which allowed a
+  one-segment `use` that the parser rejects, and exposed a real bug, fixed in the same change:
+  project discovery walked `node_modules` and hidden directories and files
+  (`compiler/scripts/test-module-discovery.js`)
 - [x] Test larger module graphs — `compiler/scripts/test-module-graphs.js` generates projects in a
   temp directory, builds them with `buildProject()` and renders the output in JSDOM: a 200-file
   import chain, a hub importing 150 modules, a diamond whose shared base is imported once directly

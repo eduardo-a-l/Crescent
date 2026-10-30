@@ -449,28 +449,66 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
 - `on_change(data)` (§5) takes bare identifiers naming watched state — no grammar exists yet for
   watching a derived expression rather than a single named binding.
 
-## 11. Module Grammar
+## 11. Modules
+
+### 11.1 Syntax
 
 ```
 UseDecl            ::= 'use' PathSegment ('::' PathSegment)* '::' ImportList ';'
-                      | 'use' PathSegment ('::' PathSegment)* ';'
+                      | 'use' PathSegment ('::' PathSegment)+ ';'
 PathSegment        ::= IDENTIFIER | 'super'
 ImportList         ::= '{' ImportItem (',' ImportItem)* '}'
 ImportItem         ::= IDENTIFIER ('as' IDENTIFIER)?
 ```
 
-A `UseDecl` is a new kind of `TopLevelDecl`, alongside `ComponentDecl` and `StructDecl` (§3). All
-top-level `component`/`struct` declarations in a file are implicitly importable by any other file
-— there is no `pub`/`export` keyword.
+A `UseDecl` is a kind of `TopLevelDecl`, alongside `ComponentDecl` and `StructDecl` (§3). It may
+appear anywhere at the top level of a file; order relative to the declarations is not significant,
+so a `use` may follow the components that rely on it. The bare form needs at least two segments, a
+module path and the item, so `use lib;` is a parse error. A braced list names at least one item.
 
-**Path resolution.** In the bare (non-brace) form, every `PathSegment` except the last names a
-directory or file component; the *last* segment is the single imported item's name. In the brace
-form, every `PathSegment` names a directory or file component, and the braced `ImportList` gives
-one or more items to import from that file (with optional `as` aliasing). A `super` segment walks
-up one directory from the *importing file's own location* — not from the project root — so its
-meaning depends on where the `use` statement lives. Segments (after any `super`s are resolved to
-directory traversal) are joined with `/` and the literal suffix `.crs` is appended to name the
-target file. For example, given a file at `modules/components/card.crs`:
+### 11.2 Modules and the project
+
+A module is one `.crs` file. A project is the directory the compiler is pointed at, and a module is
+identified by its path relative to that root, written with `/`. The project consists of every
+`.crs` file under the root, at any depth, except anything inside a directory named `node_modules`
+and any file or directory whose name begins with `.`; symbolic links to directories are not
+followed. There is no entry point and no reachability analysis: every file is parsed, checked and
+built whether or not anything imports it. A parse error in any file is therefore an error for the
+whole project, even in a file nothing imports.
+
+### 11.3 Declarations, visibility and scope
+
+Every top-level `component` and `struct` of a file is importable by any other file. There is no
+`pub` or `export` keyword.
+
+Each file has one flat namespace, shared by its components, its structs and the names its `use`
+declarations bind. Two declarations with the same name in one file, even a component and a struct,
+are an error (`Duplicate top-level declaration 'Main' in 'dup.crs'`, reported on the second one).
+Different files may declare the same name freely: there is no global namespace, and a clash exists
+only inside a single file that binds both.
+
+Imports are local to the file that writes them. They are not re-exported: an importer can only name
+a `component` or `struct` that the target file itself declares, never a name the target merely
+imported, which is rejected as `'X' is not defined at the top level of 'target.crs'`.
+
+### 11.4 Path resolution
+
+In the bare (non-brace) form, every `PathSegment` except the last names a directory or file
+component; the *last* segment is the single imported item's name. In the brace form, every
+`PathSegment` names a directory or file component, and the braced `ImportList` gives one or more
+items to import from that file (with optional `as` aliasing). Resolution always starts at the
+directory of the importing file; there is no form that starts at the project root, so a file in a
+subdirectory reaches the root, or a sibling tree, by climbing with `super`.
+
+A `super` segment removes one directory from the path built so far, so it walks up one directory
+from the *importing file's own location* (not from the project root) when it comes first, and it
+cancels the segment before it when it comes later: `use sub::super::lib::Lib;` names `lib.crs` in
+the importing file's own directory. A `super` that would climb above the project root is an error.
+After the `super`s are resolved, the segments are joined with `/` and the literal suffix `.crs` is
+appended to name the target file. Lookup is case-sensitive on every platform, so `use Lib::Lib;`
+does not find `lib.crs`. Every segment is an identifier, so a file whose name is not one (such as
+`my-lib.crs`) belongs to the project but cannot be imported. For example, given a file at
+`modules/components/card.crs`:
 
 | `use` statement                                | Resolves to                       |
 |-------------------------------------------------|------------------------------------|
@@ -478,36 +516,68 @@ target file. For example, given a file at `modules/components/card.crs`:
 | `use super::shapes::Point;`                      | `modules/shapes.crs`, item `Point` |
 | `use components::forms::{Button, Input as TextInput};` | `components/forms.crs`, items `Button`, `Input` (aliased locally to `TextInput`) |
 
-**Cycle detection.** Because every `use` target is resolved to a concrete file before codegen
-runs, the compiler can (and does) build a file-level dependency graph and reject any cycle with a
-compile error naming the full chain, e.g. `Circular import: a.crs -> b.crs -> a.crs`. This check
-runs across the whole project before any file is code-generated, so a cycle anywhere aborts the
-entire build rather than only the files involved.
+### 11.5 Name binding
 
-**Where module errors are reported.** A `use` that names a module that does not exist, an item
-the target does not define at its top level, or a path that climbs above the project root with
-`super` is a compile error located at that `use` line. An import cycle is located at the `use`
-that closes it, that is, the last import in the chain, and a file that imports itself at that
-import. These errors are still fatal for the whole project: resolving imports is a precondition
-for checking any file, so while one is present no other diagnostics are produced.
+The name an import binds in a file is the item's own name or, when `as` is given, its alias; an
+alias changes only the name inside the importing file. That name must be unique within the file. It
+is a compile error if it is already bound by another `use` in the same file, even one from the same
+module, or if it equals the name of a top-level `component` or `struct` declared in the file. The
+diagnostic is reported on the `use` line and suggests renaming with `as`, and the first binding is
+the one that stays in effect. An alias resolves any such conflict.
 
-**Unused imports.** An imported name that the file never refers to produces a warning on its
-`use` line, `Import 'Widget' from 'lib.crs' is never used`, or `Import 'Widget' (as 'W') from
-'lib.crs' is never used` for an aliased one. Every item of a braced `use` is judged separately. A
-name counts as used when it appears as a component tag, in any type position (including nullable,
-array and generic types), as a struct literal or destructure type, or as an identifier. The
-check is deliberately forgiving: it only ever stays silent when in doubt, so a local variable that
-happens to share an imported name hides the warning. An import that is rejected as a name conflict
-is reported only as the conflict.
+An imported name that the file never refers to produces a warning on its `use` line, `Import
+'Widget' from 'lib.crs' is never used`, or `Import 'Widget' (as 'W') from 'lib.crs' is never used`
+for an aliased one. Every item of a braced `use` is judged separately. A name counts as used when
+it appears as a component tag, in any type position (including nullable, array and generic types),
+as a struct literal or destructure type, or as an identifier. The check is deliberately forgiving:
+it only ever stays silent when in doubt, so a local variable that happens to share an imported name
+hides the warning. An import that is rejected as a name conflict is reported only as the conflict.
 
-**Name conflicts.** The name an import binds in a file (the item's own name, or its `as` alias)
-must be unique within that file. It is a compile error if that name is already bound by another
-`use` in the same file, even from the same module, or if it equals the name of a top-level
-`component` or `struct` declared in the file. The diagnostic is reported on the `use` line and
-suggests renaming with `as`. Declaring the same name in two modules is not itself a conflict; only
-a single file that binds both is, and an alias resolves it.
+### 11.6 Compilation model
 
-**No re-export chaining in v0.1.** An imported name must resolve to an actual `ComponentDecl` or
-`StructDecl` in the target file — importing a name that the target file itself only imported via
-its own `use` is not supported yet (the target's own `UseDecl` entries are ignored when resolving
-an import against it).
+Each module is compiled on its own to one CommonJS file at the same relative path with `.js`
+instead of `.crs`, and that file exports the module's components under their declared names.
+Checking a file uses the declarations of the components and structs it imports, such as the props
+of an imported component, and not the contents of the files that declare them.
+
+An imported component becomes a `require` of the target's output that binds the local name,
+`const { Badge: B } = require('./shapes');`, and several `use` lines naming the same module are
+merged into one `require`. A `struct` produces no code: a struct literal compiles to a plain
+object, and a file that imports only structs from a module emits no `require` for it, so it has no
+runtime dependency on that module. The top level of a compiled module holds only the runtime import,
+these requires and the component definitions, so the order in which modules are evaluated cannot
+be observed.
+Import cycles are nonetheless rejected (§11.7), because the language does not define them.
+
+### 11.7 Diagnostics
+
+| Condition | Severity | Reported at | Effect |
+|---|---|---|---|
+| A file fails to parse | error | that file, with the line in the message | fatal |
+| `use` names a module that does not exist | error | the `use` line | fatal |
+| `use` names an item the target does not define at its top level, including one it only imports | error | the `use` line | fatal |
+| A `super` climbs above the project root | error | the `use` line | fatal |
+| Import cycle, including a file importing itself | error | the `use` that closes the cycle | fatal |
+| An import's bound name clashes with another import or a local declaration | error | the `use` line | that file is not emitted |
+| Two top-level declarations of one file share a name | error | the second declaration | that file is not emitted |
+| An import is never used | warning | the `use` line | none |
+
+A fatal error is found while the project is loaded and its imports are resolved, which has to
+succeed before any file can be checked. While one is present no other diagnostics are produced and
+nothing is emitted, and only the first fatal error found is reported. Any other error belongs to a
+single file: that file is skipped at build time and every other file is still built.
+
+The cycle check builds the file-level dependency graph of the whole project before any file is
+generated, so a cycle anywhere stops the build rather than only the files involved. The error
+names the full chain, e.g. `Circular import: a.crs -> b.crs -> a.crs`, and is attributed to the
+last import in that chain, here the `use` in `b.crs`. The check does not depend on the length of the
+chain.
+
+### 11.8 Known limitations
+
+- There are no re-exports, so a name has to be imported from the file that declares it.
+- Fatal module errors hide every other diagnostic, and only one is reported per run.
+- There is no wildcard import and no import path that starts at the project root.
+- A file whose name is not an identifier cannot be imported.
+- Whether a name is used is judged by its spelling, so an unrelated identifier with the same name
+  hides an unused-import warning.

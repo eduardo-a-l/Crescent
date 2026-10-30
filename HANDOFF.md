@@ -7,13 +7,57 @@
 
 ## Current State
 
-**Branch:** `feature/large-module-graphs` (off `develop` at `2a7f46b`)
+**Branch:** `feature/module-spec` (off `develop` at `a3dea0a`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Wrote the module semantics specification ("Clearly define module semantics in the language
+specification" in `TODO.md`) as two commits: a bug fix the writing exposed, then the spec.
+
+Commit 1, `e3732bb` "fix: Skip node_modules and hidden entries when discovering files". The spec
+had to say which files belong to a project, and the honest answer was "every `.crs` under the root,
+with no exclusions", which meant `crescent check` (default directory: the current one) and the VS
+Code extension (re-checks on every save) walked all of `node_modules`, parsed any `.crs` found
+there, and would have crashed on a dangling editor lock file such as Emacs's `.#main.crs`. The walk
+in `loadAllPrograms` (`compiler/src/modules.ts`) now skips any entry whose name starts with `.` and
+any directory named `node_modules`; a directory merely named like it (`node_modules_like`) is kept
+and symbolic links to directories were never followed. Test: `compiler/scripts/test-module-discovery.js`,
+which fails on the old code with a parse error from a hidden file.
+
+Commit 2, the spec. `docs/Crescent_Grammar.md` section 11 is now 11.1 Syntax, 11.2 Modules and the
+project, 11.3 Declarations, visibility and scope, 11.4 Path resolution, 11.5 Name binding, 11.6
+Compilation model, 11.7 Diagnostics (one table: condition, severity, where it is reported, effect)
+and 11.8 Known limitations. Every earlier rule (path resolution table, cycle detection, where module
+errors are reported, unused imports, name conflicts, no re-export) is kept and moved into place; new
+text covers what a module and a project are, visibility and the single per-file namespace, the CommonJS
+compile model, and the difference between fatal errors (parse and module errors: nothing else is
+reported, nothing is emitted) and per-file errors (that file is skipped, the rest still build).
+Everything stated was checked against the implementation first by probing, and
+`compiler/scripts/test-module-semantics.js` (wired into `npm test` after
+`test-module-discovery.js`) pins what no earlier test covered: `super` in the middle of a path, a
+`use` after declarations, `use lib;` and `use lib::{};` being parse errors, a hyphenated file name
+that belongs to the project but cannot be imported, case-sensitive lookup, no re-export, the
+generated `require` for an alias, a struct-only import emitting no `require`, several `use` lines
+merging into one `require`, an unreachable file still being built, a file with a semantic error being
+skipped while the others build, and components and structs sharing one namespace.
+
+Spec correction: the grammar allowed a one-segment bare `use`; the parser (correctly) requires a
+module path plus an item, so the production now uses `+`.
+
+Facts worth knowing that the spec records: `checkProject().ok` means "no parse or module error", not
+"no diagnostics"; per-file errors live in `diagnosticsByFile`. The compiled top level contains only
+the runtime import, the requires and the component definitions (checked across all 23 generated
+files for `compiler/examples`), so module evaluation order is unobservable.
+
+Still open: module errors are fatal and hide all other diagnostics (a design question, listed in
+11.8); the two remaining null-narrowing limits (evaluation order inside one expression, `derived`
+values changing in synchronous code).
+
+Before that:
+
 Tested module graphs at scale ("Test larger module graphs" in `TODO.md`) and fixed the one bug it
 found. A probe over generated import chains showed the checker is fast (3000 files in about 0.6s,
 40000 in about 2.4s) but `detectCycles()` in `compiler/src/modules.ts` threw a raw `RangeError:
