@@ -576,10 +576,25 @@ Every important compiler bug should ideally become a regression test.
 
 ## Compiler Robustness
 
-- [ ] Fuzz the lexer/parser with malformed/random input (e.g. `component {{`,
+- [x] Fuzz the lexer/parser with malformed/random input (e.g. `component {{`,
   `state<><><>`, unterminated `view {`). The requirement is that the
   compiler never crashes with an unhandled exception on malformed input —
-  it should always produce a controlled diagnostic instead.
+  it should always produce a controlled diagnostic instead. —
+  `compiler/scripts/fuzz-harness.js` mutates every example and fixture program (truncation,
+  deletion, duplication, swapped lines, keyword and punctuation insertion, random characters), builds
+  token soup and a set of pathological inputs, and runs each through parse, check and codegen, grouping
+  any uncontrolled exception by stage, type and throwing location; `fuzz.js` is the command-line
+  runner (`node scripts/fuzz.js <seed> <iterations> [deep]`, non-zero exit on a finding) and
+  `test-fuzz.js` runs it in `npm test` in child processes with a timeout and a heap cap, so a hang or
+  an out-of-memory abort fails the test and does not take the suite down. It found two bugs: an
+  unterminated `style {` block looped forever and ate memory until Node aborted (the style parser read
+  characters in `while (true)` loops with no end-of-input check; it now throws a `ParseError`, using a
+  new `Lexer.atEnd()` because `peekChar()`'s `'\0'` sentinel cannot tell the end from a NUL character in
+  the source), and nesting of about 1000 parentheses, brackets, blocks or elements, or a chain of a few
+  thousand binary operators, member accesses or calls, overflowed the stack of the parser or of the
+  checker. The parser now enforces a nesting depth of 256 and a syntax tree depth of 1000 (spec §12)
+  and converts a stack overflow it cannot predict into a `ParseError`. 200,000 further mutations over
+  40 seeds found nothing else
 - [ ] A small compiler benchmark suite (lexer/parser/checker/codegen/full
   build, at a few representative project sizes), tracked over time. This
   becomes especially useful once incremental compilation (§10) exists, so

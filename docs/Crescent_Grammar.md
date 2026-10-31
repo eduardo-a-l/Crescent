@@ -597,3 +597,27 @@ depend on the length of the chain.
   hides an unused-import warning.
 - Follow-on errors are recognised by their message, so a new kind of "unknown name" diagnostic has to
   be added to the list of silenced ones before it stops cascading from a failed import.
+
+## 12. Implementation Limits
+
+The reference compiler rejects input that is nested too deeply, with an ordinary parse error, rather
+than risk exhausting the call stack of its own recursive passes. Two limits apply to every file.
+
+**Nesting depth: 256.** The recursive-descent parser allows at most 256 levels of nested
+expressions (parentheses, array literals, call arguments, ternary branches, unary operators such as
+`- - - x`), types (`Map<Map<...>>`), statements (blocks inside blocks, `else if` chains) and template
+nodes (elements inside elements). Interpolations inside strings and style values count towards the
+depth of the expression that contains them. A larger program is rejected with `Nesting is too deep:
+more than 256 levels of nested expressions, statements, types or template nodes`.
+
+**Tree depth: 1000.** Chains of binary operators, member accesses, calls and index operations are
+read by a loop and do not nest the parser, but they build a syntax tree whose depth grows with the
+length of the chain, and the checker and code generator walk that tree recursively. After a file
+parses, a syntax tree deeper than 1000 levels is rejected with `Expression or statement is too long:
+it nests more than 1000 levels deep`. The few levels taken by the enclosing declaration mean that a chain of up to 996 links is accepted
+when it is the initializer of a member, and that parentheses nested up to 255 deep are.
+
+Neither limit is reached by hand-written programs; both exist so that malformed or adversarial input
+always yields a diagnostic. The compiler is expected to raise nothing but its own `LexError`,
+`ParseError` and `CodegenError` on any input, however malformed, and never to hang or run out of
+memory; `compiler/scripts/fuzz.js` and `compiler/scripts/test-fuzz.js` check this.

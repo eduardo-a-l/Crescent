@@ -11,13 +11,30 @@ interface Snapshot {
   pos: number;
 }
 
+export const MAX_NESTING = 256;
+export const MAX_AST_DEPTH = 1000;
+
 export class Parser {
   private lexer: Lexer;
   private current: Token;
+  private depth: number;
 
-  constructor(source: string) {
+  constructor(source: string, depth: number = 0) {
+    this.depth = depth;
     this.lexer = new Lexer(source);
     this.current = this.lexer.nextToken();
+  }
+
+  private nested<T>(fn: () => T): T {
+    if (this.depth >= MAX_NESTING) {
+      throw new ParseError(`Nesting is too deep: more than ${MAX_NESTING} levels of nested expressions, statements, types or template nodes`);
+    }
+    this.depth += 1;
+    try {
+      return fn();
+    } finally {
+      this.depth -= 1;
+    }
   }
 
   private snapshot(): Snapshot {
@@ -309,6 +326,10 @@ export class Parser {
   }
 
   parseType(): AST.CrescentType {
+    return this.nested(() => this.parseTypeInner());
+  }
+
+  private parseTypeInner(): AST.CrescentType {
     let base = this.parseBaseType();
     while (true) {
       if (this.check('QUESTION')) {
@@ -352,7 +373,7 @@ export class Parser {
 
   private parseStatement(): AST.Stmt {
     const line = this.current.line;
-    const stmt = this.parseStatementInner();
+    const stmt = this.nested(() => this.parseStatementInner());
     stmt.line = line;
     return stmt;
   }
@@ -538,7 +559,7 @@ export class Parser {
   }
 
   parseExpression(): AST.Expr {
-    return this.parseTernary();
+    return this.nested(() => this.parseTernary());
   }
 
   private parseTernary(): AST.Expr {
@@ -616,12 +637,12 @@ export class Parser {
   private parseUnary(): AST.Expr {
     if (this.checkAny(['BANG', 'MINUS'])) {
       const op = this.advance().value as '!' | '-';
-      const operand = this.parseUnary();
+      const operand = this.nested(() => this.parseUnary());
       return { kind: 'Unary', op, operand };
     }
     if (this.check('AWAIT')) {
       this.advance();
-      const operand = this.parseUnary();
+      const operand = this.nested(() => this.parseUnary());
       return { kind: 'Unary', op: 'await', operand };
     }
     return this.parsePostfix();
@@ -663,7 +684,7 @@ export class Parser {
 
   private parseInterpolatedStringParts(token: Token): AST.InterpolatedPart[] {
     return token.stringParts!.map((p) =>
-      p.kind === 'raw' ? { kind: 'raw', text: p.text } : { kind: 'expr', expr: new Parser(p.source).parseExpression() }
+      p.kind === 'raw' ? { kind: 'raw', text: p.text } : { kind: 'expr', expr: new Parser(p.source, this.depth).parseExpression() }
     );
   }
 
@@ -762,7 +783,7 @@ export class Parser {
 
   private parseTemplateNode(): AST.TemplateNode {
     const line = this.current.line;
-    const node = this.parseTemplateNodeInner();
+    const node = this.nested(() => this.parseTemplateNodeInner());
     node.line = line;
     return node;
   }
@@ -893,6 +914,7 @@ export class Parser {
     const rules: AST.StyleRule[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
+      if (this.lexer.atEnd()) throw new ParseError("Unterminated style block: expected '}'");
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
@@ -905,10 +927,12 @@ export class Parser {
 
   private parseStyleRule(): AST.StyleRule {
     const selector = this.lexer.readRawSelector();
+    if (this.lexer.atEnd()) throw new ParseError(`Expected '{' after style selector '${selector}'`);
     this.lexer.advanceChar();
     const declarations: AST.StyleDeclaration[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
+      if (this.lexer.atEnd()) throw new ParseError(`Unterminated style rule '${selector}': expected '}'`);
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
@@ -920,7 +944,7 @@ export class Parser {
 
   private parseStyleDeclaration(): AST.StyleDeclaration {
     let property = '';
-    while (!/[:\s]/.test(this.lexer.peekChar())) property += this.lexer.advanceChar();
+    while (!this.lexer.atEnd() && !/[:\s]/.test(this.lexer.peekChar())) property += this.lexer.advanceChar();
     this.lexer.skipRawWhitespace();
     if (this.lexer.peekChar() !== ':') throw new ParseError(`Expected ':' after style property '${property}'`);
     this.lexer.advanceChar();
@@ -928,7 +952,7 @@ export class Parser {
 
     const parts: AST.StyleValuePart[] = [];
     let rawBuf = '';
-    while (this.lexer.peekChar() !== ';' && this.lexer.peekChar() !== '}' && this.lexer.peekChar() !== '\0') {
+    while (!this.lexer.atEnd() && this.lexer.peekChar() !== ';' && this.lexer.peekChar() !== '}') {
       if (this.lexer.peekChar() === '{') {
         if (rawBuf.length > 0) {
           parts.push({ kind: 'raw', text: rawBuf });
@@ -937,7 +961,7 @@ export class Parser {
         this.lexer.advanceChar();
         const exprSource = this.lexer.readInterpolationSource();
         this.lexer.advanceChar();
-        const subParser = new Parser(exprSource);
+        const subParser = new Parser(exprSource, this.depth);
         const exprValue = subParser.parseExpression();
         parts.push({ kind: 'expr', expr: exprValue });
       } else {
@@ -953,6 +977,32 @@ export class Parser {
   }
 }
 
+function assertAstDepth(program: AST.Program): void {
+  const stack: { node: unknown; depth: number }[] = [{ node: program, depth: 0 }];
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop()!;
+    if (Array.isArray(node)) {
+      for (const item of node) stack.push({ node: item, depth });
+      continue;
+    }
+    if (node === null || typeof node !== 'object') continue;
+    const obj = node as Record<string, unknown>;
+    const next = typeof obj.kind === 'string' ? depth + 1 : depth;
+    if (next > MAX_AST_DEPTH) {
+      throw new ParseError(`Expression or statement is too long: it nests more than ${MAX_AST_DEPTH} levels deep (a very long chain of operators, member accesses or calls)`);
+    }
+    for (const key of Object.keys(obj)) stack.push({ node: obj[key], depth: next });
+  }
+}
+
 export function parseCrescent(source: string): AST.Program {
-  return new Parser(source).parseProgram();
+  let program: AST.Program;
+  try {
+    program = new Parser(source).parseProgram();
+  } catch (e) {
+    if (e instanceof RangeError) throw new ParseError('The program is nested too deeply to parse');
+    throw e;
+  }
+  assertAstDepth(program);
+  return program;
 }

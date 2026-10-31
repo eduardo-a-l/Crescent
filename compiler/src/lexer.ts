@@ -42,6 +42,10 @@ export class Lexer {
     return this.pos >= this.source.length;
   }
 
+  atEnd(): boolean {
+    return this.isAtEnd();
+  }
+
   private skipWhitespaceAndComments(): void {
     while (!this.isAtEnd()) {
       const c = this.peekChar();

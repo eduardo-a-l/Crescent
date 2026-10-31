@@ -7,13 +7,69 @@
 
 ## Current State
 
-**Branch:** `feature/nonfatal-module-errors` (off `develop` at `9a6dde7`)
+**Branch:** `feature/fuzzing` (off `develop` at `d78b71b`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Fuzzed the lexer, parser, checker and code generator ("Fuzz the lexer/parser with malformed/random
+input" in `TODO.md`, requirement: nothing but a controlled diagnostic on any input) and fixed what it
+found. It found two real bugs.
+
+Bug 1, an endless loop with unbounded memory growth. `component C { style {` (and every unterminated
+style form: no `{` after a selector, no closing `}`, a property name cut off) made `compiler/src/
+parser.ts` loop forever. The style parser reads raw characters in `while (true)` loops that only leave
+on `}`; at end of input `peekChar()` returns the `'\0'` sentinel, which never matches, so the
+property-name loop appended to a string until Node aborted with out-of-memory. `Lexer.atEnd()` is new
+(the sentinel cannot be used: a NUL character in the source looks the same) and every raw loop of
+`parseStyleBlockDecl`, `parseStyleRule` and `parseStyleDeclaration` checks it and throws a
+`ParseError` ("Unterminated style block: expected '}'" and similar).
+
+Bug 2, stack overflow. About 1000 nested parentheses, brackets, blocks or elements overflowed the
+stack of the recursive-descent parser, and a chain of a few thousand binary operators, member
+accesses, calls or index operations (which the parser reads in a loop) built a syntax tree so deep
+that the recursive checker overflowed. The same class of bug as the earlier `detectCycles` one. The
+parser now has `MAX_NESTING = 256` enforced by a `nested()` guard around `parseExpression`,
+`parseType`, `parseStatement`, `parseTemplateNode` and the self-recursion of `parseUnary` (only that
+recursion, not the entry: counting the entry too made parentheses count double, which I caught by
+probing the boundary); sub-parsers for string and style interpolation inherit the depth.
+`MAX_AST_DEPTH = 1000` is checked iteratively after parsing (`assertAstDepth`) and catches the
+iteratively-built chains. `parseCrescent` also converts any `RangeError` it still meets into a
+`ParseError` as a backstop. Measured boundaries: 255 nested parentheses and chains of 996 links are
+accepted end to end through check and codegen; one more is a `ParseError`. Spec section 12 states the
+limits. Not done: a backstop for `RangeError` in the checker or code generator, because the tree depth
+limit bounds what they can see.
+
+Tooling: `compiler/scripts/fuzz-harness.js` (seeded `mulberry32`, 146 seed programs from `examples`
+and `scripts/fixtures`, nine mutation kinds, token soup, and `pathological()` deep and huge inputs;
+`runPipeline` does parse, then check, then codegen only if no check errors, which is what the real
+pipeline does, and treats only `LexError`, `ParseError` and `CodegenError` as controlled) and
+`fuzz.js` (`node scripts/fuzz.js <seed> <iterations> [deep]`; groups crashes by stage, error type and
+throwing source location, keeps the smallest input per signature, writes each input to
+`/tmp/fuzz-last.txt` first so a hang or abort can be traced, exits non-zero on a finding). A first
+attempt at an automatic minimizer timed out on a memory-exhausting input and was deleted; I reduced
+the input by hand with short timeouts instead. After the fixes, 40 further seeds of 5000 mutations
+(200,000 inputs) and the pathological set found nothing.
+
+Tests: `compiler/scripts/test-fuzz.js` (wired into `npm test` after `test-module-graphs.js`, about 7
+seconds): four unterminated-style regressions run in a child process with a timeout and a 200 MB heap
+cap so a regression fails the test instead of wedging the suite; eight shapes nested 5000 deep (parens,
+arrays, ternaries, unary, blocks, elements, string interpolation, generic types) must give the nesting
+error and four chains of 5000 links the "too long" error; eight shapes just inside the limits must go
+through parse, check and codegen without crashing; and two child-process fuzz runs (3000 mutations on
+seed 1, and the pathological set) must report zero crash signatures. Run against the old lexer and
+parser, 17 of these checks fail (all style regressions, every deep input, both fuzz runs) and the 8
+near-limit ones pass, which is the intended split.
+
+Docs: new `docs/Crescent_Grammar.md` section 12 (Implementation Limits); `TODO.md` item closed with the
+findings. The second robustness item there, a compiler benchmark suite, is still open. Parsing 200,000
+statements took about 4.5 seconds in the pathological set, which is slow but linear, and is a sample
+for that benchmark item and not a bug.
+
+Before that:
+
 Module errors are no longer fatal. Before, a missing module, a missing item, `super` above the root
 or an import cycle aborted the whole project with one message, so every other diagnostic only
 appeared after fixing it, one at a time. Now they are ordinary per-file errors on their `use` line
