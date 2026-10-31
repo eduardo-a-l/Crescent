@@ -595,11 +595,17 @@ Every important compiler bug should ideally become a regression test.
   checker. The parser now enforces a nesting depth of 256 and a syntax tree depth of 1000 (spec §12)
   and converts a stack overflow it cannot predict into a `ParseError`. 200,000 further mutations over
   40 seeds found nothing else
-- [ ] A small compiler benchmark suite (lexer/parser/checker/codegen/full
-  build, at a few representative project sizes), tracked over time. This
-  becomes especially useful once incremental compilation (§10) exists, so
-  regressions in build speed are caught the same way correctness
-  regressions are.
+- [x] A small compiler benchmark suite (lexer/parser/checker/codegen/full
+  build, at a few representative project sizes), tracked over time. —
+  `compiler/bench/run.js` (`npm run bench`, `npm run bench:compare`) with generators in
+  `bench/shapes.js` and a committed `bench/baseline.json`; times are also stored relative to a
+  calibration workload so a baseline from another machine is comparable, and `--compare` fails on a
+  stage more than twice as slow. `scripts/test-bench.js` guards scaling in `npm test`. First
+  results: the five linear shapes grow about 2x per doubling, parsing dominates (about 1.3 MB/s,
+  roughly 20 times slower than lexing alone, which is the obvious place to look for speed), a
+  500-file project checks in about 45 ms and builds in about 120 ms, and the checker is quadratic
+  in members times functions of a single component (`functions` shape: 80 ms at 2000 functions,
+  830 ms at 4000), which is not reachable by realistic input
 
 ## Conformance
 

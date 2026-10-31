@@ -78,6 +78,34 @@ npm run build:web
 Then open `web/index.html` directly in a browser (no server required — the bundle is fully
 self-contained). `npm test` also runs this bundling step and a `jsdom`-based check that it works.
 
+## Benchmarks
+
+```
+npm run bench
+npm run bench:compare
+```
+
+`bench/run.js` times the lexer, parser, checker and code generator on synthetic inputs of doubling
+size (`bench/shapes.js`: a long function body, many members, many components, a wide view, many
+null guards, a chain of functions that call each other), and `checkProject` and `buildProject` on
+multi-file projects of 20, 100 and 500 files. Each figure is the best of several runs, in
+milliseconds, and the last column of each table is the growth of the total for one doubling of the
+input, so about 2 means linear. `--quick` runs two small sizes, `--shapes a,b` picks shapes,
+`--json file` saves the results and `--help` lists the rest.
+
+`bench/baseline.json` holds the figures from one machine. Times are also compared after dividing by
+a fixed calibration workload that the run measures first, so `npm run bench:compare` is meaningful on
+another machine: it exits with status 1 when a stage is more than `--threshold` (default 2) times
+slower than the baseline in those units and takes more than 5 ms. Regenerate the baseline after a
+deliberate change with `node bench/run.js --json bench/baseline.json`.
+
+`npm test` does not run the benchmark, but `scripts/test-bench.js` checks that five of the shapes
+scale linearly (a 4 times larger input must take under 8 times as long, which a quadratic stage would
+not satisfy), unit-tests the comparison logic and smoke-tests a quick run. The `functions` shape is
+left out on purpose: it is quadratic in the number of members times functions of one component,
+because every function body starts from a copy of the component's whole scope. It is harmless at
+realistic sizes (about 25 ms for 1000 functions) and shows up in the table above 2000.
+
 ## CLI
 
 Once built (`npm run build`), a `crescent` CLI is available at `dist/cli.js` for checking and

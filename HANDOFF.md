@@ -7,13 +7,62 @@
 
 ## Current State
 
-**Branch:** `feature/fuzzing` (off `develop` at `d78b71b`)
+**Branch:** `feature/benchmarks` (off `develop` at `3033936`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Added the compiler benchmark suite ("A small compiler benchmark suite" in `TODO.md`), built around one
+question the fuzzing task left open: is the compiler linear in input size? (Parsing 200,000
+statements had taken 4.5 s.) Answer: yes for every realistic shape, with one exception that turned out
+to be unreachable in practice, and parsing is the slow stage.
+
+Layout, all under `compiler/bench/`: `shapes.js` holds the generators (`single`: `statements`,
+`members`, `components`, `viewNodes`, `guards`, `functions`; `linearShapes` names the first five;
+`projectFiles(n)` makes n files where each imports the three before it and uses them) and `run.js` is
+the runner and library. `run.js` times lex (tokenising to EOF), parse (includes lexing), check and
+codegen separately, at sizes 500 to 8000 (the `functions` shape at half those), best of 4, and
+`checkProject`/`buildProject` on 20, 100 and 500 file projects written to a temp directory. It first
+measures a fixed calibration workload (sort, arithmetic, string building; about 90 ms here) and
+stores it in `meta.calibrationMs`; `--compare baseline.json` divides every stage by its run's
+calibration before comparing, so a baseline from another machine is usable, reports a stage only if it
+exceeds `--threshold` (default 2) times the baseline and takes over 5 ms, and exits 1 on any. `--quick`,
+`--shapes a,b`, `--json file`, `--help`. `npm run bench` and `npm run bench:compare` build first.
+`bench/baseline.json` is committed (node 22, linux-x64); regenerate with `node bench/run.js --json
+bench/baseline.json` after a deliberate change. A full run takes about 14 s.
+
+Results on this machine (also in the TODO item): the five linear shapes grow about 2.0 times per
+doubling; parsing is 90 percent of the time for the statement and guard shapes, about 1.3 MB/s and
+roughly 20 times slower than lexing alone, most likely because the parser backtracks by re-lexing
+(not investigated; this is the obvious next performance target); a 500-file project checks in about
+45 ms and builds in about 120 ms. The `functions` shape (functions that call the previous one) is
+quadratic, and past 2000 functions worse than that (80 ms to 827 ms from 2000 to 4000), which I
+profiled: the time is self time in `checkStmts` and `checkComponentDecl`, because every function body
+starts from `new Set(scope)`, a copy of every member name of the component, so the cost is members
+times functions plus garbage collection. It is 25 ms at 1000 functions and nobody has thousands in a
+component, so I documented it (compiler README) and did not refactor the scope representation into a
+parent-chained one; that would be the fix if it ever matters.
+
+Tests: `compiler/scripts/test-bench.js` (wired into `npm test` after `test-fuzz.js`, about 12 s): for
+each linear shape a 4 times larger input (4000 to 16000) must take under 8 times as long to parse,
+check and generate (observed 4.0 to 5.8; a quadratic stage gives 16, and I verified once, by hand,
+that the quadratic `functions` shape gives 16.7 at the same factor, so the guard is sensitive);
+unit tests of `compare` (identical, a machine twice as slow at everything including calibration, a real
+regression reported with its location, a stage under 5 ms ignored, sizes absent from the baseline
+skipped); and a quick-mode run that must write complete JSON and pass `--compare` against itself.
+`run.js` exports `measureSingle`, `compare` and `parseArgs` and only runs `main()` when executed
+directly. A shell detail from this session: `${PIPESTATUS[0]}` is not available in this `sh`, which
+aborted a command chain once; use a temp file and `$?` instead.
+
+Docs: new "Benchmarks" section in `compiler/README.md`; `TODO.md` item closed. The separate TODO item
+"Improve compiler README so its description matches the current implementation" is still open and
+now has more to cover (the Structure section does not list `narrowing.ts`, `references.ts`, `bench/`
+or the new test scripts).
+
+Before that:
+
 Fuzzed the lexer, parser, checker and code generator ("Fuzz the lexer/parser with malformed/random
 input" in `TODO.md`, requirement: nothing but a controlled diagnostic on any input) and fixed what it
 found. It found two real bugs.
