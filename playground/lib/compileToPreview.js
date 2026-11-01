@@ -5,6 +5,10 @@ const { buildPreviewHtml } = require('crescent-compiler/dist/webPreview');
 
 const MAX_SOURCE_BYTES = 200 * 1024;
 
+function describeFatal(fatal) {
+  return fatal.line ? `line ${fatal.line}: ${fatal.message}` : fatal.message;
+}
+
 async function compileToPreview(source) {
   if (typeof source !== 'string' || source.trim().length === 0) {
     return { ok: false, error: 'No source provided.' };
@@ -32,7 +36,7 @@ async function compileToPreview(source) {
 
     return {
       ok: result.ok,
-      fatal: result.build.check.fatal ? result.build.check.fatal.message : null,
+      fatal: result.build.check.fatal ? describeFatal(result.build.check.fatal) : null,
       diagnostics,
       html: result.html,
       bundleErrors: result.bundleErrors,

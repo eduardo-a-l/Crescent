@@ -38,7 +38,7 @@ export function checkProject(root: string): CheckProjectResult {
     if (e instanceof LexError || e instanceof ParseError) {
       return {
         ok: false,
-        fatal: { stage: 'parse', message: e.message, file: e.file ?? null, line: null },
+        fatal: { stage: 'parse', message: e.message, file: e.file ?? null, line: e.line },
         files: new Map(),
         importsByFile: new Map(),
         diagnosticsByFile: new Map(),

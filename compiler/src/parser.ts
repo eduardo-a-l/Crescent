@@ -3,8 +3,13 @@ import { Token, TokenType, PRIMITIVE_TYPE_TOKENS } from './tokens';
 import * as AST from './ast';
 
 export class ParseError extends Error {
-  // See LexError.file — same rationale, set by loadAllPrograms() after catching.
   file?: string;
+  line: number | null;
+
+  constructor(message: string, line: number | null = null) {
+    super(message);
+    this.line = line;
+  }
 }
 
 interface Snapshot {
@@ -22,15 +27,15 @@ export class Parser {
   private current: Token;
   private depth: number;
 
-  constructor(source: string, depth: number = 0) {
+  constructor(source: string, depth: number = 0, startLine: number = 1) {
     this.depth = depth;
-    this.lexer = new Lexer(source);
+    this.lexer = new Lexer(source, startLine);
     this.current = this.lexer.nextToken();
   }
 
   private nested<T>(fn: () => T): T {
     if (this.depth >= MAX_NESTING) {
-      throw new ParseError(`Nesting is too deep: more than ${MAX_NESTING} levels of nested expressions, statements, types or template nodes`);
+      throw new ParseError(`Nesting is too deep: more than ${MAX_NESTING} levels of nested expressions, statements, types or template nodes`, this.current.line);
     }
     this.depth += 1;
     try {
@@ -72,14 +77,15 @@ export class Parser {
     if (!this.check(type)) {
       throw new ParseError(
         message ??
-          `Expected token ${type} but got ${this.current.type} ('${this.current.value}') at line ${this.current.line}`
+          `Expected token ${type} but got ${this.current.type} ('${this.current.value}')`,
+        this.current.line
       );
     }
     return this.advance();
   }
 
   private fail(message: string): never {
-    throw new ParseError(`${message} at line ${this.current.line} (got ${this.current.type} '${this.current.value}')`);
+    throw new ParseError(`${message} (got ${this.current.type} '${this.current.value}')`, this.current.line);
   }
 
   parseProgram(): AST.Program {
@@ -123,6 +129,7 @@ export class Parser {
   }
 
   private parseUseDecl(): AST.UseDecl {
+    const useLine = this.current.line;
     this.expect('USE');
     const segments: string[] = [this.parsePathSegment()];
 
@@ -145,7 +152,7 @@ export class Parser {
     this.expect('SEMI');
     const itemName = segments.pop();
     if (itemName === undefined || segments.length === 0) {
-      throw new ParseError("'use' must reference a module path before the imported item, e.g. 'use card::UserCard;'");
+      throw new ParseError("'use' must reference a module path before the imported item, e.g. 'use card::UserCard;'", useLine);
     }
     return { kind: 'UseDecl', pathSegments: segments, items: [{ name: itemName }] , line: 0 };
   }
@@ -700,7 +707,7 @@ export class Parser {
 
   private parseInterpolatedStringParts(token: Token): AST.InterpolatedPart[] {
     return token.stringParts!.map((p) =>
-      p.kind === 'raw' ? { kind: 'raw', text: p.text } : { kind: 'expr', expr: new Parser(p.source, this.depth).parseExpression() }
+      p.kind === 'raw' ? { kind: 'raw', text: p.text } : { kind: 'expr', expr: new Parser(p.source, this.depth, p.line).parseExpression() }
     );
   }
 
@@ -953,7 +960,7 @@ export class Parser {
     const rules: AST.StyleRule[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
-      if (this.lexer.atEnd()) throw new ParseError("Unterminated style block: expected '}'");
+      if (this.lexer.atEnd()) throw new ParseError("Unterminated style block: expected '}'", this.lexer.currentLine());
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
@@ -966,12 +973,12 @@ export class Parser {
 
   private parseStyleRule(): AST.StyleRule {
     const selector = this.lexer.readRawSelector();
-    if (this.lexer.atEnd()) throw new ParseError(`Expected '{' after style selector '${selector}'`);
+    if (this.lexer.atEnd()) throw new ParseError(`Expected '{' after style selector '${selector}'`, this.lexer.currentLine());
     this.lexer.advanceChar();
     const declarations: AST.StyleDeclaration[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
-      if (this.lexer.atEnd()) throw new ParseError(`Unterminated style rule '${selector}': expected '}'`);
+      if (this.lexer.atEnd()) throw new ParseError(`Unterminated style rule '${selector}': expected '}'`, this.lexer.currentLine());
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
@@ -985,7 +992,7 @@ export class Parser {
     let property = '';
     while (!this.lexer.atEnd() && !/[:\s]/.test(this.lexer.peekChar())) property += this.lexer.advanceChar();
     this.lexer.skipRawWhitespace();
-    if (this.lexer.peekChar() !== ':') throw new ParseError(`Expected ':' after style property '${property}'`);
+    if (this.lexer.peekChar() !== ':') throw new ParseError(`Expected ':' after style property '${property}'`, this.lexer.currentLine());
     this.lexer.advanceChar();
     this.lexer.skipRawWhitespace();
 
@@ -998,9 +1005,10 @@ export class Parser {
           rawBuf = '';
         }
         this.lexer.advanceChar();
+        const exprLine = this.lexer.currentLine();
         const exprSource = this.lexer.readInterpolationSource();
         this.lexer.advanceChar();
-        const subParser = new Parser(exprSource, this.depth);
+        const subParser = new Parser(exprSource, this.depth, exprLine);
         const exprValue = subParser.parseExpression();
         parts.push({ kind: 'expr', expr: exprValue });
       } else {
@@ -1011,7 +1019,7 @@ export class Parser {
       parts.push({ kind: 'raw', text: rawBuf.replace(/\s+$/, '') });
     }
     if (this.lexer.peekChar() === ';') this.lexer.advanceChar();
-    if (parts.length === 0) throw new ParseError(`Expected a value for style property '${property}'`);
+    if (parts.length === 0) throw new ParseError(`Expected a value for style property '${property}'`, this.lexer.currentLine());
     return { property, parts };
   }
 }

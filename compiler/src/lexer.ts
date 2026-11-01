@@ -1,12 +1,13 @@
 import { KEYWORDS, Token, TokenType } from './tokens';
 
 export class LexError extends Error {
-  // Set by loadAllPrograms() after catching, since the lexer itself has no
-  // notion of which file it's scanning — only the caller walking the project
-  // directory knows that. Left undefined when a LexError propagates from
-  // somewhere that isn't scanning a specific file on disk (e.g. direct calls
-  // to parseCrescent() from tests).
   file?: string;
+  line: number | null;
+
+  constructor(message: string, line: number | null = null) {
+    super(message);
+    this.line = line;
+  }
 }
 
 export class Lexer {
@@ -14,8 +15,13 @@ export class Lexer {
   private pos: number = 0;
   private line: number = 1;
 
-  constructor(source: string) {
+  constructor(source: string, startLine: number = 1) {
     this.source = source;
+    this.line = startLine;
+  }
+
+  currentLine(): number {
+    return this.line;
   }
 
   getPos(): number {
@@ -118,7 +124,8 @@ export class Lexer {
     }
 
     if (c === '"') {
-      const parts: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string }> = [];
+      const stringLine = this.line;
+      const parts: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string; line: number }> = [];
       let str = '';
       let hasInterpolation = false;
       while (!this.isAtEnd() && this.peekChar() !== '"') {
@@ -132,14 +139,15 @@ export class Lexer {
           hasInterpolation = true;
           parts.push({ kind: 'raw', text: str });
           str = '';
+          const exprLine = this.line;
           const exprSource = this.readInterpolationSource();
           this.advanceChar();
-          parts.push({ kind: 'expr', source: exprSource });
+          parts.push({ kind: 'expr', source: exprSource, line: exprLine });
         } else {
           str += ch;
         }
       }
-      if (this.isAtEnd()) throw new LexError(`Unterminated string literal at line ${this.line}`);
+      if (this.isAtEnd()) throw new LexError('Unterminated string literal', stringLine);
       this.advanceChar();
       if (!hasInterpolation) return this.makeToken('STRING_LITERAL', str, start);
       parts.push({ kind: 'raw', text: str });
@@ -176,10 +184,10 @@ export class Lexer {
         return this.makeToken('GT', c, start);
       case '&':
         if (this.peekChar() === '&') { this.advanceChar(); return this.makeToken('AND_AND', '&&', start); }
-        throw new LexError(`Unexpected character '&' at line ${this.line}`);
+        throw new LexError("Unexpected character '&'", this.line);
       case '|':
         if (this.peekChar() === '|') { this.advanceChar(); return this.makeToken('OR_OR', '||', start); }
-        throw new LexError(`Unexpected character '|' at line ${this.line}`);
+        throw new LexError("Unexpected character '|'", this.line);
       case '+':
         if (this.peekChar() === '+') { this.advanceChar(); return this.makeToken('PLUS_PLUS', '++', start); }
         if (this.peekChar() === '=') { this.advanceChar(); return this.makeToken('PLUS_ASSIGN', '+=', start); }
@@ -198,7 +206,7 @@ export class Lexer {
       case '%':
         return this.makeToken('PERCENT', c, start);
       default:
-        throw new LexError(`Unexpected character '${c}' at line ${this.line}`);
+        throw new LexError(`Unexpected character '${c}'`, this.line);
     }
   }
 
@@ -211,6 +219,7 @@ export class Lexer {
   }
 
   readInterpolationSource(): string {
+    const startLine = this.line;
     let depth = 1;
     let text = '';
     while (!this.isAtEnd() && depth > 0) {
@@ -222,7 +231,7 @@ export class Lexer {
       }
       text += this.advanceChar();
     }
-    if (this.isAtEnd()) throw new LexError('Unterminated interpolation');
+    if (this.isAtEnd()) throw new LexError('Unterminated interpolation', startLine);
     return text;
   }
 

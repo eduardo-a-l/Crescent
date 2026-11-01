@@ -23,7 +23,7 @@ export interface Token {
   value: string;
   line: number;
   start: number;
-  stringParts?: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string }>;
+  stringParts?: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string; line: number }>;
 }
 
 export const KEYWORDS: Record<string, TokenType> = {

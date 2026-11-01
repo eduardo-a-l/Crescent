@@ -19,7 +19,13 @@ of them:
 | Write output | `buildProject()` | A file is written only if no file it imports a component from was skipped, so every `require()` in the output resolves |
 
 `LexError`/`ParseError`/`CodegenError` are thrown, the others are returned as `Diagnostic`s
-(`{ severity, message, where, line }`); the checker, `resolveFileImportsLenient()` and `findCycles()`
+(`{ severity, message, where, line }`). `LexError` and `ParseError` carry the `line` they were found
+on (`null` only when there is no single line to name, such as a syntax tree that is too deep) and,
+once `loadAllPrograms()` has caught them, the `file`; the message does not repeat the line, so
+`checkProject()` reports `fatal: { file, line, message }` and `crescent check` prints it once as
+`file:line: message`. A line inside a string or style interpolation is the line in the file, not in
+the snippet, and an unterminated string is reported where it began. `CodegenError` has no line,
+only the file it skipped; the checker, `resolveFileImportsLenient()` and `findCycles()`
 never throw on a problem in the source (`resolveFileImports()` and `detectCycles()` do, for callers
 that want the first problem as an exception). On any input, however malformed, the compiler is expected to raise
 nothing but those three (see "Robustness" below).
@@ -70,7 +76,7 @@ nothing but those three (see "Robustness" below).
   `test-array-mutators-native.js`); modules (`test-modules.js`, `test-missing-import.js`,
   `test-circular-import.js`, `test-import-conflicts.js`, `test-unused-imports.js`,
   `test-module-diagnostics.js`, `test-module-recovery.js`, `test-module-semantics.js`,
-  `test-module-discovery.js`, `test-module-graphs.js`); the runtime and generated code in `jsdom`
+  `test-module-discovery.js`, `test-module-graphs.js`); error locations (`test-error-locations.js`); the runtime and generated code in `jsdom`
   (`test-counter.js`, `test-day-picker.js`, `test-theme-toggle.js`, `test-composition.js`,
   `test-reactive-list.js`, `test-keyed-list.js`, `test-effect-disposal.js`,
   `test-provide-inject.js`, `test-multi-root.js`, `test-derived-lifecycle.js`, `test-web.js`,

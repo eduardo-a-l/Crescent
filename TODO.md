@@ -25,7 +25,12 @@
 - [x] Example programs
 - [x] Automated tests
 - [ ] Establish consistent compiler error output
-- [ ] Establish a clear distinction between parser, semantic, and codegen errors
+- [~] Establish a clear distinction between parser, semantic, and codegen errors — `LexError` and
+  `ParseError` now carry a `line` (and the `file`, once caught), the message no longer repeats it, and
+  `checkProject()`'s `fatal` has a real `line`, so `crescent check` prints `file:line: message` once;
+  errors inside string and style interpolations report the line in the file instead of line 1, and an
+  unterminated string is reported where it began. Still open: `CodegenError` has no line (it names only
+  the file it skipped), and one parse error still hides every other diagnostic
 - [x] Improve compiler README so its description matches the current implementation — rewritten
   where it had drifted: a new "Pipeline and errors" overview (which stage owns which error class and
   what happens to it), a Structure section covering `narrowing.ts`, `references.ts`, `cli.ts`,
@@ -59,7 +64,7 @@
 - [x] `style` mode
 - [x] Code interpolation from view/style
 - [ ] Expand lexer edge-case coverage
-- [ ] Improve lexer diagnostics
+- [~] Improve lexer diagnostics — lex errors carry their line; an unterminated string or interpolation is reported where it began
 - [ ] Test malformed interpolation/mode transitions
 
 ---

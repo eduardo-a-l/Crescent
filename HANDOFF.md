@@ -7,13 +7,50 @@
 
 ## Current State
 
-**Branch:** `feature/readme` (off `develop` at `3bb2178`)
+**Branch:** `feature/error-locations` (off `develop` at `4e55e0a`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Gave `LexError` and `ParseError` a structured `line` and made `checkProject()`'s `fatal.line` real
+(part of "Establish a clear distinction between parser, semantic, and codegen errors" in `TODO.md`,
+which I marked `[~]`, not done).
+
+What was wrong, confirmed by probes before changing anything: both classes had only an optional `file`;
+the line existed only as text inside the message (`... at line 4`), so `FatalDiagnostic.line` was always
+`null` and the CLI, the VS Code extension (which already reads `fatal.line`) and the web preview could
+not use it. Worse, three of the line numbers were wrong or missing: an error inside a string
+interpolation (`"a {n +} b"`) or a style-value interpolation reported `line 1` because the sub-parser
+counted lines from the snippet, not the file; an unterminated string reported the line where the file
+ended, not where the string began; and the style-block, nesting and `use` errors had no line at all.
+
+What I changed: `LexError(message, line)` and `ParseError(message, line)` hold `line` (`null` only for the
+two cases with no single line, a syntax tree that is too deep and the `RangeError` backstop); messages
+dropped the ` at line N` suffix, so a consumer that prints `file:line: message` does not say it twice.
+`Lexer` and `Parser` take a start line, and string parts now record the line their interpolation began
+on (`tokens.ts`), so sub-parsers report file lines. An unterminated string and an unterminated
+interpolation report where they started. The `use` error reports the `use` line, not the line after the
+`;`. `checkProject()` copies `e.line` into `fatal.line`. The two `compileToPreview.js` copies
+(`crescent-web/lib`, `playground/lib`) put `line N: ` in front of the `fatal` text, since the preview
+shows only that string and would otherwise have lost the line.
+
+Test: `compiler/scripts/test-error-locations.js` (25 checks, wired into `npm test` before `test-fuzz.js`
+and named in the README): 17 error sites with their exact line and a message that does not contain a
+line, the nesting limit, `checkProject()`'s `fatal` for a parse and a lex error in a subdirectory, the
+exact stderr of `crescent check`, and the `fatal` text of both preview libs (loaded with
+`crescent-compiler/dist/...` mapped to the local `dist/`, since the libs are separate packages). I
+confirmed that 24 of the 25 fail against the old `src/` (`git stash`) and that the 25th is the control.
+`npm test` passes (424, up from 399); `tsc --noEmit` is clean; the fuzzer found nothing (seeds 11 and
+12 at 3000 iterations, seed 13 `deep`).
+
+Not done: `CodegenError` still has no line (the AST nodes it fails on mostly have `line: 0`), and a
+parse error is still fatal for the whole project. The README's "Pipeline and errors" section describes
+the new behavior.
+
+Before that:
+
 Brought `compiler/README.md` in line with the code ("Improve compiler README so its description
 matches the current implementation" in `TODO.md`) and added a test so it stays that way. This was a
 documentation task, but I treated every claim as something to verify against the source, because the
