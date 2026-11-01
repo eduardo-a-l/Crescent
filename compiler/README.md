@@ -394,11 +394,25 @@ parse — see below), so a `<` encountered there is always a generic. Inside `MO
 `parseTemplateNode()`, a leading `<` is always a tag. Everywhere else (`parseRelational()`), `<` is
 the comparison operator.
 
-**Statement-start ambiguity (`Type name = expr;` vs. `name = expr;` vs. `name();`).** Resolved via
-speculative parsing with backtracking: `parseStatement()` snapshots the parser position, attempts
-`parseVarDeclStatement()`, and on failure restores the snapshot and falls through to
-`parseAssignmentOrExprStatement()`. `Token.start` plus `Lexer.setPos()` make this a cheap,
-correct rewind since the lexer is stateless beyond its cursor position.
+**Statement-start ambiguity (`Type name = expr;` vs. `name = expr;` vs. `name();`).** A statement
+that starts with an identifier is classified by looking at the one or two tokens after it
+(`tokenAfterIdentifier()`, `identifierMayStartDeclaration()`), and only the form that can match is
+attempted. A `{` next means a struct destructure; `IDENT`, `<`, `?`, or a `[` that is immediately
+followed by `]` means a declaration (those are exactly the tokens that can follow the first word of
+a type, or a type, in the grammar); anything else (`=`, `(`, `.`, `++`, `[` followed by an index
+expression, and so on) is an assignment or expression statement and goes straight to
+`parseAssignmentOrExprStatement()`. The classification is exact, not a heuristic: the form it skips
+could not have matched. The attempt that remains is still speculative, with `snapshot()` and
+`restore()` (`Token.start` plus `Lexer.setPos()`), and a failed attempt is counted in
+`parseStats.backtracks`. Before the lookahead every assignment and expression statement threw and
+caught two exceptions, and building those `Error` objects was 43 percent of parse time; now ordinary
+statements cause no backtracks, which `scripts/test-parser-backtracking.js` checks, and statement-heavy
+input parses between three and seven times faster. The same lookahead decides the `for` header
+(`for (Type x in ...)` or C-style) and the C-style initializer. What still backtracks: a C-style `for`
+with a typed initializer (once per loop), `Identifier '{'` in an expression that turns out not to be a
+struct literal, and the other places that use `snapshot()` for lookahead. `restore()` also rewinds the
+lexer's line counter (`Lexer.lineBefore()`), which it did not do originally, so line numbers after a
+backtrack across a newline are no longer too high.
 
 **Style blocks.** `MODE_STYLE` is implemented by having the parser drop out of token-based parsing
 entirely after consuming `style {`, and read raw characters directly via `Lexer.readRawSelector()`.

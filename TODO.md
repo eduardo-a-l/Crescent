@@ -601,8 +601,12 @@ Every important compiler bug should ideally become a regression test.
   `bench/shapes.js` and a committed `bench/baseline.json`; times are also stored relative to a
   calibration workload so a baseline from another machine is comparable, and `--compare` fails on a
   stage more than twice as slow. `scripts/test-bench.js` guards scaling in `npm test`. First
-  results: the five linear shapes grow about 2x per doubling, parsing dominates (about 1.3 MB/s,
-  roughly 20 times slower than lexing alone, which is the obvious place to look for speed), a
+  results: the five linear shapes grow about 2x per doubling, parsing dominated (about 1.3 MB/s,
+  roughly 20 times slower than lexing alone; profiling showed 43 percent of it was building the
+  `ParseError` objects the parser threw and caught when it tried each statement form in turn, so
+  statements are now classified by lookahead and parse 3 to 7 times faster, see
+  `scripts/test-parser-backtracking.js`; profiling also exposed a line-counter drift after backtracks
+  across a newline, which is fixed), a
   500-file project checks in about 45 ms and builds in about 120 ms, and the checker is quadratic
   in members times functions of a single component (`functions` shape: 80 ms at 2000 functions,
   830 ms at 4000), which is not reachable by realistic input

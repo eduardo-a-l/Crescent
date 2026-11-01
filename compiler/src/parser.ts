@@ -9,7 +9,10 @@ export class ParseError extends Error {
 
 interface Snapshot {
   pos: number;
+  line: number;
 }
+
+export const parseStats = { backtracks: 0 };
 
 export const MAX_NESTING = 256;
 export const MAX_AST_DEPTH = 1000;
@@ -38,11 +41,16 @@ export class Parser {
   }
 
   private snapshot(): Snapshot {
-    return { pos: this.current.start };
+    return { pos: this.current.start, line: this.lexer.lineBefore(this.current.start) };
+  }
+
+  private backtrack(snap: Snapshot): void {
+    parseStats.backtracks += 1;
+    this.restore(snap);
   }
 
   private restore(snap: Snapshot): void {
-    this.lexer.setPos(snap.pos);
+    this.lexer.setPos(snap.pos, snap.line);
     this.current = this.lexer.nextToken();
   }
 
@@ -383,17 +391,21 @@ export class Parser {
       return this.parseVarDeclStatement();
     }
     if (this.check('IDENTIFIER')) {
-      const snap = this.snapshot();
-      try {
-        return this.parseVarDeclStatement();
-      } catch (e) {
-        this.restore(snap);
-      }
-      const destructureSnap = this.snapshot();
-      try {
-        return this.parseStructDestructureStatement();
-      } catch (e) {
-        this.restore(destructureSnap);
+      const next = this.tokenAfterIdentifier();
+      if (next === 'LBRACE') {
+        const destructureSnap = this.snapshot();
+        try {
+          return this.parseStructDestructureStatement();
+        } catch (e) {
+          this.backtrack(destructureSnap);
+        }
+      } else if (this.identifierMayStartDeclaration()) {
+        const snap = this.snapshot();
+        try {
+          return this.parseVarDeclStatement();
+        } catch (e) {
+          this.backtrack(snap);
+        }
       }
       return this.parseAssignmentOrExprStatement();
     }
@@ -473,13 +485,17 @@ export class Parser {
     const headerSnap = this.snapshot();
     let itemType: AST.CrescentType | null = null;
     let itemName = '';
-    try {
-      itemType = this.parseType();
-      itemName = this.expect('IDENTIFIER').value;
-      this.expect('IN');
-    } catch (e) {
-      itemType = null;
-      this.restore(headerSnap);
+    const headerMayDeclare =
+      PRIMITIVE_TYPE_TOKENS.includes(this.current.type) || (this.check('IDENTIFIER') && this.identifierMayStartDeclaration());
+    if (headerMayDeclare) {
+      try {
+        itemType = this.parseType();
+        itemName = this.expect('IDENTIFIER').value;
+        this.expect('IN');
+      } catch (e) {
+        itemType = null;
+        this.backtrack(headerSnap);
+      }
     }
     if (itemType) {
       const iterable = this.parseExpression();
@@ -506,12 +522,12 @@ export class Parser {
     let init: AST.Stmt;
     if (PRIMITIVE_TYPE_TOKENS.includes(this.current.type)) {
       init = this.parseVarDeclStatement();
-    } else if (this.check('IDENTIFIER')) {
+    } else if (this.check('IDENTIFIER') && this.identifierMayStartDeclaration()) {
       const snap = this.snapshot();
       try {
         init = this.parseVarDeclStatement();
       } catch (e) {
-        this.restore(snap);
+        this.backtrack(snap);
         init = this.parseAssignmentOrExprStatement();
       }
     } else {
@@ -740,7 +756,7 @@ export class Parser {
         try {
           return this.parseStructLiteralTail(name);
         } catch (e) {
-          this.restore(snap);
+          this.backtrack(snap);
           this.advance();
         }
       }
@@ -855,6 +871,29 @@ export class Parser {
     return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
   }
 
+  private tokenAfterIdentifier(): TokenType {
+    const snap = this.snapshot();
+    this.advance();
+    const next = this.current.type;
+    this.restore(snap);
+    return next;
+  }
+
+  private bracketsCloseImmediately(): boolean {
+    const snap = this.snapshot();
+    this.advance();
+    this.advance();
+    const closed = this.check('RBRACKET');
+    this.restore(snap);
+    return closed;
+  }
+
+  private identifierMayStartDeclaration(): boolean {
+    const next = this.tokenAfterIdentifier();
+    if (next === 'LBRACKET') return this.bracketsCloseImmediately();
+    return next === 'IDENTIFIER' || next === 'LT' || next === 'QUESTION';
+  }
+
   private isClosingTagAhead(): boolean {
     const snap = this.snapshot();
     this.advance();
@@ -910,7 +949,7 @@ export class Parser {
   private parseStyleBlockDecl(): AST.StyleBlockDecl {
     this.expect('STYLE');
     this.expect('LBRACE');
-    this.lexer.setPos(this.current.start);
+    this.lexer.setPos(this.current.start, this.lexer.lineBefore(this.current.start));
     const rules: AST.StyleRule[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();

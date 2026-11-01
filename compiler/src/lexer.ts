@@ -22,8 +22,17 @@ export class Lexer {
     return this.pos;
   }
 
-  setPos(pos: number): void {
+  setPos(pos: number, line?: number): void {
     this.pos = pos;
+    if (line !== undefined) this.line = line;
+  }
+
+  lineBefore(tokenStart: number): number {
+    let newlines = 0;
+    for (let i = tokenStart; i < this.pos; i++) {
+      if (this.source[i] === '\n') newlines += 1;
+    }
+    return this.line - newlines;
   }
 
   peekChar(offset: number = 0): string {

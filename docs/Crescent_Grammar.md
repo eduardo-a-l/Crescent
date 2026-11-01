@@ -109,13 +109,14 @@ requested the token. See §7's `Attribute`/`TextLiteral` note, which this supers
 At the start of a `Statement`, `Identifier '{'` is ambiguous on paper with two different
 productions: a `VarDeclStatement` attempting `Type Identifier`, where `Identifier` happened to be
 a bare type name immediately followed by a block-shaped thing, and the new
-`StructDestructureStatement` (§6). In practice it's resolved the same way the reference
-implementation already resolves `VarDeclStatement` itself failing to match at an `Identifier`-led
-statement (see the parser's snapshot/restore around `parseVarDeclStatement` in §6's notes): attempt
-`VarDeclStatement` first (`Type Identifier '=' Expression ';'` — this fails immediately, since after
-parsing `Identifier` as a `Type` it expects another `Identifier`, not `'{'`), restore, then attempt
-`StructDestructureStatement` (`Identifier '{' Identifier { ',' Identifier } '}' '=' Expression
-';'`), restore and fall through to `Assignment`/`ExprStatement` if that also fails.
+`StructDestructureStatement` (§6). In practice the reference implementation decides by
+looking at the token after the `Identifier`: `'{'` can only begin a `StructDestructureStatement`
+(`Identifier '{' Identifier { ',' Identifier } '}' '=' Expression ';'`), because a `Type` is never
+followed by `'{'`, so that production alone is attempted; an `Identifier`, `'<'`, `'?'` or a `'['`
+followed directly by `']'` can only begin a `VarDeclStatement` (`Type Identifier '=' Expression
+';'`), so that one is attempted; and any other token means an `Assignment` or `ExprStatement`. The
+attempted production is parsed speculatively and, if it fails after all, the parser falls back to
+`Assignment`/`ExprStatement`, so the result is the same as trying every production in turn.
 
 This never collides with a `StructLiteral` **expression** (`Identifier '{' FieldInit ... '}'`,
 where each `FieldInit` is `Identifier ':' Expression`): a destructure pattern's field list is bare

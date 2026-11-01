@@ -7,13 +7,83 @@
 
 ## Current State
 
-**Branch:** `feature/benchmarks` (off `develop` at `3033936`)
+**Branch:** `feature/parser-speed` (off `develop` at `0bdda80`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Sped up the parser, following the benchmark suite's finding that parsing was about 90 percent of
+compile time at roughly 1.3 MB/s, and fixed a line-number bug that the verification of that speed-up
+turned up.
+
+Profile first (`node --cpu-prof`, then summing self time per function from the `.cpuprofile`): 43
+percent of parse time was the `ParseError` constructor, plus 6 percent in `fail` and 5 percent in
+`expect` and 11 percent garbage collection. The parser was not re-lexing; it used exceptions for
+backtracking. `parseStatementInner` tried `parseVarDeclStatement()` for every statement starting with
+an identifier, then `parseStructDestructureStatement()`, then fell back to
+`parseAssignmentOrExprStatement()`, so every assignment and expression statement (`n = n + 1;`,
+`console.log(x);`, `f();`) threw and caught two `Error` objects, each of which captures a stack trace.
+
+The fix is one-token lookahead in `compiler/src/parser.ts`, and it is exact, not a heuristic: a type
+that starts with an identifier can only continue with `<`, `?`, `[` followed by `]`, or (as the
+declared name) an identifier, and a destructure needs `{`. `tokenAfterIdentifier()`,
+`bracketsCloseImmediately()` and `identifierMayStartDeclaration()` classify the statement, so `{`
+attempts only the destructure, the declaration tokens attempt only the declaration, and anything else
+goes straight to `parseAssignmentOrExprStatement()`. The same test guards the C-style `for` initializer
+and the `for` header (which now only tries the for-each form when the header starts with a primitive
+type or a declaration-shaped identifier). A new `parseStats.backtracks` counter, incremented by
+`backtrack()` in the catch blocks that used to call `restore()`, makes the property testable
+without timing. What still backtracks: a C-style `for` with a typed initializer (one per loop),
+`Identifier '{'` in an expression that is not a struct literal, and a few lookahead helpers that
+snapshot and restore without throwing.
+
+Measured with the benchmark (8000 units, best of 4): parse time 135 to 20 ms for `statements` (6.7x),
+156 to 29 ms for `functions` (5.4x), 187 to 58 ms for `guards` (3.2x), unchanged for `members` and
+`components` (they have no statements), a 500-file project builds in 91 ms instead of 118. The
+committed `bench/baseline.json` was regenerated so later regressions are measured against the faster
+parser; `npm run bench:compare` passes against it.
+
+Verification, because a parser change must not change meaning: I built the previous parser from
+`git archive HEAD` into `/tmp/dist-old` and compared old and new on about 100,000 inputs, AST (with
+`line` fields normalised) or error message (with line numbers normalised), over four corpora:
+mutations of all 146 seed programs (94 percent of which fail to parse, so this is mostly an
+error-message comparison), identifier and literal substitutions (valid-looking programs), and a
+generator of every statement form with random newlines between tokens (declarations of every type
+shape, index, member and compound assignment, destructures, `a < b;`, `a ? b : c;`, `a b;`, `for`
+headers and initializers). Of those, about 22,000 parsed successfully in the old parser. Zero
+differences. That script is not in the repo (it needs the old build), so the equivalence is pinned
+instead by `compiler/scripts/test-parser-backtracking.js`, which asserts the AST kind of each ambiguous
+form and that malformed ones (`x y;`, `values[] z;`, `Point { x ;`) are still controlled errors.
+
+The bug: the first differential run showed 22 of 30,000 inputs differing, only in the line number of an
+error message (for example an unterminated string reported on line 56 by the old parser and line 34 by
+the new). `Lexer.setPos()` restored the position but not the line counter, so every backtrack that
+crossed a newline re-lexed tokens that had already been counted and inflated every later line number.
+A realistic program shows it: a statement `values[` newline `0` newline `] = 5;` followed by an error
+on line 7 was reported on line 8, in both the old and the new parser (this would underline the wrong
+line in the editor). `Lexer.setPos(pos, line?)` and the new `Lexer.lineBefore(tokenStart)` (the line
+counter minus the newlines inside the current token) fix it, `Snapshot` now carries `line`, and the one
+other `setPos` caller (the raw rewind in `parseStyleBlockDecl`) passes it too. The test covers five
+multi-line shapes with expected lines computed from the source; against the old build two of them are
+wrong (the index assignment and a typed `for` initializer split over lines; the latter still
+backtracks in the new parser and is correct only because of the lexer fix). A first draft of that
+test hard-coded the expected lines and I had miscounted two of them; the test now computes them.
+
+Tests: new `compiler/scripts/test-parser-backtracking.js` (34 checks; wired into `npm test` before
+`test-fuzz.js`): zero backtracks for twelve statement forms and for 2000 mixed statements, exactly one
+for a typed C-style `for`, the AST kind of twelve forms, three malformed forms still controlled errors,
+five line-accuracy cases. It cannot run against the old build (no `parseStats`).
+
+Docs: the compiler README paragraph on statement-start ambiguity and the grammar doc paragraph on
+`Identifier '{'` described the old try-everything strategy and were rewritten; the TODO benchmark item
+records the result. Not done: the checker is still quadratic in members times functions of one
+component (documented in the README), and the remaining `snapshot()` lookaheads could be replaced by a
+token buffer if parsing ever matters again.
+
+Before that:
+
 Added the compiler benchmark suite ("A small compiler benchmark suite" in `TODO.md`), built around one
 question the fuzzing task left open: is the compiler linear in input size? (Parsing 200,000
 statements had taken 4.5 s.) Answer: yes for every realistic shape, with one exception that turned out
