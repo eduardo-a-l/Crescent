@@ -31,18 +31,16 @@ function describe(value) {
 const missingModule = errorsFor('missing-module');
 assert(
   missingModule.result.ok &&
-    missingModule.result.fatal === null &&
     missingModule.errors.length === 1 &&
     missingModule.errors[0].file === 'main.crs' &&
     missingModule.errors[0].line === 3 &&
     /Cannot find module 'nothere\.crs'/.test(missingModule.errors[0].message),
-  `missing-module: a use of a module that does not exist is an error on its own use line and not a fatal one, got ${describe(missingModule.errors)}`
+  `missing-module: a use of a module that does not exist is an error on its own use line and not a parse failure, got ${describe(missingModule.errors)}`
 );
 
 const missingExport = errorsFor('missing-export');
 assert(
   missingExport.result.ok &&
-    missingExport.result.fatal === null &&
     missingExport.errors.length === 1 &&
     missingExport.errors[0].file === 'main.crs' &&
     missingExport.errors[0].line === 3 &&
@@ -53,7 +51,6 @@ assert(
 const superAboveRoot = errorsFor('super-above-root');
 assert(
   superAboveRoot.result.ok &&
-    superAboveRoot.result.fatal === null &&
     superAboveRoot.errors.length === 1 &&
     superAboveRoot.errors[0].file === 'main.crs' &&
     superAboveRoot.errors[0].line === 3 &&
@@ -65,7 +62,6 @@ const cycle = errorsFor('cycle');
 const chain = cycle.errors.length ? cycle.errors[0].message.replace(/^Circular import: /, '').split(' -> ') : [];
 assert(
   cycle.result.ok &&
-    cycle.result.fatal === null &&
     cycle.errors.length === 1 &&
     chain.length === 3 &&
     chain[0] === chain[2] &&
@@ -77,7 +73,6 @@ assert(
 const selfImport = errorsFor('self-import');
 assert(
   selfImport.result.ok &&
-    selfImport.result.fatal === null &&
     selfImport.errors.length === 1 &&
     selfImport.errors[0].file === 'main.crs' &&
     selfImport.errors[0].line === 3 &&

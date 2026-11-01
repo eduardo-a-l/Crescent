@@ -122,7 +122,7 @@ const nested = buildAndLoad({
   'app/ui/panel.crs': component('Panel', '        <Button />\n        <Util />\n', ['buttons::button::Button', 'super::super::shared::util::Util']),
   'app/main.crs': component('App', '        <Panel />\n', ['ui::panel::Panel']),
 });
-assert(nested.build.check.ok && nested.generated.length === 4, `nested directories: imports climbing several levels with super resolve, got ok=${nested.build.check.ok} fatal=${JSON.stringify(nested.build.check.fatal)}`);
+assert(nested.build.check.ok && nested.generated.length === 4, `nested directories: imports climbing several levels with super resolve, got ok=${nested.build.check.ok} unparsed=${JSON.stringify(nested.build.check.unparsed)}`);
 const nestedHost = render(nested.genDir, path.join('app', 'main.js'), 'App');
 assert(
   nestedHost.querySelectorAll('button').length === 1 && nestedHost.querySelectorAll('.util').length === 2,

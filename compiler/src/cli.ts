@@ -21,14 +21,6 @@ function printFileDiagnostics(relPath: string, diagnostics: Diagnostic[]): void 
 }
 
 function reportCheck(result: CheckProjectResult): number {
-  if (result.fatal) {
-    const prefix = result.fatal.file
-      ? `${result.fatal.file}${result.fatal.line ? `:${result.fatal.line}` : ''}: `
-      : 'error: ';
-    console.error(`${prefix}${result.fatal.message}`);
-    return 1;
-  }
-
   let totalErrors = 0;
   let totalWarnings = 0;
   for (const [relPath, diagnostics] of result.diagnosticsByFile) {
@@ -37,12 +29,14 @@ function reportCheck(result: CheckProjectResult): number {
     totalWarnings += diagnostics.filter((d) => d.severity === 'warning').length;
   }
 
-  if (result.files.size === 0) {
+  const fileCount = result.files.size + result.unparsed.length;
+
+  if (fileCount === 0) {
     console.log('No .crs files found.');
   } else if (totalErrors === 0 && totalWarnings === 0) {
-    console.log(`OK — ${result.files.size} file(s) checked, no problems found.`);
+    console.log(`OK — ${fileCount} file(s) checked, no problems found.`);
   } else {
-    console.log(`${totalErrors} error(s), ${totalWarnings} warning(s) in ${result.files.size} file(s).`);
+    console.log(`${totalErrors} error(s), ${totalWarnings} warning(s) in ${fileCount} file(s).`);
   }
 
   return totalErrors > 0 ? 1 : 0;

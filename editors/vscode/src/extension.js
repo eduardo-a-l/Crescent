@@ -198,17 +198,6 @@ function refreshDiagnostics(root) {
 
   diagnosticCollection.clear();
 
-  if (result.fatal) {
-    if (result.fatal.file) {
-      const diagnostic = new vscode.Diagnostic(wholeLineRange(result.fatal.line || 0), result.fatal.message, vscode.DiagnosticSeverity.Error);
-      diagnostic.source = 'crescent';
-      diagnosticCollection.set(vscode.Uri.file(path.join(root, result.fatal.file)), [diagnostic]);
-    } else {
-      vscode.window.showErrorMessage(`Crescent: ${result.fatal.message}`);
-    }
-    return;
-  }
-
   for (const [relPath, diagnostics] of result.diagnosticsByFile) {
     if (diagnostics.length === 0) continue;
     const vsDiagnostics = diagnostics.map((d) => {
@@ -246,14 +235,6 @@ async function buildPreviewResult(root) {
     result = await webPreviewModule.buildPreviewHtml(root, previewOutDir);
   } catch (err) {
     vscode.window.showErrorMessage(`Crescent: preview build failed unexpectedly: ${err.message}`);
-    return null;
-  }
-
-  if (!result.ok) {
-    // A fatal parse/module error, same shape as refreshDiagnostics() above —
-    // there is no partial HTML to show in that case.
-    const detail = result.build.check.fatal ? result.build.check.fatal.message : 'unknown error';
-    vscode.window.showErrorMessage(`Crescent: preview build failed: ${detail}`);
     return null;
   }
 

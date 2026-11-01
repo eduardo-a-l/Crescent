@@ -10,9 +10,8 @@ export interface PreviewMount {
 }
 
 export interface BuildPreviewResult {
-  ok: boolean;
   build: BuildProjectResult;
-  html: string | null;
+  html: string;
   mounts: PreviewMount[];
   bundleErrors: { relPath: string; message: string }[];
 }
@@ -48,10 +47,6 @@ function describeSkipped(build: FileBuildResult): string {
 
 export async function buildPreviewHtml(root: string, outDir: string): Promise<BuildPreviewResult> {
   const build = buildProject(root, outDir);
-
-  if (!build.check.ok) {
-    return { ok: false, build, html: null, mounts: [], bundleErrors: [] };
-  }
 
   const mounts: PreviewMount[] = [];
   const bundleErrors: { relPath: string; message: string }[] = [];
@@ -161,5 +156,5 @@ ${mountCalls.join('\n')}
 </html>
 `;
 
-  return { ok: true, build, html, mounts, bundleErrors };
+  return { build, html, mounts, bundleErrors };
 }

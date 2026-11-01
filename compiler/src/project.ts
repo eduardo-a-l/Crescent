@@ -2,56 +2,34 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CodegenError, generateProgram, ImportBinding } from './codegen';
 import { checkFile, Diagnostic } from './checker';
-import { LexError } from './lexer';
-import { ParseError } from './parser';
 import {
   FileImports,
   findCycles,
   jsRequirePath,
-  loadAllPrograms,
+  loadAllProgramsLenient,
   LoadedFile,
   ModuleIssue,
   resolveFileImportsLenient,
   runtimeRequirePathFor,
 } from './modules';
 
-export interface FatalDiagnostic {
-  stage: 'parse';
-  message: string;
-  file: string | null;
-  line: number | null;
-}
-
 export interface CheckProjectResult {
   ok: boolean;
-  fatal: FatalDiagnostic | null;
   files: Map<string, LoadedFile>;
+  unparsed: string[];
   importsByFile: Map<string, FileImports[]>;
   diagnosticsByFile: Map<string, Diagnostic[]>;
 }
 
 export function checkProject(root: string): CheckProjectResult {
-  let files: Map<string, LoadedFile>;
-  try {
-    files = loadAllPrograms(root);
-  } catch (e) {
-    if (e instanceof LexError || e instanceof ParseError) {
-      return {
-        ok: false,
-        fatal: { stage: 'parse', message: e.message, file: e.file ?? null, line: e.line },
-        files: new Map(),
-        importsByFile: new Map(),
-        diagnosticsByFile: new Map(),
-      };
-    }
-    throw e;
-  }
+  const { files, failures } = loadAllProgramsLenient(root);
+  const unparsed = new Set(failures.keys());
 
   const importsByFile = new Map<string, FileImports[]>();
   const issuesByFile = new Map<string, ModuleIssue[]>();
   const unresolvedByFile = new Map<string, Set<string>>();
   for (const [relPath, file] of files) {
-    const resolved = resolveFileImportsLenient(file, files);
+    const resolved = resolveFileImportsLenient(file, files, unparsed);
     importsByFile.set(relPath, resolved.imports);
     issuesByFile.set(relPath, resolved.issues);
     unresolvedByFile.set(relPath, resolved.unresolved);
@@ -71,7 +49,13 @@ export function checkProject(root: string): CheckProjectResult {
     diagnosticsByFile.set(relPath, [...moduleDiagnostics, ...checked]);
   }
 
-  return { ok: true, fatal: null, files, importsByFile, diagnosticsByFile };
+  for (const [relPath, failure] of failures) {
+    diagnosticsByFile.set(relPath, [
+      { severity: 'error', message: failure.message, where: `file '${relPath}'`, line: failure.line ?? 0 },
+    ]);
+  }
+
+  return { ok: failures.size === 0, files, unparsed: Array.from(failures.keys()), importsByFile, diagnosticsByFile };
 }
 
 export interface FileBuildResult {
@@ -92,10 +76,6 @@ export function buildProject(root: string, outDir: string): BuildProjectResult {
   const check = checkProject(root);
   const genDir = path.join(outDir, 'gen');
   const builds: FileBuildResult[] = [];
-
-  if (!check.ok) {
-    return { check, outDir, genDir, builds };
-  }
 
   fs.mkdirSync(genDir, { recursive: true });
 
@@ -160,6 +140,10 @@ export function buildProject(root: string, outDir: string): BuildProjectResult {
         }
       }
     }
+  }
+
+  for (const relPath of check.unparsed) {
+    builds.push({ relPath, outFile: null, skippedReason: 'it has a syntax error', unexpectedError: null });
   }
 
   for (const relPath of check.files.keys()) {

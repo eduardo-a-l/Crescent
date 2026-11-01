@@ -559,7 +559,8 @@ file is unaffected, since it emits no `require` for it.
 
 | Condition | Severity | Reported at | Effect |
 |---|---|---|---|
-| A file fails to parse | error | that file, with the line in the message | fatal |
+| A file fails to parse | error | that file, on the line of the problem | the file is not emitted |
+| `use` names a file that failed to parse | error | the `use` line | the file is not emitted |
 | `use` names a module that does not exist | error | the `use` line | the file is not emitted |
 | `use` names an item the target does not define at its top level, including one it only imports | error | the `use` line | the file is not emitted |
 | A `super` climbs above the project root | error | the `use` line | the file is not emitted |
@@ -568,11 +569,13 @@ file is unaffected, since it emits no `require` for it.
 | Two top-level declarations of one file share a name | error | the second declaration | the file is not emitted |
 | An import is never used | warning | the `use` line | none |
 
-A parse error is the only fatal one, because without a syntax tree for every file there is nothing
-to resolve imports against. While one is present nothing else is reported and nothing is emitted,
-and only the first one found is reported. Every other error belongs to a file: it is reported next to
-that file's other diagnostics, a file with an error is not emitted, and the rest of the project is
-still checked and, where it does not depend on a file that was skipped, built (§11.6).
+Every error belongs to a file: it is reported next to that file's other diagnostics, a file with an
+error is not emitted, and the rest of the project is still checked and, where it does not depend on
+a file that was skipped, built (§11.6). A file that fails to parse has no syntax tree, so it is
+reported with the one error that stopped the parser (a file reports only its first syntax error) and
+is left out of the project: a `use` of it is an error on the `use` line, whatever it names, because
+what it defines is unknown, and the follow-on errors for those names are silenced as for any failed
+import. Every file that fails to parse is reported, not only the first one found.
 
 A `use` that fails binds nothing, and every error in it is reported, not only the first, one per
 failing item, in line order with the file's other diagnostics. In a braced list the items that do
@@ -591,7 +594,7 @@ depend on the length of the chain.
 ### 11.8 Known limitations
 
 - There are no re-exports, so a name has to be imported from the file that declares it.
-- A parse error is fatal for the whole project and hides every other diagnostic.
+- A file reports only its first syntax error, because the parser does not recover inside a file.
 - There is no wildcard import and no import path that starts at the project root.
 - A file whose name is not an identifier cannot be imported.
 - Whether a name is used is judged by its spelling, so an unrelated identifier with the same name

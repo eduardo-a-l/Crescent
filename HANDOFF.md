@@ -7,13 +7,51 @@
 
 ## Current State
 
-**Branch:** `feature/error-locations` (off `develop` at `4e55e0a`)
+**Branch:** `feature/parse-errors-per-file` (off `develop` at `04e5817`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Made a parse error per-file instead of fatal for the whole project (the "Still open" half of the previous
+task, under "Establish a clear distinction between parser, semantic, and codegen errors" in `TODO.md`,
+still `[~]`). Before, one `LexError`/`ParseError` aborted `checkProject()`: nothing else was reported or
+built, and only the first broken file was named.
+
+What changed: `modules.ts` has `loadAllProgramsLenient()` (returns `{ files, failures }`, the failures
+keyed by file with `.file` set); `loadAllPrograms()` is now a wrapper that throws the first failure, so
+its old contract holds. `checkProject()` no longer has `fatal` or `FatalDiagnostic`: each unparsed file
+gets one error diagnostic (`where: file 'x'`, the error's `line`, 0 if none), is left out of `files`,
+and is listed in the new `unparsed: string[]`. `ok` now means "every file parsed" (it was "no fatal").
+`resolveFileImportsLenient(file, files, unparsed)` reports a `use` of an unparsed file as an error on
+the `use` line (`'x.crs' has a syntax error, so what it defines is unknown`) and marks the names
+unresolved so the checker's cascade suppression silences the follow-on errors; that error also keeps
+the importer from being emitted without a dangling `require`. `buildProject()` no longer returns early:
+it lists each unparsed file in `builds` as skipped (`it has a syntax error`) and builds the rest.
+Consumers: `cli.ts` and `index.ts` lost their fatal branches (the file count includes unparsed files;
+`npm start` still exits 1 for one), `webPreview.ts` lost its early return (so `BuildPreviewResult.ok`
+is gone and `html` is a plain `string`), the VS Code extension lost both fatal branches (a parse error
+is now just a diagnostic on its file, and the preview still opens), and the two `compileToPreview.js`
+copies and both `app.js` files lost `fatal` (the error arrives in `diagnostics` with its line; the
+API's `ok` is `check.ok`). I rewrote the spec text in `docs/Crescent_Grammar.md` §11.7/11.8, the
+compiler README's pipeline table, and the VS Code README.
+
+Tests: 430 pass (was 424). `test-module-recovery.js` replaced "a parse error is still fatal" with five
+checks (the other files' errors still reported, several broken files all reported, a `use` of an
+unparsed file is one error per `use` line with no follow-on unknown-name errors, the build skips the
+unparsed file and its importers and still writes the rest); `test-error-locations.js` now also runs
+`crescent check` and `crescent build` on a project with a parse error plus an error elsewhere; the
+assertions in the module tests that read `.fatal` were rewritten. `tsc --noEmit` is clean and
+`node --check` passes on the extension, which I cannot run here, so the VS Code changes (two deleted
+branches) are untested beyond syntax.
+
+Not done: `CodegenError` still has no line; a file still reports only its first syntax error (the
+parser does not recover inside a file). Known behavior to keep in mind: a file that fails to parse
+cannot take part in import-cycle detection, since it has no imports.
+
+Before that:
+
 Gave `LexError` and `ParseError` a structured `line` and made `checkProject()`'s `fatal.line` real
 (part of "Establish a clear distinction between parser, semantic, and codegen errors" in `TODO.md`,
 which I marked `[~]`, not done).

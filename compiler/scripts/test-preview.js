@@ -19,7 +19,7 @@ async function main() {
 
   const result = await buildPreviewHtml(root, outDir);
 
-  assert(result.ok, 'buildPreviewHtml succeeds against examples/');
+  assert(result.build.check.ok, 'buildPreviewHtml succeeds against examples/');
   assert(typeof result.html === 'string' && result.html.length > 0, 'buildPreviewHtml returns non-empty html');
   assert(result.bundleErrors.length === 0, `no bundling errors, got ${JSON.stringify(result.bundleErrors)}`);
 
@@ -89,7 +89,7 @@ async function main() {
   fs.writeFileSync(path.join(brokenDir, 'broken.crs'), 'component App {\n  state<int> count = "not a number";\n  view {\n    <p>{count}</p>\n  }\n}\n');
   const brokenOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crescent-preview-broken-out-'));
   const brokenResult = await buildPreviewHtml(brokenDir, brokenOutDir);
-  assert(brokenResult.ok, 'buildPreviewHtml still succeeds when every file has semantic errors');
+  assert(brokenResult.build.check.ok && typeof brokenResult.html === 'string', 'buildPreviewHtml still succeeds when every file has semantic errors');
   assert(brokenResult.mounts.length === 0, 'no mounts are produced for a project with only semantic errors');
   assert(
     brokenResult.build.builds.some((b) => b.outFile === null),

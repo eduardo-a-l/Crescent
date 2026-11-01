@@ -32,6 +32,10 @@ function component(name, uses = [], body = `        <p>"${name}"</p>\n`) {
 
 const shapes = 'struct Point {\n    int x;\n    int y;\n}\n\ncomponent Badge(Point p) {\n    view {\n        <p>{p.x}</p>\n    }\n}\n';
 
+function parseErrorOf(result, file) {
+  return result.unparsed.includes(file) ? result.diagnosticsByFile.get(file)[0] : null;
+}
+
 function describe(value) {
   return JSON.stringify(value);
 }
@@ -49,7 +53,7 @@ const midSuper = checkProject(
 );
 assert(
   midSuper.ok && Array.from(midSuper.diagnosticsByFile.values()).every((d) => d.length === 0),
-  `path resolution: super may appear in the middle of a path and removes the segment before it, got ${describe(midSuper.fatal)}`
+  `path resolution: super may appear in the middle of a path and removes the segment before it, got ${describe(midSuper.unparsed)}`
 );
 
 const useAfterDeclaration = checkProject(
@@ -60,7 +64,7 @@ const useAfterDeclaration = checkProject(
 );
 assert(
   useAfterDeclaration.ok && Array.from(useAfterDeclaration.diagnosticsByFile.values()).every((d) => d.length === 0),
-  `syntax: a use may follow the declarations of its file, because order at the top level is not significant, got ${describe(useAfterDeclaration.fatal)}`
+  `syntax: a use may follow the declarations of its file, because order at the top level is not significant, got ${describe(useAfterDeclaration.unparsed)}`
 );
 
 const sharedNamespace = checkProject(
@@ -79,25 +83,25 @@ assert(
 
 const bareSingle = checkProject(makeProject({ 'lib.crs': component('Lib'), 'main.crs': component('Main', ['lib']) }));
 assert(
-  !bareSingle.ok && bareSingle.fatal.stage === 'parse' && bareSingle.fatal.file === 'main.crs' && /module path before the imported item/.test(bareSingle.fatal.message),
-  `syntax: a use with a single segment is rejected because it names no item, got ${describe(bareSingle.fatal)}`
+  !bareSingle.ok && parseErrorOf(bareSingle, 'main.crs') && /module path before the imported item/.test(parseErrorOf(bareSingle, 'main.crs').message),
+  `syntax: a use with a single segment is rejected because it names no item, got ${describe(bareSingle.diagnosticsByFile.get('main.crs'))}`
 );
 
 const emptyBraces = checkProject(makeProject({ 'lib.crs': component('Lib'), 'main.crs': 'use lib::{};\n\n' + component('Main') }));
 assert(
-  !emptyBraces.ok && emptyBraces.fatal.stage === 'parse' && emptyBraces.fatal.file === 'main.crs',
-  `syntax: a braced import list must name at least one item, got ${describe(emptyBraces.fatal)}`
+  !emptyBraces.ok && parseErrorOf(emptyBraces, 'main.crs') !== null,
+  `syntax: a braced import list must name at least one item, got ${describe(emptyBraces.diagnosticsByFile.get('main.crs'))}`
 );
 
 const hyphenOk = checkProject(makeProject({ 'my-lib.crs': component('Lib'), 'main.crs': component('Main') }));
 assert(
   hyphenOk.ok && hyphenOk.files.has('my-lib.crs'),
-  `file names: a file whose name is not an identifier is still part of the project, got ${describe(hyphenOk.fatal)}`
+  `file names: a file whose name is not an identifier is still part of the project, got ${describe(hyphenOk.unparsed)}`
 );
 const hyphenUse = checkProject(makeProject({ 'my-lib.crs': component('Lib'), 'main.crs': component('Main', ['my-lib::Lib']) }));
 assert(
-  !hyphenUse.ok && hyphenUse.fatal.stage === 'parse' && hyphenUse.fatal.file === 'main.crs',
-  `file names: but it cannot be imported, because every path segment is an identifier, got ${describe(hyphenUse.fatal)}`
+  !hyphenUse.ok && parseErrorOf(hyphenUse, 'main.crs') !== null,
+  `file names: but it cannot be imported, because every path segment is an identifier, got ${describe(hyphenUse.diagnosticsByFile.get('main.crs'))}`
 );
 
 const caseMismatch = checkProject(makeProject({ 'lib.crs': component('Lib'), 'main.crs': component('Main', ['Lib::Lib']) }));
@@ -133,7 +137,7 @@ const generated = (rel) => fs.readFileSync(path.join(compiled.genDir, rel), 'utf
 const requireCount = (js) => (js.match(/require\('\.\/shapes'\)/g) || []).length;
 assert(
   compiled.check.ok && compiled.builds.every((b) => b.outFile),
-  `compile model: every file builds, got ${describe(compiled.check.fatal || compiled.builds.filter((b) => !b.outFile))}`
+  `compile model: every file builds, got ${describe(compiled.check.unparsed.length > 0 ? compiled.check.unparsed : compiled.builds.filter((b) => !b.outFile))}`
 );
 assert(
   generated('aliased.js').includes("const { Badge: B } = require('./shapes');"),

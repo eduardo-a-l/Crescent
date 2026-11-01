@@ -12,7 +12,7 @@ of them:
 
 | Stage | What it does | What goes wrong, and what happens |
 |---|---|---|
-| Lex and parse, every file | `parseCrescent()` turns source into an AST | `LexError` or `ParseError`, thrown on the first problem in a file. **Fatal for the whole project**: nothing else is reported or built |
+| Lex and parse, every file | `parseCrescent()` turns source into an AST | `LexError` or `ParseError`, thrown on the first problem in a file. **Per file**: `checkProject()` turns it into an error on that file (with its line), leaves the file out of the project, and carries on with the others. A `use` of it is an error on the `use` line |
 | Resolve imports | `resolveFileImportsLenient()` binds each `use`; `findCycles()` finds import cycles | A diagnostic on the `use` line (missing module or item, `super` above the root, a cycle). **Per file**: collected, never fatal |
 | Check, every file | `checkFile()` | Diagnostics (error or warning) collected per file. A file with an error is not emitted |
 | Codegen, every file without errors | `generateProgram()` | `CodegenError` for something not yet supported. That file is skipped, with the reason |
@@ -21,9 +21,9 @@ of them:
 `LexError`/`ParseError`/`CodegenError` are thrown, the others are returned as `Diagnostic`s
 (`{ severity, message, where, line }`). `LexError` and `ParseError` carry the `line` they were found
 on (`null` only when there is no single line to name, such as a syntax tree that is too deep) and,
-once `loadAllPrograms()` has caught them, the `file`; the message does not repeat the line, so
-`checkProject()` reports `fatal: { file, line, message }` and `crescent check` prints it once as
-`file:line: message`. A line inside a string or style interpolation is the line in the file, not in
+once `loadAllProgramsLenient()` has caught them, the `file`; the message does not repeat the line, so
+the error diagnostic `checkProject()` makes from one has that line and `crescent check` prints it as
+`file:line [error] file 'file': message`. A line inside a string or style interpolation is the line in the file, not in
 the snippet, and an unterminated string is reported where it began. `CodegenError` has no line,
 only the file it skipped; the checker, `resolveFileImportsLenient()` and `findCycles()`
 never throw on a problem in the source (`resolveFileImports()` and `detectCycles()` do, for callers
@@ -57,7 +57,7 @@ nothing but those three (see "Robustness" below).
   `ifBlock`, `forEach`, `slot`, `injectStyle`) that generated components import at run time
 - `src/project.ts` — reusable `checkProject()`/`buildProject()`, used by the CLI, the VS Code
   extension's diagnostics, `src/index.ts` and `src/webPreview.ts`, so all of them agree on exactly
-  what counts as a per-file error and what is fatal; `buildProject()` also decides which files can be
+  what counts as a per-file error; `buildProject()` also decides which files can be
   written (see "Pipeline and errors")
 - `src/cli.ts` — the `crescent check` / `crescent build` command line (see "CLI" below)
 - `src/index.ts` — the `npm start` demo: builds every `.crs` under `examples/` (including nested
@@ -315,7 +315,7 @@ hide each other or the file's other diagnostics: a module or item that does not 
 above the project root, a name that clashes with another import or a local declaration, and an import
 cycle are errors, and an import that is never used is a warning. Every cycle is reported, not only
 the first, on the `use` that closes it and naming the full chain (`Circular import: a.crs -> b.crs ->
-a.crs`); a file in a cycle is still checked. Only a parse error is fatal for the whole project. A
+a.crs`); a file in a cycle is still checked. A file that does not parse is an error on that file only. A
 file with an error is not emitted, and neither is a file that imports a component from a file that
 was not emitted. `docs/Crescent_Grammar.md` §11 has the complete rules.
 
@@ -527,7 +527,7 @@ any stack overflow it still meets into a `ParseError`.
   boundary.
 - No `Selector`/CSS-property validation — style selectors and raw property values are captured as
   opaque strings; only the `{expr}` interpolations are actually parsed.
-- A parse error is fatal for the whole project and hides every other diagnostic; `CodegenError` is
+- A file reports only its first syntax error, since the parser does not recover; `CodegenError` is
   fail-fast per file. Module errors and semantic diagnostics are collected per file.
 - The checker is quadratic in the number of members times functions of a single component (see
   "Benchmarks"); nothing realistic reaches it.

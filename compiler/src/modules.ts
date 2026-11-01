@@ -20,8 +20,16 @@ export interface LoadedFile {
   program: AST.Program;
 }
 
-export function loadAllPrograms(rootDir: string): Map<string, LoadedFile> {
+export type SyntaxFailure = LexError | ParseError;
+
+export interface LoadedProject {
+  files: Map<string, LoadedFile>;
+  failures: Map<string, SyntaxFailure>;
+}
+
+export function loadAllProgramsLenient(rootDir: string): LoadedProject {
   const files = new Map<string, LoadedFile>();
+  const failures = new Map<string, SyntaxFailure>();
 
   function walk(dir: string): void {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -38,14 +46,22 @@ export function loadAllPrograms(rootDir: string): Map<string, LoadedFile> {
         } catch (e) {
           if (e instanceof LexError || e instanceof ParseError) {
             e.file = relPath;
+            failures.set(relPath, e);
+          } else {
+            throw e;
           }
-          throw e;
         }
       }
     }
   }
 
   walk(rootDir);
+  return { files, failures };
+}
+
+export function loadAllPrograms(rootDir: string): Map<string, LoadedFile> {
+  const { files, failures } = loadAllProgramsLenient(rootDir);
+  for (const failure of failures.values()) throw failure;
   return files;
 }
 
@@ -96,7 +112,11 @@ export interface ResolvedImports {
   unresolved: Set<string>;
 }
 
-export function resolveFileImportsLenient(file: LoadedFile, files: Map<string, LoadedFile>): ResolvedImports {
+export function resolveFileImportsLenient(
+  file: LoadedFile,
+  files: Map<string, LoadedFile>,
+  unparsed: ReadonlySet<string> = new Set()
+): ResolvedImports {
   const imports: FileImports[] = [];
   const issues: ModuleIssue[] = [];
   const unresolved = new Set<string>();
@@ -119,6 +139,15 @@ export function resolveFileImportsLenient(file: LoadedFile, files: Map<string, L
     }
 
     const target = files.get(targetRelPath);
+    if (!target && unparsed.has(targetRelPath)) {
+      issues.push({
+        message: `'${targetRelPath}' has a syntax error, so what it defines is unknown (imported from '${file.relPath}')`,
+        file: file.relPath,
+        line: decl.line,
+      });
+      markAllUnresolved();
+      continue;
+    }
     if (!target) {
       issues.push({
         message: `Cannot find module '${targetRelPath}' (imported from '${file.relPath}' via 'use ${decl.pathSegments.join('::')}::...;')`,

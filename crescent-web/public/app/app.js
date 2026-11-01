@@ -74,14 +74,6 @@
       return;
     }
 
-    if (result.fatal) {
-      const el = document.createElement('div');
-      el.className = 'diagnostic fatal';
-      el.textContent = result.fatal;
-      diagnosticsEl.appendChild(el);
-      return;
-    }
-
     for (const d of result.diagnostics || []) {
       const el = document.createElement('div');
       el.className = `diagnostic ${d.severity}`;

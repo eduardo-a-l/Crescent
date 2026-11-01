@@ -77,29 +77,53 @@ const good = 'component Good {\n    view {\n        <p>"ok"</p>\n    }\n}\n';
 
 const parseProject = makeProject({ 'good.crs': good, 'sub/bad.crs': wrap('    state<int> n = 0;\n    void f() {\n        int y = ;\n    }') });
 const parseResult = checkProject(parseProject);
+const parseDiagnostics = parseResult.diagnosticsByFile.get('sub/bad.crs') || [];
 assert(
-  !parseResult.ok && parseResult.fatal && parseResult.fatal.file === 'sub/bad.crs' && parseResult.fatal.line === 4 && !/\bline \d+/.test(parseResult.fatal.message),
-  `checkProject: a parse error is fatal with its file and line, got ${JSON.stringify(parseResult.fatal)}`
+  !parseResult.ok &&
+    parseResult.unparsed.join() === 'sub/bad.crs' &&
+    parseDiagnostics.length === 1 &&
+    parseDiagnostics[0].severity === 'error' &&
+    parseDiagnostics[0].line === 4 &&
+    !/\bline \d+/.test(parseDiagnostics[0].message),
+  `checkProject: a parse error is an error diagnostic on its file with its line, got ${JSON.stringify(parseDiagnostics)}`
 );
 
 const lexProject = makeProject({ 'bad.crs': wrap('\n\n    void f() { int a = 1 & 2; }') });
 const lexResult = checkProject(lexProject);
 assert(
-  !lexResult.ok && lexResult.fatal && lexResult.fatal.file === 'bad.crs' && lexResult.fatal.line === 4,
-  `checkProject: a lex error is fatal with its file and line, got ${JSON.stringify(lexResult.fatal)}`
+  !lexResult.ok && (lexResult.diagnosticsByFile.get('bad.crs') || [])[0].line === 4,
+  `checkProject: a lex error is reported the same way, got ${JSON.stringify(lexResult.diagnosticsByFile.get('bad.crs'))}`
 );
 
 const cli = path.join(dist, 'cli.js');
 const run = spawnSync(process.execPath, [cli, 'check', parseProject], { encoding: 'utf8' });
 assert(
-  run.status === 1 && run.stderr.trim() === 'sub/bad.crs:4: Expected an expression (got SEMI \';\')',
-  `crescent check: prints file:line: message exactly once, got ${JSON.stringify(run.stderr)}`
+  run.status === 1 && run.stdout.trim().split('\n')[0] === "sub/bad.crs:4 [error] file 'sub/bad.crs': Expected an expression (got SEMI ';')" && /^1 error\(s\), 0 warning\(s\) in 2 file\(s\)\.$/m.test(run.stdout),
+  `crescent check: prints file:line once in the ordinary diagnostic format and counts the unparsed file, got ${JSON.stringify(run.stdout)}`
 );
 
 const lexRun = spawnSync(process.execPath, [cli, 'check', lexProject], { encoding: 'utf8' });
 assert(
-  lexRun.status === 1 && lexRun.stderr.trim() === "bad.crs:4: Unexpected character '&'",
-  `crescent check: a lex error is printed the same way, got ${JSON.stringify(lexRun.stderr)}`
+  lexRun.status === 1 && lexRun.stdout.split('\n')[0] === "bad.crs:4 [error] file 'bad.crs': Unexpected character '&'",
+  `crescent check: a lex error is printed the same way, got ${JSON.stringify(lexRun.stdout)}`
+);
+
+const mixedProject = makeProject({
+  'bad.crs': 'component A {\n    state n = 1;\n}\n',
+  'main.crs': 'use good::Ghost;\n\n' + good.replace('Good', 'Main'),
+  'good.crs': good,
+});
+const mixedRun = spawnSync(process.execPath, [cli, 'check', mixedProject], { encoding: 'utf8' });
+assert(
+  mixedRun.status === 1 && /^bad\.crs:2 \[error\]/m.test(mixedRun.stdout) && /^main\.crs:1 \[error\].*'Ghost' is not defined/m.test(mixedRun.stdout),
+  `crescent check: a parse error and an error in another file are both reported, got ${JSON.stringify(mixedRun.stdout)}`
+);
+
+const buildOut = path.join(tmpRoot, 'build-out');
+const buildRun = spawnSync(process.execPath, [cli, 'build', mixedProject, '--out-dir', buildOut], { encoding: 'utf8' });
+assert(
+  buildRun.status === 1 && fs.existsSync(path.join(buildOut, 'gen', 'good.js')) && /bad\.crs: codegen skipped: it has a syntax error/.test(buildRun.stdout),
+  `crescent build: the files that parse still build next to one that does not, got ${JSON.stringify(buildRun.stdout)}`
 );
 
 const Module = require('module');
@@ -114,8 +138,13 @@ const { compileToPreview: compileToPreviewWeb } = require(path.join(__dirname, '
   for (const [name, fn] of [['playground', compileToPreview], ['crescent-web', compileToPreviewWeb]]) {
     const result = await fn(wrap('    state<int> n = 0;\n    void f() {\n        int y = ;\n    }'));
     assert(
-      result.ok === false && result.fatal === "line 4: Expected an expression (got SEMI ';')",
-      `${name} preview: the fatal text carries the line, got ${JSON.stringify(result.fatal)}`
+      result.ok === false &&
+        !('fatal' in result) &&
+        result.diagnostics.length === 1 &&
+        result.diagnostics[0].severity === 'error' &&
+        result.diagnostics[0].line === 4 &&
+        result.diagnostics[0].message === "Expected an expression (got SEMI ';')",
+      `${name} preview: the parse error arrives as an ordinary diagnostic with its line, got ${JSON.stringify(result.diagnostics)}`
     );
   }
   fs.rmSync(tmpRoot, { recursive: true, force: true });

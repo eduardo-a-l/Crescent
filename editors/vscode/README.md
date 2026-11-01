@@ -94,13 +94,13 @@ checking yet — that's still open, see "Known limitations" below.
 - Every diagnostic underlines the **whole line** — `checker.ts`'s `Diagnostic` type only carries a
   line number, not a column, so there's nothing more precise to underline yet.
 - A parser or lexer error (`LexError`/`ParseError`) is attributed to the specific file that failed
-  to parse (`modules.ts`'s `loadAllPrograms()` now attaches the file before rethrowing) and shown
-  as a diagnostic on that file. A module-level error (a missing module, a `use` of a name that isn't
+  to parse (`modules.ts`'s `loadAllProgramsLenient()` attaches the file) and shown
+  as an ordinary error diagnostic on that file, on the line of the problem. A module-level error (a missing module, a `use` of a name that isn't
   defined at the top level of its target, `super` above the project root, or an import cycle) is an
   ordinary error diagnostic on the `use` line that causes it, and for a cycle on the `use` that closes
-  it, so it is underlined in that file next to the file's other problems and does not hide them. Only
-  a parse error is fatal: it is attributed to its file and replaces all other diagnostics until it is
-  fixed.
+  it, so it is underlined in that file next to the file's other problems and does not hide them, and so
+  does a parse error: the other files are still checked, and a `use` of the file that did not parse
+  is an error on its `use` line.
 - Diagnostics reflect what's **on disk**, not unsaved editor buffers — expected for an on-save
   trigger, but means an unsaved edit won't update the squiggles until you save again.
 - If the compiler is rebuilt while an Extension Development Host window is still running, Node's
@@ -131,9 +131,8 @@ titled "Crescent Preview".
 - A file that fails semantic checking is skipped for codegen the same way **Build** skips it (see
   `compiler/README.md`), and listed under a "Skipped files" section at the top of the preview page
   instead of silently disappearing.
-- A **fatal** error (a parse/lexer error, or a module-level error like an import cycle) has no
-  partial output to show, same as diagnostics' `FatalDiagnostic` case — it's reported as a popup
-  error instead of opening an empty panel.
+- A file that does not parse (or has any other error) is skipped like any other, and listed under
+  "Skipped files" with the reason; the files that do build are still previewed.
 - Running the command again re-runs the build and replaces the existing panel's content in place
   (it does not open a second panel) and brings it to the front. Saving or opening a `.crs` file
   also triggers this same rebuild-and-replace *without* bringing the panel to the front, so it
@@ -165,7 +164,7 @@ instead of a VS Code webview panel it:
   you'll need to refresh it yourself (or your browser may do so automatically); that's the
   browser's/OS's behavior, not something this extension controls.
 - Otherwise behaves identically to the panel version for what gets mounted, mount-failure
-  isolation, skipped-files reporting, and the fatal-error popup case — see the rest of this
+  isolation and skipped-files reporting — see the rest of this
   "Preview" section.
 
 ## What the grammar highlights, and what it deliberately doesn't

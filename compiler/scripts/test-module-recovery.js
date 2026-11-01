@@ -150,16 +150,78 @@ assert(
   'recovery: a file that is part of a cycle is still checked, so its ordinary errors are reported too'
 );
 
-const parseFatal = checkProject(
+const parseFailure = checkProject(
   makeProject({
     'lib.crs': component('Lib'),
     'main.crs': component('Main', ['lib::Ghost']),
     'syntax.crs': 'component {{{',
   })
 );
+const syntaxDiagnostics = parseFailure.diagnosticsByFile.get('syntax.crs') || [];
 assert(
-  !parseFatal.ok && parseFatal.fatal.stage === 'parse' && parseFatal.fatal.file === 'syntax.crs' && parseFatal.diagnosticsByFile.size === 0,
-  `recovery: a parse error is still fatal and still reports nothing else, got ${show(parseFatal.fatal)}`
+  !parseFailure.ok &&
+    JSON.stringify(parseFailure.unparsed) === JSON.stringify(['syntax.crs']) &&
+    !parseFailure.files.has('syntax.crs') &&
+    syntaxDiagnostics.length === 1 &&
+    syntaxDiagnostics[0].severity === 'error' &&
+    syntaxDiagnostics[0].line === 1,
+  `recovery: a parse error is an error on its own file, with its line, and the file is not in files, got ${show(syntaxDiagnostics)}`
+);
+assert(
+  diagnosticsIn(parseFailure, 'main.crs', 'error').length === 1 &&
+    /'Ghost' is not defined/.test(diagnosticsIn(parseFailure, 'main.crs', 'error')[0].message) &&
+    diagnosticsIn(parseFailure, 'lib.crs', 'error').length === 0,
+  `recovery: a parse error in one file no longer hides the errors of the others, got ${show(diagnosticsIn(parseFailure, 'main.crs', 'error'))}`
+);
+
+const severalBroken = checkProject(
+  makeProject({
+    'lib.crs': component('Lib'),
+    'a.crs': 'component A {\n    state n = 1;\n}\n',
+    'b.crs': '\n\ncomponent B {\n    void f() { int x = 1 & 2; }\n}\n',
+  })
+);
+assert(
+  !severalBroken.ok &&
+    JSON.stringify(severalBroken.unparsed.slice().sort()) === JSON.stringify(['a.crs', 'b.crs']) &&
+    severalBroken.diagnosticsByFile.get('a.crs')[0].line === 2 &&
+    severalBroken.diagnosticsByFile.get('b.crs')[0].line === 4,
+  `recovery: every file that fails to parse is reported, not only the first, got ${show(severalBroken.unparsed.map((f) => [f, severalBroken.diagnosticsByFile.get(f)]))}`
+);
+
+const importsUnparsed = checkProject(
+  makeProject({
+    'syntax.crs': 'component Broken {{{',
+    'user.crs': component('User', ['syntax::Broken', 'syntax::Other'], '        <Broken />\n        <Other />\n'),
+    'fine.crs': component('Fine'),
+  })
+);
+const userErrors = diagnosticsIn(importsUnparsed, 'user.crs', 'error');
+assert(
+  userErrors.length === 2 &&
+    userErrors.every((e) => e.line === 1 || e.line === 2) &&
+    userErrors.every((e) => /'syntax\.crs' has a syntax error/.test(e.message)) &&
+    diagnosticsIn(importsUnparsed, 'fine.crs', 'error').length === 0,
+  `recovery: importing from a file that did not parse is one error on each use line, with no follow-on unknown-name errors, got ${show(userErrors)}`
+);
+
+const builtWithUnparsed = buildProject(
+  makeProject({
+    'syntax.crs': 'component Broken {{{',
+    'user.crs': component('User', ['syntax::Broken'], '        <Broken />\n'),
+    'fine.crs': component('Fine'),
+  }),
+  path.join(tmpRoot, 'out-unparsed')
+);
+const unparsedByFile = Object.fromEntries(builtWithUnparsed.builds.map((b) => [b.relPath, b]));
+assert(
+  !builtWithUnparsed.check.ok &&
+    unparsedByFile['fine.crs'].outFile &&
+    unparsedByFile['user.crs'].outFile === null &&
+    unparsedByFile['syntax.crs'].outFile === null &&
+    /syntax error/.test(unparsedByFile['syntax.crs'].skippedReason) &&
+    fs.existsSync(path.join(builtWithUnparsed.genDir, 'fine.js')),
+  `build: a file that does not parse and the files that import it are skipped while the others still build, got ${show(builtWithUnparsed.builds.map((b) => [b.relPath, !!b.outFile, b.skippedReason]))}`
 );
 
 const built = buildProject(
