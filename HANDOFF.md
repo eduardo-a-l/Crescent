@@ -7,13 +7,61 @@
 
 ## Current State
 
-**Branch:** `feature/parser-speed` (off `develop` at `0bdda80`)
+**Branch:** `feature/readme` (off `develop` at `3bb2178`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Brought `compiler/README.md` in line with the code ("Improve compiler README so its description
+matches the current implementation" in `TODO.md`) and added a test so it stays that way. This was a
+documentation task, but I treated every claim as something to verify against the source, because the
+README had drifted a lot over the last sessions.
+
+What was wrong, found by reading all 437 lines against the code: the Structure list omitted
+`narrowing.ts`, `references.ts`, `cli.ts`, `bench/` and most of the test scripts, and described
+`index.ts` as doing its own resolving and checking (it just calls `buildProject()` now); the Modules
+section said "one cycle anywhere aborts the whole build" (cycles and every other import problem are
+per-file diagnostics now, only a parse error is fatal) and described discovery as covering `examples/`
+only; the Semantic Checker section said null safety was "non-flow-sensitively", recognized one direct
+`if` pattern and had "no tracking across early returns, loops, or compound boolean conditions" (it is
+a full flow-sensitive analysis with call, `await`, `derived` and in-expression-order handling), and its
+out-of-scope list repeated that; the Codegen list said views have a single root (later text says
+several are wrapped in `fragment`) and had no loops; the closing list said `ModuleError` is fail-fast
+and that flow-sensitive narrowing does not exist; `crescent build` was described as writing every file
+without semantic errors (it also skips importers of skipped files).
+
+What I changed: a new "Pipeline and errors" section with a table of the stages and which error class
+(`LexError`/`ParseError` fatal, import diagnostics and checker diagnostics per file, `CodegenError`
+per file) belongs to each, which is the closest thing the repo has to the open TODO item "Establish a
+clear distinction between parser, semantic, and codegen errors" (I did not tick that item, since it is
+about making the code uniform, not describing it); a rewritten Structure section grouped by role; the
+Modules, Codegen, CLI and Semantic Checker passages above; new bullets for loop-control and import
+diagnostics; a new "Robustness" section (fuzzer usage, the two limits, `parseCrescent()`'s
+`RangeError` backstop); and a corrected "not here yet" list. I verified the specifics before writing
+them: the narrowing rules by reading `narrowingTargets()`, the loop-control message by grepping the
+checker, loop codegen by compiling `examples/loops.crs` and reading the output, the CLI line format by
+running it, the existence of every function and file named, and the spec sections cited (grammar
+section 11.2, 11.7 and 12, design section 11).
+
+The guard: `compiler/scripts/test-readme.js`, wired into `npm test` after `test-fuzz.js`, checks that
+every file in `src/` appears in the README, every `scripts/test-*.js` is mentioned by name, the
+fuzzer and web bundler are mentioned, every `src/`, `scripts/`, `bench/` and `examples/` path the
+README names exists (25 checked), every test script it names exists, every `npm run` command it
+shows is defined, and every test script is wired into `npm test`. It found two real omissions in my
+own first draft the first time it ran (I had written "the forbidden-write and array-mutator tests"
+instead of naming four scripts, and the new test was not wired in), and I confirmed it fails when a
+source file or test script is added without documentation. It does not check the prose, only
+the inventory, so claims like the narrowing rules still need a human when that code changes.
+
+Not touched: the long Codegen and Effect Disposal sections describe features that have not changed
+in these sessions (keyed lists, scoped styles, slots, provide/inject, array mutators, disposal); I
+spot-checked a few (the unkeyed-list warning is real, loops compile as described) but did not
+re-verify every sentence, so treat those two sections as the least recently audited part.
+
+Before that:
+
 Sped up the parser, following the benchmark suite's finding that parsing was about 90 percent of
 compile time at roughly 1.3 MB/s, and fixed a line-number bug that the verification of that speed-up
 turned up.

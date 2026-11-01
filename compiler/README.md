@@ -1,46 +1,83 @@
-# Crescent Compiler — Lexer/Parser/Codegen Scaffold (v0.1)
+# Crescent Compiler — Lexer, Parser, Semantic Checker and Codegen (v0.1)
 
 A hand-written recursive-descent lexer and parser for Crescent, implementing the grammar in
-`../docs/Crescent_Grammar.md`, plus a codegen pass that emits plain, runnable JavaScript for a
-supported subset of the language.
+`../docs/Crescent_Grammar.md`, a semantic checker, and a codegen pass that emits plain, runnable
+JavaScript for a supported subset of the language.
+
+## Pipeline and errors
+
+A project is a directory of `.crs` files (`docs/Crescent_Grammar.md` §11.2). `checkProject()` and
+`buildProject()` in `src/project.ts` run these stages, and each kind of error belongs to exactly one
+of them:
+
+| Stage | What it does | What goes wrong, and what happens |
+|---|---|---|
+| Lex and parse, every file | `parseCrescent()` turns source into an AST | `LexError` or `ParseError`, thrown on the first problem in a file. **Fatal for the whole project**: nothing else is reported or built |
+| Resolve imports | `resolveFileImportsLenient()` binds each `use`; `findCycles()` finds import cycles | A diagnostic on the `use` line (missing module or item, `super` above the root, a cycle). **Per file**: collected, never fatal |
+| Check, every file | `checkFile()` | Diagnostics (error or warning) collected per file. A file with an error is not emitted |
+| Codegen, every file without errors | `generateProgram()` | `CodegenError` for something not yet supported. That file is skipped, with the reason |
+| Write output | `buildProject()` | A file is written only if no file it imports a component from was skipped, so every `require()` in the output resolves |
+
+`LexError`/`ParseError`/`CodegenError` are thrown, the others are returned as `Diagnostic`s
+(`{ severity, message, where, line }`); the checker, `resolveFileImportsLenient()` and `findCycles()`
+never throw on a problem in the source (`resolveFileImports()` and `detectCycles()` do, for callers
+that want the first problem as an exception). On any input, however malformed, the compiler is expected to raise
+nothing but those three (see "Robustness" below).
 
 ## Structure
 
 - `src/tokens.ts` — token types and keyword table
-- `src/lexer.ts` — character-level lexer, plus raw-scan helpers used only by style-block parsing
+- `src/lexer.ts` — character-level lexer, plus raw-scan helpers used only by style-block parsing,
+  and the position and line-counter reset that parser backtracking relies on
 - `src/ast.ts` — AST node type definitions
-- `src/parser.ts` — the recursive-descent parser
-- `src/modules.ts` — multi-file module graph: discovers `.crs` files, resolves `use` paths, checks
-  for import cycles, and computes the relative `require()` paths codegen needs (see "Modules"
-  below)
+- `src/parser.ts` — the recursive-descent parser: classifies identifier-led statements by
+  lookahead, enforces the nesting limits of the spec's §12, and rejects syntax trees deeper than
+  1000 levels
+- `src/modules.ts` — project discovery (every `.crs` under the root except hidden entries and
+  `node_modules`), `use` resolution that collects its problems (`resolveFileImportsLenient()`; the
+  throwing `resolveFileImports()` and `detectCycles()` are thin wrappers), iterative cycle finding,
+  and the relative `require()` paths codegen needs (see "Modules" below)
 - `src/checker.ts` — the semantic checker: scope resolution, struct/prop/type checks, reactivity
-  rules, and non-flow-sensitive null-safety warnings (see "Semantic Checker" below)
+  rules, loop-control placement, import conflicts and unused imports, and flow-sensitive null
+  analysis (see "Semantic Checker" below)
+- `src/narrowing.ts` — the pure AST analysis behind the null analysis: per-function effect
+  summaries (the names a function may set to null, write, and read, closed over the call graph),
+  what a statement or expression may null, the dependencies of `derived` values, and
+  `blockDefinitelyExits()`
+- `src/references.ts` — `collectReferencedNames()`, which finds the names a file refers to, for
+  the unused-import warning
 - `src/codegen.ts` — AST → JavaScript codegen (see "Codegen" below for what's supported)
 - `src/runtime.ts` — the small reactive runtime (`state`, `derived`, `effect`, `watch`, `h`, `text`,
   `ifBlock`, `forEach`, `slot`, `injectStyle`) that generated components import at run time
-- `src/index.ts` — demo entry point: recursively discovers every `.crs` file under `examples/`
-  (including nested directories), resolves imports and checks for cycles across the whole project,
-  runs the semantic checker per file (skipping codegen for that file if it reports any errors),
-  then attempts codegen, mirroring the source tree under `dist/gen/`
 - `src/project.ts` — reusable `checkProject()`/`buildProject()`, used by the CLI, the VS Code
-  extension's diagnostics, and `src/webPreview.ts` below, so all three agree on exactly what
-  counts as a per-file error vs. a project-wide fatal one
+  extension's diagnostics, `src/index.ts` and `src/webPreview.ts`, so all of them agree on exactly
+  what counts as a per-file error and what is fatal; `buildProject()` also decides which files can be
+  written (see "Pipeline and errors")
+- `src/cli.ts` — the `crescent check` / `crescent build` command line (see "CLI" below)
+- `src/index.ts` — the `npm start` demo: builds every `.crs` under `examples/` (including nested
+  directories) into `dist/gen/` with `buildProject()` and prints each file's diagnostics and what
+  happened to its codegen
 - `src/webPreview.ts` — `buildPreviewHtml()`: runs `buildProject()`, bundles each compiled file with
   `esbuild`, and mounts every top-level zero-parameter component into a single preview HTML page —
   the engine behind the VS Code extension's `Crescent: Preview` command (see
   `editors/vscode/README.md`'s "Preview" section for exactly what gets mounted and why)
-- `scripts/build-web.js` — bundles generated components (via `esbuild`) into a single
-  self-contained `web/index.html` you can open directly in a browser
-- `scripts/test-counter.js`, `scripts/test-day-picker.js` — headless-DOM smoke tests (via
-  `jsdom`) that mount the generated components, simulate clicks, and assert the DOM updates
-  correctly
-- `scripts/test-preview.js` — exercises `buildPreviewHtml()` against `examples/`: asserts the
-  expected zero-param roots are mounted and prop-taking components aren't, mounts one into `jsdom`
-  and simulates a real click, and checks a project with only semantic errors still produces a
-  (empty, not crashed) preview
-- `scripts/test-web.js` — loads the real `web/index.html` into `jsdom` with script execution
-  enabled and simulates clicks through actual DOM events, as a closer proxy for real-browser
-  behavior than requiring the generated modules directly
+- `bench/` — the benchmark runner, its input generators and the committed baseline (see
+  "Benchmarks")
+- `scripts/` — the tests, run by `npm test`, and `fixtures/` for the ones driven by `.crs` files.
+  By area: the language rules and checker (`test-checker.js`, `test-loops.js`,
+  `test-struct-destructuring.js`, `test-string-interpolation.js`, `test-forbidden-property-write.js`,
+  `test-forbidden-derived-assignment.js`, `test-array-mutators.js`,
+  `test-array-mutators-native.js`); modules (`test-modules.js`, `test-missing-import.js`,
+  `test-circular-import.js`, `test-import-conflicts.js`, `test-unused-imports.js`,
+  `test-module-diagnostics.js`, `test-module-recovery.js`, `test-module-semantics.js`,
+  `test-module-discovery.js`, `test-module-graphs.js`); the runtime and generated code in `jsdom`
+  (`test-counter.js`, `test-day-picker.js`, `test-theme-toggle.js`, `test-composition.js`,
+  `test-reactive-list.js`, `test-keyed-list.js`, `test-effect-disposal.js`,
+  `test-provide-inject.js`, `test-multi-root.js`, `test-derived-lifecycle.js`, `test-web.js`,
+  `test-preview.js`); robustness and speed (`test-fuzz.js`, `test-parser-backtracking.js`,
+  `test-bench.js`); and `test-readme.js`, which checks this README against the source tree. `fuzz.js` and `fuzz-harness.js` are the fuzzer, and `build-web.js` bundles
+  generated components (via `esbuild`) into a single self-contained `web/index.html` you can open
+  directly in a browser
 - `examples/*.crs` — sample source files exercising the language's tricky corners, including a
   nested `examples/modules/` tree exercising cross-file `use` imports
 
@@ -119,9 +156,10 @@ node dist/cli.js build [path] --out-dir <dir>
 `[path]` defaults to the current directory. `crescent check` parses, resolves modules, and runs
 the semantic checker over every `.crs` file under `path`, printing one line per diagnostic
 (`file:line [severity] where: message`) and exiting non-zero if any error was found.
-`crescent build` does the same and, for every file with no semantic errors, writes generated
-JavaScript to `<out-dir>/gen/`, alongside a copy of the runtime at `<out-dir>/runtime.js` so the
-output directory is self-contained.
+`crescent build` does the same and writes generated JavaScript to `<out-dir>/gen/` for every file
+that can be written (no errors, and nothing it imports a component from was skipped), alongside a
+copy of the runtime at `<out-dir>/runtime.js` so the output directory is self-contained. A file that
+is skipped is reported with its reason.
 
 `npm run cli -- check <path>` runs the same commands directly against `src/cli.ts` via `ts-node`,
 without a prior build.
@@ -141,13 +179,17 @@ tracked by `effect()`, so text interpolations and `if`/`else` template branches 
 automatically when the state they read changes.
 
 **Currently supported:** `state<T>`, `derived<T>` (lazy pull-based memoization, per §14.5), `const`,
-plain functions (including `async`), arithmetic/comparison/ternary expressions, `view` blocks
-containing a single root element, text literals and `{expr}` interpolation, `if`/`else` template
-branches, `for` loops over arrays (one root node per iteration), static and expression-valued
+plain functions (including `async`) with `if`/`else`, `while`, `do`-`while`, C-style `for`, `break` and
+`continue` (compiled to the same native JavaScript loops), arithmetic/comparison/ternary
+expressions, `view` blocks (one root element, or several wrapped in a `fragment`, see below), text
+literals and `{expr}` interpolation, `if`/`else` template branches, template `for` loops over arrays
+(one or more root nodes per iteration), static and expression-valued
 attributes, event-handler attributes (`onclick={fn}`), `style` blocks (scoped CSS, see below),
 component-as-element usage (`<UserCard user={user}/>`), `<slot/>` content passthrough,
 `on_mount`, `on_change(...)`, and assignment to non-identifier targets (array-index and, where
-legal, struct-field writes — see below).
+legal, struct-field writes — see below). A loop whose header or body would need a statement-level
+rewrite that cannot be expressed in place, such as an array mutator call in a C-style `for`
+initializer, is a `CodegenError` and the file is skipped.
 
 `for` loops with an explicit `key` (§14.4) get real keyed reconciliation: `forEach` in
 `runtime.ts` keeps a persistent `key -> { item, node }` map across re-renders and, on each update,
@@ -260,11 +302,16 @@ use components::forms::{Button, Input as TextInput};    // ./components/forms.cr
 use super::shapes::Point;                                // ../shapes.crs relative to *this file's own directory*
 ```
 
-`src/index.ts` discovers every `.crs` file under `examples/` first (recursively), resolves every
-`use` path to a concrete file, and builds a file-level dependency graph. Import cycles are rejected
-before any codegen runs, with an error naming the full chain (`Circular import: a.crs -> b.crs ->
-a.crs`) — one cycle anywhere aborts the whole build, not just the files involved. A `use` that
-names a file or item that doesn't exist is also a compile error, reported per file.
+`checkProject()` discovers every `.crs` file under the project root (skipping hidden entries and
+`node_modules`), resolves every `use` to a concrete file, and builds a file-level dependency graph.
+Problems with imports are ordinary per-file diagnostics, located on the `use` line, so they do not
+hide each other or the file's other diagnostics: a module or item that does not exist, a `super`
+above the project root, a name that clashes with another import or a local declaration, and an import
+cycle are errors, and an import that is never used is a warning. Every cycle is reported, not only
+the first, on the `use` that closes it and naming the full chain (`Circular import: a.crs -> b.crs ->
+a.crs`); a file in a cycle is still checked. Only a parse error is fatal for the whole project. A
+file with an error is not emitted, and neither is a file that imports a component from a file that
+was not emitted. `docs/Crescent_Grammar.md` §11 has the complete rules.
 
 Codegen impact differs by what's imported: importing a `struct` produces **no runtime code at
 all**, since struct type names are already fully erased at codegen (a `User { ... }` struct
@@ -280,14 +327,14 @@ target file, not to something that file only imported itself.
 
 ## Semantic Checker
 
-`src/checker.ts` runs as its own pass between parsing and codegen (`checkFile()`, wired into
-`src/index.ts`) and collects **multiple** diagnostics per file — rather than throwing on the first
+`src/checker.ts` runs as its own pass between parsing and codegen (`checkFile()`, called for every
+file by `checkProject()`) and collects **multiple** diagnostics per file — rather than throwing on the first
 problem like `ParseError`/`CodegenError` — so a file can be checked once and report everything
 wrong with it. A diagnostic is `{ severity: 'error' | 'warning', message, where, line }`; `where`
 is a human-readable path like `component 'Cart', function 'add_one'`, and `line` is the line of
 the enclosing statement or declaration (see the source-location note below). Errors block codegen
-for that file (`index.ts` prints all diagnostics, then skips codegen if any are errors);
-warnings are printed but don't block.
+for that file, and for any file that imports a component from it; warnings are printed but don't
+block.
 
 What it checks:
 
@@ -320,20 +367,35 @@ What it checks:
   surface as a `where`/`line`-tagged diagnostic instead of only a codegen exception. This is
   deliberate, harmless duplication — codegen keeps its own check so it's still correct if ever run
   without the checker in front of it.
-- **Null safety (`T?`), non-flow-sensitively** — a `Member`/`Index` access on an identifier whose
-  declared type is `T?` is flagged as a **warning** unless it's inside the `consequent` branch of
-  an `if (x)` or `if (x != null)` check on that exact identifier, matching the design doc's own
-  §11 example. This narrowing is deliberately simple: it only recognizes that one direct pattern,
-  re-derived fresh at each `if`, with no tracking across early returns, loops, or compound boolean
-  conditions.
+- **Loop control** — `break` and `continue` outside a loop are errors (`'break' can only be used
+  inside a loop`).
+- **Imports** — a name bound by a `use` that clashes with another import or with a top-level
+  declaration of the file is an error, and an imported name the file never refers to is a warning
+  (`src/references.ts`); a `use` that failed to resolve binds nothing, and the follow-on "unknown
+  component/type/identifier" errors for that name are suppressed so one mistake is reported once.
+  The module-level errors themselves come from `src/project.ts` and `src/modules.ts` (see
+  "Modules").
+- **Null safety (`T?`), flow-sensitively** — a `Member`/`Index` access on an identifier whose
+  declared type is `T?` is a **warning** unless the identifier is known to be non-null at that
+  point. A bare `x` or `x != null` narrows the `then` branch of an `if`, a ternary, a `while` or
+  C-style `for` body, and the right side of `&&`; `x == null` narrows the `else` branch, the right
+  side of `||`, and, when the `then` branch always ends in `return`, `break` or `continue`, every
+  statement after the `if` in the same block. The narrowing is dropped as soon as the value may
+  have been set back to null: by an assignment of anything not known to be non-null, by a call to
+  a component function that may assign it (per-function summaries, followed through calls and
+  recursion), by an `await` (for `state`, `derived`, `provide` and `inject`, not `const`), at the
+  start of a loop and after it when the loop body may null it, and, for a `derived` value, by any
+  write to something it depends on. Inside one expression the same rules apply left to right. The
+  analysis is `src/narrowing.ts` plus its use in `checkStmts()` and `checkExpr()`; the complete
+  rules, and the cases not analysed, are in `docs/Crescent_Design.md` §11.
 
 **Explicitly out of scope for this version** (so these are known gaps, not silent ones):
 
 - General type inference. There's no unification engine — a `const` or `state` initialized from a
   function call, a variable reference, or an arithmetic expression isn't type-checked against its
   declared type, only literal-shaped initializers are.
-- Flow-sensitive null narrowing beyond the single direct-`if`-guard pattern above (no narrowing
-  through `&&`, no narrowing that survives past an early `return`, no loop-carried narrowing).
+- Null narrowing of anything but a plain identifier (`user.name` is never narrowed), calls made
+  from separate nodes of a `view`, and event handlers (see `docs/Crescent_Design.md` §11).
 - Per-expression source locations. Diagnostics point at the enclosing **statement** or
   **declaration** (see "Source locations" below), not the specific sub-expression — e.g. a type
   error deep inside a large ternary is reported at the statement's line, not the ternary's.
@@ -426,12 +488,40 @@ sidesteps having to keep a raw cursor and a token-lookahead cursor in sync acros
 `[]` modifiers left-to-right in a loop, each wrapping the previous type. `string[]?` → nullable
 array of string. `string?[]` → array of nullable string.
 
+## Robustness
+
+On any input, however malformed, the compiler is expected to raise nothing but `LexError`,
+`ParseError` and `CodegenError`, and never to hang or run out of memory. `scripts/fuzz.js` checks
+that:
+
+```
+node scripts/fuzz.js <seed> <iterations> [deep]
+```
+
+It mutates every program under `examples/` and `scripts/fixtures/` (truncation, deletion,
+duplication, swapped lines, inserted keywords and punctuation, random characters), builds token
+soup, and with `deep` also runs pathological inputs (nesting up to 100,000 levels, a
+million-character identifier and string, 200,000 statements), pushing each through parse, check and
+codegen. It prints every uncontrolled exception grouped by stage, type and throwing location with the
+smallest input that caused it, writes each input to `/tmp/fuzz-last.txt` first so a hang or an
+out-of-memory abort can be traced, and exits non-zero on a finding. `scripts/test-fuzz.js` runs it
+in `npm test`, in child processes with a timeout and a heap cap so a regression fails the test and
+doesn't take the suite down.
+
+Two limits keep recursive passes from exhausting the call stack, and both give an ordinary
+`ParseError` when exceeded (`docs/Crescent_Grammar.md` §12): 256 levels of nested expressions,
+statements, types and template nodes, and a syntax tree 1000 levels deep, which bounds how long a
+chain of operators, member accesses, calls or index operations can be. `parseCrescent()` also turns
+any stack overflow it still meets into a `ParseError`.
+
 ## What's deliberately not here yet
 
-- A first-version semantic checker exists (`src/checker.ts`, see "Semantic Checker" above), but it
-  does not do general type inference or flow-sensitive null narrowing — see that section's
-  "Explicitly out of scope" list for the precise boundary.
+- A semantic checker exists (`src/checker.ts`, see "Semantic Checker" above), but it does not do
+  general type inference — see that section's "Explicitly out of scope" list for the precise
+  boundary.
 - No `Selector`/CSS-property validation — style selectors and raw property values are captured as
   opaque strings; only the `{expr}` interpolations are actually parsed.
-- `ParseError`/`CodegenError`/`ModuleError` are still fail-fast (thrown on the first problem) —
-  only the semantic checker collects multiple diagnostics per file.
+- A parse error is fatal for the whole project and hides every other diagnostic; `CodegenError` is
+  fail-fast per file. Module errors and semantic diagnostics are collected per file.
+- The checker is quadratic in the number of members times functions of a single component (see
+  "Benchmarks"); nothing realistic reaches it.

@@ -26,7 +26,16 @@
 - [x] Automated tests
 - [ ] Establish consistent compiler error output
 - [ ] Establish a clear distinction between parser, semantic, and codegen errors
-- [ ] Improve compiler README so its description matches the current implementation
+- [x] Improve compiler README so its description matches the current implementation — rewritten
+  where it had drifted: a new "Pipeline and errors" overview (which stage owns which error class and
+  what happens to it), a Structure section covering `narrowing.ts`, `references.ts`, `cli.ts`,
+  `project.ts`, `bench/` and every test script, Modules (cycles and import errors are per-file, only
+  parse errors are fatal), Codegen (loops, multi-root views), the Semantic Checker (the flow-sensitive
+  null analysis it described as a single `if` pattern, loop-control and import diagnostics), a new
+  Robustness section (fuzzer and limits) and the closing "not here yet" list.
+  `compiler/scripts/test-readme.js` now keeps it honest in `npm test`: every file in `src/` and every
+  test script must be mentioned, every path and `npm run` command it names must exist, and every test
+  script must be run by `npm test`
 - [ ] Establish a documented release/versioning strategy
 
 ---
