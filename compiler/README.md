@@ -15,7 +15,7 @@ of them:
 | Lex and parse, every file | `parseCrescent()` turns source into an AST | `LexError` or `ParseError`, thrown on the first problem in a file. **Per file**: `checkProject()` turns it into an error on that file (with its line), leaves the file out of the project, and carries on with the others. A `use` of it is an error on the `use` line |
 | Resolve imports | `resolveFileImportsLenient()` binds each `use`; `findCycles()` finds import cycles | A diagnostic on the `use` line (missing module or item, `super` above the root, a cycle). **Per file**: collected, never fatal |
 | Check, every file | `checkFile()` | Diagnostics (error or warning) collected per file. A file with an error is not emitted |
-| Codegen, every file without errors | `generateProgram()` | `CodegenError` for something not yet supported. That file is skipped, with the reason |
+| Codegen, every file without errors | `generateProgram()` | `CodegenError` for something not yet supported. That file is skipped, with the reason and the line it was found on |
 | Write output | `buildProject()` | A file is written only if no file it imports a component from was skipped, so every `require()` in the output resolves |
 
 `LexError`/`ParseError`/`CodegenError` are thrown, the others are returned as `Diagnostic`s
@@ -24,8 +24,11 @@ on (`null` only when there is no single line to name, such as a syntax tree that
 once `loadAllProgramsLenient()` has caught them, the `file`; the message does not repeat the line, so
 the error diagnostic `checkProject()` makes from one has that line and `crescent check` prints it as
 `file:line [error] file 'file': message`. A line inside a string or style interpolation is the line in the file, not in
-the snippet, and an unterminated string is reported where it began. `CodegenError` has no line,
-only the file it skipped; the checker, `resolveFileImportsLenient()` and `findCycles()`
+the snippet, and an unterminated string is reported where it began. `CodegenError` carries the line of the component, member,
+statement or template node being generated (not of the exact expression inside it), which
+`buildProject()` keeps as `FileBuildResult.line` and `crescent build` prints as
+`file:line: codegen skipped: reason`; a file skipped only because something it imports was not built
+has no line; the checker, `resolveFileImportsLenient()` and `findCycles()`
 never throw on a problem in the source (`resolveFileImports()` and `detectCycles()` do, for callers
 that want the first problem as an exception). On any input, however malformed, the compiler is expected to raise
 nothing but those three (see "Robustness" below).
@@ -76,7 +79,7 @@ nothing but those three (see "Robustness" below).
   `test-array-mutators-native.js`); modules (`test-modules.js`, `test-missing-import.js`,
   `test-circular-import.js`, `test-import-conflicts.js`, `test-unused-imports.js`,
   `test-module-diagnostics.js`, `test-module-recovery.js`, `test-module-semantics.js`,
-  `test-module-discovery.js`, `test-module-graphs.js`); error locations (`test-error-locations.js`); the runtime and generated code in `jsdom`
+  `test-module-discovery.js`, `test-module-graphs.js`); error locations (`test-error-locations.js`, `test-codegen-error-lines.js`); the runtime and generated code in `jsdom`
   (`test-counter.js`, `test-day-picker.js`, `test-theme-toggle.js`, `test-composition.js`,
   `test-reactive-list.js`, `test-keyed-list.js`, `test-effect-disposal.js`,
   `test-provide-inject.js`, `test-multi-root.js`, `test-derived-lifecycle.js`, `test-web.js`,

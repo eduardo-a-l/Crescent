@@ -1,14 +1,23 @@
 import * as AST from './ast';
 import { typeToString } from './checker';
 
-export class CodegenError extends Error {}
+export class CodegenError extends Error {
+  line: number | null;
+
+  constructor(message: string, line: number | null = null) {
+    super(message);
+    this.line = line;
+  }
+}
+
+let currentLine: number | null = null;
 
 function unsupported(feature: string): never {
-  throw new CodegenError(`Codegen: '${feature}' is not yet supported in v0.1`);
+  throw new CodegenError(`Codegen: '${feature}' is not yet supported in v0.1`, currentLine);
 }
 
 function compileError(message: string): never {
-  throw new CodegenError(`Codegen: ${message}`);
+  throw new CodegenError(`Codegen: ${message}`, currentLine);
 }
 
 function indentBlock(code: string, levels: number): string {
@@ -29,6 +38,7 @@ export function generateProgram(
   runtimeRequirePath: string = '../runtime',
   imports: ImportBinding[] = []
 ): string {
+  currentLine = null;
   const parts: string[] = [];
   parts.push(
     `const { state, effect, h, text, ifBlock, forEach, injectStyle, slot, derived, watch, fragment } = require('${runtimeRequirePath}');`
@@ -54,6 +64,7 @@ function scopeAttrFor(componentName: string): string {
 }
 
 function generateComponent(component: AST.ComponentDecl): string {
+  currentLine = component.line;
   const stateNames = new Set<string>();
   const derivedNames = new Set<string>();
   for (const member of component.members) {
@@ -79,10 +90,12 @@ function generateComponent(component: AST.ComponentDecl): string {
   const bodyLines: string[] = [];
   const onMountBodies: AST.Stmt[][] = [];
   let viewExpr: string | null = null;
+  let viewSeen = false;
   let ctxVarName = '__ctx';
   let ctxCounter = 0;
 
   for (const member of component.members) {
+    currentLine = member.line;
     switch (member.kind) {
       case 'StateDecl':
         bodyLines.push(`  const ${member.name} = state(${exprToJs(member.init, stateNames)});`);
@@ -97,7 +110,8 @@ function generateComponent(component: AST.ComponentDecl): string {
         bodyLines.push(indentBlock(generateFunction(member, stateNames, derivedNames), 1));
         break;
       case 'ViewBlockDecl':
-        if (viewExpr !== null) unsupported('multiple view blocks');
+        if (viewSeen) unsupported('multiple view blocks');
+        viewSeen = true;
         break;
       case 'StyleBlockDecl':
         break;
@@ -131,6 +145,7 @@ function generateComponent(component: AST.ComponentDecl): string {
   }
 
   const viewMember = component.members.find((m): m is AST.ViewBlockDecl => m.kind === 'ViewBlockDecl');
+  currentLine = component.line;
   if (!viewMember) unsupported('component without a view block');
   viewExpr = generateViewBlock(viewMember, stateNames, scopeAttr, ctxVarName);
 
@@ -263,6 +278,7 @@ function loopClauseJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set
 }
 
 function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<string>): string {
+  currentLine = stmt.line;
   switch (stmt.kind) {
     case 'VarDecl':
       return `let ${stmt.name} = ${exprToJs(stmt.init, stateNames)};`;
@@ -303,6 +319,7 @@ function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<str
       const update = stmt.update
         ? loopClauseJs(stmt.update, stateNames, derivedNames, 'for-loop update that expands to multiple statements')
         : '';
+      currentLine = stmt.line;
       const lines: string[] = [];
       lines.push(`for (${init}; ${exprToJs(stmt.test, stateNames)}; ${update}) {`);
       for (const s of stmt.body) lines.push(indentBlock(stmtToJs(s, stateNames, derivedNames), 1));
@@ -317,10 +334,11 @@ function stmtToJs(stmt: AST.Stmt, stateNames: Set<string>, derivedNames: Set<str
       return lines.join('\n');
     }
     case 'DoWhile': {
+      const testJs = exprToJs(stmt.test, stateNames);
       const lines: string[] = [];
       lines.push('do {');
       for (const s of stmt.body) lines.push(indentBlock(stmtToJs(s, stateNames, derivedNames), 1));
-      lines.push(`} while (${exprToJs(stmt.test, stateNames)});`);
+      lines.push(`} while (${testJs});`);
       return lines.join('\n');
     }
     case 'Break':
@@ -476,6 +494,7 @@ function generateViewBlock(
   scopeAttr: string | null,
   ctxVarName: string
 ): string {
+  currentLine = view.line;
   if (view.nodes.length === 0) {
     unsupported('view block with no root nodes');
   }
@@ -489,6 +508,7 @@ function templateNodeToJs(
   scopeAttr: string | null,
   ctxVarName: string
 ): string {
+  currentLine = node.line;
   switch (node.kind) {
     case 'Element':
       if (node.tag === 'slot') return 'slot(children)';
@@ -500,21 +520,24 @@ function templateNodeToJs(
       return `text(() => ${exprToJs(node.expr, stateNames)})`;
     case 'TemplateIf': {
       if (node.consequent.length === 0) unsupported('if-block with no root nodes');
+      const testJs = exprToJs(node.test, stateNames);
       const trueJs = wrapMultiRootJs(node.consequent.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName)));
       if (!node.alternate) {
-        return `ifBlock(() => ${exprToJs(node.test, stateNames)}, () => ${trueJs})`;
+        return `ifBlock(() => ${testJs}, () => ${trueJs})`;
       }
+      currentLine = node.line;
       if (node.alternate.length === 0) unsupported('else-block with no root nodes');
       const falseJs = wrapMultiRootJs(node.alternate.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName)));
-      return `ifBlock(() => ${exprToJs(node.test, stateNames)}, () => ${trueJs}, () => ${falseJs})`;
+      return `ifBlock(() => ${testJs}, () => ${trueJs}, () => ${falseJs})`;
     }
     case 'TemplateFor': {
       if (node.body.length === 0) unsupported('for-loop with no root nodes');
-      const itemJs = wrapMultiRootJs(node.body.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName)));
       const iterableJs = exprToJs(node.iterable, stateNames);
+      const keyJs = node.key ? exprToJs(node.key, stateNames) : null;
+      const itemJs = wrapMultiRootJs(node.body.map((n) => templateNodeToJs(n, stateNames, scopeAttr, ctxVarName)));
       const args = [`() => ${iterableJs}`, `(${node.itemName}) => ${itemJs}`];
-      if (node.key) {
-        args.push(`(${node.itemName}) => ${exprToJs(node.key, stateNames)}`);
+      if (keyJs !== null) {
+        args.push(`(${node.itemName}) => ${keyJs}`);
       } else {
         console.warn(
           `Warning: for-loop over '${node.itemName}' has no explicit key; falling back to index-based list patching (see design doc §14.4). Add 'key <expr>' to the loop for stable, identity-based reconciliation.`

@@ -7,13 +7,49 @@
 
 ## Current State
 
-**Branch:** `feature/parse-errors-per-file` (off `develop` at `04e5817`)
+**Branch:** `feature/codegen-error-lines` (off `develop` at `e0bc98e`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Gave `CodegenError` a line, which closes "Establish a clear distinction between parser, semantic, and
+codegen errors" in `TODO.md` (now `[x]`; the leftover, recovering inside a file so more than the first
+syntax error is reported, is a new open item).
+
+Probe first: the AST already had correct lines on components, members, statements and template nodes
+(the `line: 0` in the parser are placeholders overwritten centrally), so nothing was missing there;
+`CodegenError` simply never recorded one. Also found that the `'multiple view blocks'` guard in
+`generateComponent` could never fire (it tested `viewExpr`, which is always `null` inside the loop, and
+a second view was silently ignored by codegen; only the checker's "more than one 'view' block" error
+kept it from happening), so it now uses a `viewSeen` flag.
+
+What changed: `CodegenError(message, line)`; `codegen.ts` keeps a module-level `currentLine` that
+`generateProgram` resets and that the component, each member, `stmtToJs`, `generateViewBlock` and
+`templateNodeToJs` set on entry, and `unsupported()`/`compileError()` read. A parent resets it after
+generating children before it reports its own error (the ForC clauses, the else-block check), and
+`DoWhile`, `TemplateIf` and `TemplateFor` compute their own expressions before their children, so the
+line is the parent's. The granularity is the node, not the expression: an error inside a multi-line
+expression reports the line of its statement or element. `FileBuildResult` has `line: number | null`
+(null for unparsed files and for importers skipped because something they import was not built);
+`crescent build` prints `file:line: codegen skipped: reason`, `npm start` adds `(line N)`, and the
+web preview's skipped list prefixes `line N: `.
+
+Tests: 446 pass (was 430). New `test-codegen-error-lines.js` (16 checks, wired into `npm test` after
+`test-error-locations.js` and named in the README): every codegen error site with its exact line
+(including a derived assignment on the second of two statements, one nested in an `if`, one in
+`on_change`, an empty `if` nested two elements deep, an `else` block reached after its sibling's
+children were generated), no state left over after a failure, the failing component's line when an
+earlier one succeeded, and `buildProject()` plus `crescent build` end to end with a for-loop update
+that expands to several statements. 15 of the 16 fail against the old `src/` (the 16th is the
+no-leftover-state control).
+
+Not done: a file still reports only its first syntax error. The README says where `CodegenError` gets
+its line and what its granularity is.
+
+Before that:
+
 Made a parse error per-file instead of fatal for the whole project (the "Still open" half of the previous
 task, under "Establish a clear distinction between parser, semantic, and codegen errors" in `TODO.md`,
 still `[~]`). Before, one `LexError`/`ParseError` aborted `checkProject()`: nothing else was reported or

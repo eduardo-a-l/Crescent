@@ -42,7 +42,8 @@ function rootComponentNames(program: AST.Program): string[] {
 }
 
 function describeSkipped(build: FileBuildResult): string {
-  return build.skippedReason ?? build.unexpectedError ?? 'unknown error';
+  const reason = build.skippedReason ?? build.unexpectedError ?? 'unknown error';
+  return build.line ? `line ${build.line}: ${reason}` : reason;
 }
 
 export async function buildPreviewHtml(root: string, outDir: string): Promise<BuildPreviewResult> {

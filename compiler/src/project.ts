@@ -62,6 +62,7 @@ export interface FileBuildResult {
   relPath: string;
   outFile: string | null;
   skippedReason: string | null;
+  line: number | null;
   unexpectedError: string | null;
 }
 
@@ -86,6 +87,7 @@ export function buildProject(root: string, outDir: string): BuildProjectResult {
   }
 
   const skipped = new Map<string, string>();
+  const skippedLines = new Map<string, number>();
   const unexpected = new Map<string, string>();
   const generated = new Map<string, string>();
 
@@ -118,6 +120,7 @@ export function buildProject(root: string, outDir: string): BuildProjectResult {
     } catch (e) {
       if (e instanceof CodegenError) {
         skipped.set(relPath, e.message);
+        if (e.line !== null && e.line > 0) skippedLines.set(relPath, e.line);
       } else {
         unexpected.set(relPath, (e as Error).message);
       }
@@ -143,32 +146,32 @@ export function buildProject(root: string, outDir: string): BuildProjectResult {
   }
 
   for (const relPath of check.unparsed) {
-    builds.push({ relPath, outFile: null, skippedReason: 'it has a syntax error', unexpectedError: null });
+    builds.push({ relPath, outFile: null, skippedReason: 'it has a syntax error', line: null, unexpectedError: null });
   }
 
   for (const relPath of check.files.keys()) {
     const reason = skipped.get(relPath);
     if (reason !== undefined) {
-      builds.push({ relPath, outFile: null, skippedReason: reason, unexpectedError: null });
+      builds.push({ relPath, outFile: null, skippedReason: reason, line: skippedLines.get(relPath) ?? null, unexpectedError: null });
       continue;
     }
     const failure = unexpected.get(relPath);
     if (failure !== undefined) {
-      builds.push({ relPath, outFile: null, skippedReason: null, unexpectedError: failure });
+      builds.push({ relPath, outFile: null, skippedReason: null, line: null, unexpectedError: failure });
       continue;
     }
     const blocker = blockedBy.get(relPath);
     if (blocker !== undefined) {
-      builds.push({ relPath, outFile: null, skippedReason: `'${blocker}', which it imports, was not built`, unexpectedError: null });
+      builds.push({ relPath, outFile: null, skippedReason: `'${blocker}', which it imports, was not built`, line: null, unexpectedError: null });
       continue;
     }
     try {
       const outFile = path.join(genDir, relPath.replace(/\.crs$/, '.js'));
       fs.mkdirSync(path.dirname(outFile), { recursive: true });
       fs.writeFileSync(outFile, generated.get(relPath)!, 'utf-8');
-      builds.push({ relPath, outFile, skippedReason: null, unexpectedError: null });
+      builds.push({ relPath, outFile, skippedReason: null, line: null, unexpectedError: null });
     } catch (e) {
-      builds.push({ relPath, outFile: null, skippedReason: null, unexpectedError: (e as Error).message });
+      builds.push({ relPath, outFile: null, skippedReason: null, line: null, unexpectedError: (e as Error).message });
     }
   }
 

@@ -53,7 +53,7 @@ function reportBuild(result: BuildProjectResult): number {
       console.error(`FAILED: ${build.relPath}: ${build.unexpectedError}`);
       hadUnexpected = true;
     } else if (build.skippedReason) {
-      console.log(`${build.relPath}: codegen skipped: ${build.skippedReason}`);
+      console.log(`${build.line ? `${build.relPath}:${build.line}` : build.relPath}: codegen skipped: ${build.skippedReason}`);
     }
   }
 

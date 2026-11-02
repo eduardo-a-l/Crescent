@@ -49,6 +49,6 @@ for (const [relPath, file] of result.check.files) {
     console.error(`FAILED: ${build.unexpectedError}`);
     process.exitCode = 1;
   } else if (build?.skippedReason) {
-    console.log(`Codegen skipped: ${build.skippedReason}`);
+    console.log(`Codegen skipped${build.line ? ` (line ${build.line})` : ''}: ${build.skippedReason}`);
   }
 }

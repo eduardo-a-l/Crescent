@@ -25,15 +25,18 @@
 - [x] Example programs
 - [x] Automated tests
 - [ ] Establish consistent compiler error output
-- [~] Establish a clear distinction between parser, semantic, and codegen errors — `LexError` and
-  `ParseError` carry a `line` (and the `file`, once caught) and `checkProject()` turns each into an
-  ordinary error diagnostic on its own file, so a syntax error in one file no longer hides the rest:
-  the other files are checked and built, every unparsed file is reported (not only the first), and a
-  `use` of one is an error on the `use` line; `fatal` and `FatalDiagnostic` are gone and `ok` now
-  means "every file parsed". Errors inside string and style interpolations report the line in the
-  file instead of line 1, and an unterminated string is reported where it began. Still open:
-  `CodegenError` has no line (it names only the file it skipped), and a file reports only its first
-  syntax error
+- [x] Establish a clear distinction between parser, semantic, and codegen errors — every stage now
+  reports a file and a line, and none of them stops the others. `LexError`/`ParseError` carry `line`
+  (and `file`) and become an ordinary error diagnostic on their file, so a syntax error in one file no
+  longer hides the rest: the other files are checked and built, every unparsed file is reported, and a
+  `use` of one is an error on the `use` line (`fatal`/`FatalDiagnostic` are gone; `ok` means "every
+  file parsed"). `CodegenError` carries the line of the component, member, statement or template
+  node being generated, kept as `FileBuildResult.line` and printed as `file:line: codegen skipped: …`.
+  Errors inside string and style interpolations report the line in the file, not 1, and an
+  unterminated string is reported where it began. The README's "Pipeline and errors" table documents
+  the result
+- [ ] Recover from a syntax error inside a file so that more than the first one is reported (the
+  parser stops at the first `ParseError`; every other file is already reported independently)
 - [x] Improve compiler README so its description matches the current implementation — rewritten
   where it had drifted: a new "Pipeline and errors" overview (which stage owns which error class and
   what happens to it), a Structure section covering `narrowing.ts`, `references.ts`, `cli.ts`,
