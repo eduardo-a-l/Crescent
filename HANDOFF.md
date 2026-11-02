@@ -7,13 +7,54 @@
 
 ## Current State
 
-**Branch:** `feature/codegen-error-lines` (off `develop` at `e0bc98e`)
+**Branch:** `feature/parser-recovery` (off `develop` at `24fb804`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Parser error recovery: a file now reports every syntax error the parser can recover from, not only the
+first (the open item the previous task left; `[x]` in `TODO.md`, with three follow-ups added).
+
+Design: `parseCrescent()` is unchanged (throws the first error; no recovery cost). New
+`parseCrescentRecovering(source)` returns `{ program, errors }` (`program` is `null` whenever there are
+errors). Recovery points, all in `parser.ts`: statements (`parseBlock`), component members, top-level
+declarations. After an error `recoverFrom()` records it and `synchronize()` skips to the next `;`, or
+past the `}` that closes the damaged item, using absolute brace depth (`braceDepth`) and
+paren-and-bracket depth (`parenDepth`) kept in `advance()` and saved and restored by `snapshot()`/
+`restore()` (so backtracking stays correct). The paren depth is compared against its value at the start
+of the failed item, which is what keeps a `for (a; b; c)` header from being cut at its first `;`.
+Guards: at most `MAX_SYNTAX_ERRORS` (20); recovery aborts (`RecoveryAbort`, internal) at the end of
+the file, when skipping made no progress, in a `style` block (raw text, no tokens: `inRaw`), and a
+`LexError` ends the list; an error on the same line as the previous one is skipped (the first is
+never skipped, so the first error always equals what `parseCrescent()` throws). The style block
+decrements `braceDepth` itself because it reads its closing `}` as raw text.
+
+Project: `loadAllProgramsLenient()` uses it; `failures` is now `Map<string, SyntaxFailure[]>` and
+`checkProject()` makes one error diagnostic per syntax error (`loadAllPrograms()` still throws the first).
+
+Measured before settling on the same-line rule: for a single inserted `;` or `)` anywhere in an
+example, 72% and 93% of inputs gave one error; with the rule and bracket counting, 98.5% and 98.3%.
+Deleting a `{` or `}` still gives follow-on errors (the structure really changes); that is accepted.
+
+Tests: `test-parser-recovery.js` (30 checks, in `npm test` after `test-codegen-error-lines.js`, named
+in the README): exact error lists for 17 situations, valid input unchanged, the cap, a differential
+over 8000 mutated example programs (the first recovered error equals the thrown one; valid inputs give
+the same tree; 0 mismatches), a quality guard (at least 90% single-error for a stray `;` or `)`), token
+soup, and `checkProject()`/`crescent check` end to end. The fuzzer harness has a `recovery` stage
+(seeds 21-23 at 3000 iterations and seed 24 `deep` found nothing). `bench:compare`: no stage more than
+2x slower than the baseline. `npm test` is green apart from one random failure of the existing scaling
+guard in `test-bench.js` (`members` ratio 8.8); I ran it 6 times on this code and 6 on the previous
+`develop` code and both give ratios between 3.4 and 7.6, so it is noise that was already there (new
+`TODO.md` item).
+
+Not done, in `TODO.md`: recovery inside a `view` block (one error per view today) and after an error
+in a `style` block (ends the list). README has a new "Syntax error recovery" section; the grammar
+spec's §11 and §11.8 were updated.
+
+Before that:
+
 Gave `CodegenError` a line, which closes "Establish a clear distinction between parser, semantic, and
 codegen errors" in `TODO.md` (now `[x]`; the leftover, recovering inside a file so more than the first
 syntax error is reported, is a new open item).

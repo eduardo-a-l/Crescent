@@ -572,8 +572,8 @@ file is unaffected, since it emits no `require` for it.
 Every error belongs to a file: it is reported next to that file's other diagnostics, a file with an
 error is not emitted, and the rest of the project is still checked and, where it does not depend on
 a file that was skipped, built (§11.6). A file that fails to parse has no syntax tree, so it is
-reported with the one error that stopped the parser (a file reports only its first syntax error) and
-is left out of the project: a `use` of it is an error on the `use` line, whatever it names, because
+reported with every syntax error the parser could recover from (after an error it skips to the next
+`;` or closing `}`, up to 20 errors; §11.8 gives the limits of that) and is left out of the project: a `use` of it is an error on the `use` line, whatever it names, because
 what it defines is unknown, and the follow-on errors for those names are silenced as for any failed
 import. Every file that fails to parse is reported, not only the first one found.
 
@@ -594,7 +594,8 @@ depend on the length of the chain.
 ### 11.8 Known limitations
 
 - There are no re-exports, so a name has to be imported from the file that declares it.
-- A file reports only its first syntax error, because the parser does not recover inside a file.
+- Recovery after a syntax error works at statement, member and declaration level only; it does not
+  go inside a `view` block, and a lex error or an error in a `style` block ends the list.
 - There is no wildcard import and no import path that starts at the project root.
 - A file whose name is not an identifier cannot be imported.
 - Whether a name is used is judged by its spelling, so an unrelated identifier with the same name

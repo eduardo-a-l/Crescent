@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as AST from './ast';
 import { LexError } from './lexer';
-import { parseCrescent, ParseError } from './parser';
+import { parseCrescentRecovering, ParseError } from './parser';
 
 export class ModuleError extends Error {
   file: string | null;
@@ -24,12 +24,12 @@ export type SyntaxFailure = LexError | ParseError;
 
 export interface LoadedProject {
   files: Map<string, LoadedFile>;
-  failures: Map<string, SyntaxFailure>;
+  failures: Map<string, SyntaxFailure[]>;
 }
 
 export function loadAllProgramsLenient(rootDir: string): LoadedProject {
   const files = new Map<string, LoadedFile>();
-  const failures = new Map<string, SyntaxFailure>();
+  const failures = new Map<string, SyntaxFailure[]>();
 
   function walk(dir: string): void {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -40,16 +40,12 @@ export function loadAllProgramsLenient(rootDir: string): LoadedProject {
       } else if (entry.name.endsWith('.crs')) {
         const relPath = path.relative(rootDir, full).split(path.sep).join('/');
         const source = fs.readFileSync(full, 'utf-8');
-        try {
-          const program = parseCrescent(source);
-          files.set(relPath, { relPath, program });
-        } catch (e) {
-          if (e instanceof LexError || e instanceof ParseError) {
-            e.file = relPath;
-            failures.set(relPath, e);
-          } else {
-            throw e;
-          }
+        const outcome = parseCrescentRecovering(source);
+        if (outcome.program) {
+          files.set(relPath, { relPath, program: outcome.program });
+        } else {
+          for (const e of outcome.errors) e.file = relPath;
+          failures.set(relPath, outcome.errors);
         }
       }
     }
@@ -61,7 +57,7 @@ export function loadAllProgramsLenient(rootDir: string): LoadedProject {
 
 export function loadAllPrograms(rootDir: string): Map<string, LoadedFile> {
   const { files, failures } = loadAllProgramsLenient(rootDir);
-  for (const failure of failures.values()) throw failure;
+  for (const list of failures.values()) throw list[0];
   return files;
 }
 

@@ -12,7 +12,7 @@ of them:
 
 | Stage | What it does | What goes wrong, and what happens |
 |---|---|---|
-| Lex and parse, every file | `parseCrescent()` turns source into an AST | `LexError` or `ParseError`, thrown on the first problem in a file. **Per file**: `checkProject()` turns it into an error on that file (with its line), leaves the file out of the project, and carries on with the others. A `use` of it is an error on the `use` line |
+| Lex and parse, every file | `parseCrescent()` turns source into an AST | `LexError` or `ParseError`: `parseCrescent()` throws on the first problem in a file, while `parseCrescentRecovering()` (what the project loader uses) skips the damaged statement, member or declaration and goes on, returning up to 20 errors. **Per file**: `checkProject()` turns it into an error on that file (with its line), leaves the file out of the project, and carries on with the others. A `use` of it is an error on the `use` line |
 | Resolve imports | `resolveFileImportsLenient()` binds each `use`; `findCycles()` finds import cycles | A diagnostic on the `use` line (missing module or item, `super` above the root, a cycle). **Per file**: collected, never fatal |
 | Check, every file | `checkFile()` | Diagnostics (error or warning) collected per file. A file with an error is not emitted |
 | Codegen, every file without errors | `generateProgram()` | `CodegenError` for something not yet supported. That file is skipped, with the reason and the line it was found on |
@@ -41,7 +41,8 @@ nothing but those three (see "Robustness" below).
 - `src/ast.ts` — AST node type definitions
 - `src/parser.ts` — the recursive-descent parser: classifies identifier-led statements by
   lookahead, enforces the nesting limits of the spec's §12, and rejects syntax trees deeper than
-  1000 levels
+  1000 levels. `parseCrescentRecovering()` reports several syntax errors per file (see "Syntax
+  error recovery" below)
 - `src/modules.ts` — project discovery (every `.crs` under the root except hidden entries and
   `node_modules`), `use` resolution that collects its problems (`resolveFileImportsLenient()`; the
   throwing `resolveFileImports()` and `detectCycles()` are thin wrappers), iterative cycle finding,
@@ -79,7 +80,7 @@ nothing but those three (see "Robustness" below).
   `test-array-mutators-native.js`); modules (`test-modules.js`, `test-missing-import.js`,
   `test-circular-import.js`, `test-import-conflicts.js`, `test-unused-imports.js`,
   `test-module-diagnostics.js`, `test-module-recovery.js`, `test-module-semantics.js`,
-  `test-module-discovery.js`, `test-module-graphs.js`); error locations (`test-error-locations.js`, `test-codegen-error-lines.js`); the runtime and generated code in `jsdom`
+  `test-module-discovery.js`, `test-module-graphs.js`); error locations and recovery (`test-error-locations.js`, `test-codegen-error-lines.js`, `test-parser-recovery.js`); the runtime and generated code in `jsdom`
   (`test-counter.js`, `test-day-picker.js`, `test-theme-toggle.js`, `test-composition.js`,
   `test-reactive-list.js`, `test-keyed-list.js`, `test-effect-disposal.js`,
   `test-provide-inject.js`, `test-multi-root.js`, `test-derived-lifecycle.js`, `test-web.js`,
@@ -523,6 +524,34 @@ statements, types and template nodes, and a syntax tree 1000 levels deep, which 
 chain of operators, member accesses, calls or index operations can be. `parseCrescent()` also turns
 any stack overflow it still meets into a `ParseError`.
 
+## Syntax error recovery
+
+`parseCrescent()` stops at the first problem and throws it. `parseCrescentRecovering()` returns
+`{ program, errors }` instead: after an error it skips ahead to a point where parsing can safely go
+on, and reports the next problem it finds. It recovers at three levels: a statement inside a block,
+a member of a component, and a top-level declaration. Skipping to a safe point means going on to the
+next `;` or the `}` that closes the damaged item, at the same brace depth and outside any
+parentheses or brackets, so a `for (a; b; c)` header is skipped whole.
+
+Rules that keep the list useful instead of long:
+
+- The first error is always the one `parseCrescent()` throws; a file that parses gives the same
+  tree and no errors from both.
+- A second error on the line of the previous one is not reported (an inserted `;` that splits a
+  statement in two gives one error, not two).
+- At most 20 errors are reported, and recovery gives up when skipping makes no progress or reaches
+  the end of the file.
+- A lex error, or an error inside a `style` block (which is read as raw text, not as tokens), ends the
+  list, keeping the errors found before it.
+- The whole `view` block is one recovery unit, so a bad template node is one error per view, not one
+  per node.
+- With no syntax tree, `program` is `null` whenever there are errors; the file is not checked or built.
+
+`test-parser-recovery.js` holds the exact expectations, a differential test against `parseCrescent()`
+on mutated examples, and a guard that a stray `;` or `)` gives exactly one error at least 90% of the
+time (about 98% today). A deleted brace changes the structure of the file, and does produce
+follow-on errors.
+
 ## What's deliberately not here yet
 
 - A semantic checker exists (`src/checker.ts`, see "Semantic Checker" above), but it does not do
@@ -530,7 +559,7 @@ any stack overflow it still meets into a `ParseError`.
   boundary.
 - No `Selector`/CSS-property validation — style selectors and raw property values are captured as
   opaque strings; only the `{expr}` interpolations are actually parsed.
-- A file reports only its first syntax error, since the parser does not recover; `CodegenError` is
+- Recovery does not go inside a `view` block, and a deleted brace can still cause follow-on errors; `CodegenError` is
   fail-fast per file. Module errors and semantic diagnostics are collected per file.
 - The checker is quadratic in the number of members times functions of a single component (see
   "Benchmarks"); nothing realistic reaches it.

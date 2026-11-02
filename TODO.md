@@ -35,8 +35,17 @@
   Errors inside string and style interpolations report the line in the file, not 1, and an
   unterminated string is reported where it began. The README's "Pipeline and errors" table documents
   the result
-- [ ] Recover from a syntax error inside a file so that more than the first one is reported (the
-  parser stops at the first `ParseError`; every other file is already reported independently)
+- [x] Recover from a syntax error inside a file so that more than the first one is reported —
+  `parseCrescentRecovering()` skips the damaged statement, component member or top-level declaration
+  and goes on (up to 20 errors; the first is always the one `parseCrescent()` throws; a second error on
+  the same line is not reported); the project loader uses it, so each syntax error is its own
+  diagnostic. A stray `;` or `)` gives exactly one error in about 98% of cases. `test-parser-recovery.js`
+  and a recovery stage in the fuzzer cover it
+- [ ] Recover inside a `view` block, so a bad template node is one error per node and not one per
+  view (needs sync points at node starts: `<`, `if`, `for`, a string, `{`)
+- [ ] Recover after an error in a `style` block (it is read as raw text, so today it ends the list)
+- [ ] Make the benchmark scaling guard less noisy (`test-bench.js`: the ratio for `members` ranged from
+  3.4 to 8.8 over repeated runs on the same code, so it fails now and then at random)
 - [x] Improve compiler README so its description matches the current implementation — rewritten
   where it had drifted: a new "Pipeline and errors" overview (which stage owns which error class and
   what happens to it), a Structure section covering `narrowing.ts`, `references.ts`, `cli.ts`,

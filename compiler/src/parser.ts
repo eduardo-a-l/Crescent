@@ -1,4 +1,4 @@
-import { Lexer } from './lexer';
+import { Lexer, LexError } from './lexer';
 import { Token, TokenType, PRIMITIVE_TYPE_TOKENS } from './tokens';
 import * as AST from './ast';
 
@@ -15,7 +15,13 @@ export class ParseError extends Error {
 interface Snapshot {
   pos: number;
   line: number;
+  braces: number;
+  parens: number;
 }
+
+class RecoveryAbort extends Error {}
+
+export const MAX_SYNTAX_ERRORS = 20;
 
 export const parseStats = { backtracks: 0 };
 
@@ -26,6 +32,11 @@ export class Parser {
   private lexer: Lexer;
   private current: Token;
   private depth: number;
+  private braceDepth = 0;
+  private parenDepth = 0;
+  private recovering = false;
+  private inRaw = false;
+  errors: ParseError[] = [];
 
   constructor(source: string, depth: number = 0, startLine: number = 1) {
     this.depth = depth;
@@ -46,7 +57,7 @@ export class Parser {
   }
 
   private snapshot(): Snapshot {
-    return { pos: this.current.start, line: this.lexer.lineBefore(this.current.start) };
+    return { pos: this.current.start, line: this.lexer.lineBefore(this.current.start), braces: this.braceDepth, parens: this.parenDepth };
   }
 
   private backtrack(snap: Snapshot): void {
@@ -56,6 +67,8 @@ export class Parser {
 
   private restore(snap: Snapshot): void {
     this.lexer.setPos(snap.pos, snap.line);
+    this.braceDepth = snap.braces;
+    this.parenDepth = snap.parens;
     this.current = this.lexer.nextToken();
   }
 
@@ -69,8 +82,36 @@ export class Parser {
 
   private advance(): Token {
     const prev = this.current;
+    if (prev.type === 'LBRACE') this.braceDepth += 1;
+    else if (prev.type === 'RBRACE' && this.braceDepth > 0) this.braceDepth -= 1;
+    else if (prev.type === 'LPAREN' || prev.type === 'LBRACKET') this.parenDepth += 1;
+    else if ((prev.type === 'RPAREN' || prev.type === 'RBRACKET') && this.parenDepth > 0) this.parenDepth -= 1;
     this.current = this.lexer.nextToken();
     return prev;
+  }
+
+  enableRecovery(): void {
+    this.recovering = true;
+  }
+
+  private recoverFrom(e: unknown, blockDepth: number, topLevel: boolean, itemStart: number, itemParens: number): void {
+    if (!this.recovering || !(e instanceof ParseError)) throw e;
+    const previous = this.errors[this.errors.length - 1];
+    if (!previous || previous.line === null || previous.line !== e.line) this.errors.push(e);
+    if (this.inRaw || this.errors.length >= MAX_SYNTAX_ERRORS) throw new RecoveryAbort();
+    this.synchronize(blockDepth, topLevel, itemParens);
+    if (this.check('EOF') || this.current.start === itemStart) throw new RecoveryAbort();
+  }
+
+  private synchronize(blockDepth: number, topLevel: boolean, itemParens: number): void {
+    while (!this.check('EOF')) {
+      if (!topLevel && this.braceDepth === blockDepth && this.check('RBRACE')) return;
+      if (topLevel && this.braceDepth === 0 && this.checkAny(['COMPONENT', 'STRUCT', 'USE'])) return;
+      const consumed = this.advance();
+      if (consumed.type === 'SEMI' && this.parenDepth <= itemParens && this.braceDepth === blockDepth) return;
+      if (consumed.type === 'RBRACE' && this.braceDepth === blockDepth) return;
+      if (this.braceDepth < blockDepth) return;
+    }
   }
 
   private expect(type: TokenType, message?: string): Token {
@@ -91,7 +132,13 @@ export class Parser {
   parseProgram(): AST.Program {
     const declarations: AST.TopLevelDecl[] = [];
     while (!this.check('EOF')) {
-      declarations.push(this.parseTopLevelDecl());
+      const itemStart = this.current.start;
+      const itemParens = this.parenDepth;
+      try {
+        declarations.push(this.parseTopLevelDecl());
+      } catch (e) {
+        this.recoverFrom(e, 0, true, itemStart, itemParens);
+      }
     }
     return { kind: 'Program', declarations };
   }
@@ -183,8 +230,16 @@ export class Parser {
     }
     this.expect('LBRACE');
     const members: AST.ComponentMember[] = [];
+    const memberDepth = this.braceDepth;
     while (!this.check('RBRACE')) {
-      members.push(this.parseComponentMember());
+      const itemStart = this.current.start;
+      const itemParens = this.parenDepth;
+      try {
+        members.push(this.parseComponentMember());
+      } catch (e) {
+        this.recoverFrom(e, memberDepth, false, itemStart, itemParens);
+        if (this.braceDepth < memberDepth) return { kind: 'ComponentDecl', name, params, members , line: 0 };
+      }
     }
     this.expect('RBRACE');
     return { kind: 'ComponentDecl', name, params, members , line: 0 };
@@ -379,8 +434,16 @@ export class Parser {
   private parseBlock(): AST.Stmt[] {
     this.expect('LBRACE');
     const stmts: AST.Stmt[] = [];
+    const blockDepth = this.braceDepth;
     while (!this.check('RBRACE')) {
-      stmts.push(this.parseStatement());
+      const itemStart = this.current.start;
+      const itemParens = this.parenDepth;
+      try {
+        stmts.push(this.parseStatement());
+      } catch (e) {
+        this.recoverFrom(e, blockDepth, false, itemStart, itemParens);
+        if (this.braceDepth < blockDepth) return stmts;
+      }
     }
     this.expect('RBRACE');
     return stmts;
@@ -956,6 +1019,7 @@ export class Parser {
   private parseStyleBlockDecl(): AST.StyleBlockDecl {
     this.expect('STYLE');
     this.expect('LBRACE');
+    this.inRaw = true;
     this.lexer.setPos(this.current.start, this.lexer.lineBefore(this.current.start));
     const rules: AST.StyleRule[] = [];
     while (true) {
@@ -967,6 +1031,8 @@ export class Parser {
       }
       rules.push(this.parseStyleRule());
     }
+    this.inRaw = false;
+    this.braceDepth -= 1;
     this.current = this.lexer.nextToken();
     return { kind: 'StyleBlockDecl', rules , line: 0 };
   }
@@ -1040,6 +1106,46 @@ function assertAstDepth(program: AST.Program): void {
     }
     for (const key of Object.keys(obj)) stack.push({ node: obj[key], depth: next });
   }
+}
+
+export interface ParseOutcome {
+  program: AST.Program | null;
+  errors: Array<ParseError | LexError>;
+}
+
+export function parseCrescentRecovering(source: string): ParseOutcome {
+  const errors: Array<ParseError | LexError> = [];
+  let parser: Parser;
+  try {
+    parser = new Parser(source);
+  } catch (e) {
+    if (e instanceof LexError) return { program: null, errors: [e] };
+    throw e;
+  }
+  parser.enableRecovery();
+  let program: AST.Program | null = null;
+  try {
+    program = parser.parseProgram();
+  } catch (e) {
+    if (e instanceof RecoveryAbort) {
+      program = null;
+    } else if (e instanceof ParseError || e instanceof LexError) {
+      errors.push(e);
+    } else if (e instanceof RangeError) {
+      errors.push(new ParseError('The program is nested too deeply to parse'));
+    } else {
+      throw e;
+    }
+  }
+  errors.unshift(...parser.errors);
+  if (errors.length > 0) return { program: null, errors };
+  try {
+    assertAstDepth(program!);
+  } catch (e) {
+    if (e instanceof ParseError) return { program: null, errors: [e] };
+    throw e;
+  }
+  return { program, errors };
 }
 
 export function parseCrescent(source: string): AST.Program {

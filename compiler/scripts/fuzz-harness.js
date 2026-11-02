@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
-const { parseCrescent } = require(path.join(root, 'dist', 'parser.js'));
+const { parseCrescent, parseCrescentRecovering, MAX_SYNTAX_ERRORS } = require(path.join(root, 'dist', 'parser.js'));
 const { LexError } = require(path.join(root, 'dist', 'lexer.js'));
 const { ParseError } = require(path.join(root, 'dist', 'parser.js'));
 const { CodegenError, generateProgram } = require(path.join(root, 'dist', 'codegen.js'));
@@ -139,8 +139,20 @@ function runPipeline(source) {
   try {
     program = parseCrescent(source);
   } catch (e) {
-    if (e instanceof LexError || e instanceof ParseError) return { controlled: true };
-    return { crash: { stage: 'parse', error: e } };
+    if (!(e instanceof LexError || e instanceof ParseError)) return { crash: { stage: 'parse', error: e } };
+    try {
+      const outcome = parseCrescentRecovering(source);
+      const first = outcome.errors[0];
+      if (outcome.program !== null || outcome.errors.length === 0 || outcome.errors.length > MAX_SYNTAX_ERRORS) {
+        return { crash: { stage: 'recovery', error: new Error('inconsistent recovery outcome') } };
+      }
+      if (first.constructor !== e.constructor || first.message !== e.message || first.line !== e.line) {
+        return { crash: { stage: 'recovery', error: new Error('first recovered error differs from the thrown one') } };
+      }
+    } catch (recoveryError) {
+      return { crash: { stage: 'recovery', error: recoveryError } };
+    }
+    return { controlled: true };
   }
 
   const file = { relPath: 'fuzz.crs', program };

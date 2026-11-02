@@ -49,10 +49,11 @@ export function checkProject(root: string): CheckProjectResult {
     diagnosticsByFile.set(relPath, [...moduleDiagnostics, ...checked]);
   }
 
-  for (const [relPath, failure] of failures) {
-    diagnosticsByFile.set(relPath, [
-      { severity: 'error', message: failure.message, where: `file '${relPath}'`, line: failure.line ?? 0 },
-    ]);
+  for (const [relPath, list] of failures) {
+    diagnosticsByFile.set(
+      relPath,
+      list.map((failure) => ({ severity: 'error' as const, message: failure.message, where: `file '${relPath}'`, line: failure.line ?? 0 }))
+    );
   }
 
   return { ok: failures.size === 0, files, unparsed: Array.from(failures.keys()), importsByFile, diagnosticsByFile };
