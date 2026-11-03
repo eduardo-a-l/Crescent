@@ -290,6 +290,18 @@ For the full compiler/codegen test suite:
 npm test
 ```
 
+When a change touches what the editors and web projects consume (the result shapes of `checkProject()`,
+`buildProject()`, `buildPreviewHtml()` and the parser, the error classes, the generated output), also run
+the tests of those projects, because `npm test` in `compiler/` does not run them. Build the compiler
+first, then in `crescent-web/` and in `playground/`:
+
+```
+npm install
+npm test
+```
+
+CI runs both, and `crescent-web/` also runs `npm run build`, which is what Vercel runs.
+
 For compiler execution:
 
 ```

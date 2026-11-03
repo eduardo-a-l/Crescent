@@ -110,7 +110,7 @@ async function testBrokenCodeShowsDiagnosticsThroughRealUI() {
   assert(diagnosticsEl.children.length > 0, 'a syntax error produces at least one diagnostic entry in the real UI, not a silent failure');
   assert(
     diagnosticsEl.textContent.length > 0 && !diagnosticsEl.textContent.includes('undefined'),
-    `the fatal error message is real text, not an "undefined" leaking through, got ${JSON.stringify(diagnosticsEl.textContent)}`
+    `the syntax error message is real text, not an "undefined" leaking through, got ${JSON.stringify(diagnosticsEl.textContent)}`
   );
 
   dom.window.close();

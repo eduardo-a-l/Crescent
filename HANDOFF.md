@@ -7,13 +7,45 @@
 
 ## Current State
 
-**Branch:** `feature/versioning` (off `develop` at `9999a11`)
+**Branch:** `feature/web-tests-and-ci` (off `develop` at `3e39b3c`)
 
 **Current phase:** v0.x compiler development
 
-**Active area:** Project process / documentation
+**Active area:** Web projects / CI
 
 **Current task:**
+The owner asked whether the Vercel site (`crescent-lang.vercel.app`, deployed from `develop`) could
+break from my recent work. I checked instead of assuming, and found a real gap on my side.
+
+Deployment: it is not broken. Verified here: the documented build (compiler `npm install && npm run
+build`, then `crescent-web` `npm run build` = `tsc` + `vite build`) passes, also from a clean clone with
+no `node_modules` or `dist`; no dependency or build step changed; the site responds. The only API change
+the web code could see is the removed `fatal` field, and the front end (`src/` and `public/app/app.js`)
+reads `result.error`, `result.diagnostics` and `result.html`, not `fatal`. Behavior for a user is the
+same in substance: the playground has a Run button; a syntax error used to show the message and the
+preview "Nothing to preview", and now shows `[error] line N: message` and the "Skipped files" notice.
+What I could not see: the Vercel project settings, or the API of the live site (no network access to it
+from here beyond fetching the page).
+
+The gap: `crescent-web` and `playground` have their own tests (`npm test` in each), which I had never
+run, and CI only ran `compiler/`'s. Both `scripts/test-compile.js` copies still asserted the old
+`fatal` string, so one check failed in each (44 passed, 1 failed). Fixed: the assertion now expects an
+error diagnostic with its line, no `fatal`, and the "Skipped files" notice; a new check sends a source
+with two syntax errors and expects both back (lines 3 and 4), which exercises recovery through the
+web API. Both suites pass (59 each, was 44 + 1 failure). New CI job `web` (matrix `crescent-web`,
+`playground`; `PUPPETEER_SKIP_DOWNLOAD=1`): build the compiler, install, `npm test`, and for
+`crescent-web` `npm run build`. I could not run GitHub Actions; I validated the YAML and ran the same
+steps from a fresh clone (all pass). `AGENTS.md` §12 now says to run those tests when a change touches
+what the web projects and editors consume.
+
+Not done / for the owner: the VS Code extension has no automated tests here (I changed two branches in
+`extension.js` earlier and only syntax-checked it). Suggested, not done: let `main` be the Vercel
+production branch once the first release exists, with `develop` as a preview deployment, so the domain
+only changes on a release; the current setup redeploys on every push to `develop`, including
+documentation-only commits.
+
+Before that:
+
 Documented release and versioning strategy (`TODO.md` item now `[x]`). The owner had no preference and
 described two ideas: the usual `1.21.3` and a two-part `21.3` (feature, then fix). I chose and
 documented the scheme; nothing is tagged, so it is cheap to change.

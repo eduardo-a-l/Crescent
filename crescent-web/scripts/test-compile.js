@@ -37,11 +37,13 @@ const NULLABLE_WARNING_SOURCE = `component Broken {
 
 const SYNTAX_ERROR_SOURCE = `component {{{ broken`;
 
+const MANY_SYNTAX_ERRORS_SOURCE = `component A {\n    void f() {\n        int a = ;\n        int b = ;\n    }\n}\n`;
+
 async function main() {
   const good = await compileToPreview(COUNTER_SOURCE);
   assert(
     good.ok === true,
-    `a valid component compiles to a preview, got ${JSON.stringify({ ok: good.ok, fatal: good.fatal, diagnostics: good.diagnostics })}`
+    `a valid component compiles to a preview, got ${JSON.stringify({ ok: good.ok, diagnostics: good.diagnostics })}`
   );
   assert(typeof good.html === 'string' && good.html.length > 0, 'a valid component produces non-empty preview HTML');
 
@@ -72,8 +74,25 @@ async function main() {
 
   const broken = await compileToPreview(SYNTAX_ERROR_SOURCE);
   assert(
-    broken.ok === false && typeof broken.fatal === 'string' && broken.fatal.length > 0,
-    `a syntax error surfaces as a fatal diagnostic instead of a crash, got ${JSON.stringify(broken)}`
+    broken.ok === false &&
+      !('fatal' in broken) &&
+      Array.isArray(broken.diagnostics) &&
+      broken.diagnostics.length === 1 &&
+      broken.diagnostics[0].severity === 'error' &&
+      broken.diagnostics[0].line === 1 &&
+      typeof broken.diagnostics[0].message === 'string' &&
+      broken.diagnostics[0].message.length > 0,
+    `a syntax error surfaces as an error diagnostic with its line instead of a crash, got ${JSON.stringify(broken.diagnostics)}`
+  );
+  assert(
+    typeof broken.html === 'string' && /Skipped files/.test(broken.html) && /syntax error/.test(broken.html),
+    'the preview page says the file was skipped because of a syntax error'
+  );
+
+  const twoErrors = await compileToPreview(MANY_SYNTAX_ERRORS_SOURCE);
+  assert(
+    twoErrors.ok === false && twoErrors.diagnostics.length === 2 && twoErrors.diagnostics.map((d) => d.line).join() === '3,4',
+    `every syntax error of the source is reported, not only the first, got ${JSON.stringify(twoErrors.diagnostics)}`
   );
 
   const empty = await compileToPreview('');
