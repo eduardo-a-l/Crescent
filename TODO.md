@@ -41,8 +41,13 @@
   the same line is not reported); the project loader uses it, so each syntax error is its own
   diagnostic. A stray `;` or `)` gives exactly one error in about 98% of cases. `test-parser-recovery.js`
   and a recovery stage in the fuzzer cover it
-- [ ] Recover inside a `view` block, so a bad template node is one error per node and not one per
-  view (needs sync points at node starts: `<`, `if`, `for`, a string, `{`)
+- [x] Recover inside a `view` block — a bad template node is now one error per node: node lists skip
+  to the next node at the same brace depth, a damaged element is skipped to its own closing tag
+  (counting nested tags), and a few repairs keep one mistake from becoming several errors (a garbled
+  or missing-`<` closing tag, an open tag without its `>`, a mismatch after an earlier error). In views:
+  a stray `;`/`)` or a deleted `<`/`>` gives exactly one error 98 to 100% of the time, and two separate
+  mistakes in one view are both found 91 to 97% of the time (about 0% before). An unbalanced `{`
+  in an attribute still cascades
 - [ ] Recover after an error in a `style` block (it is read as raw text, so today it ends the list)
 - [ ] Make the benchmark scaling guard less noisy (`test-bench.js`: the ratio for `members` ranged from
   3.4 to 8.8 over repeated runs on the same code, so it fails now and then at random)

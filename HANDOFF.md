@@ -7,13 +7,55 @@
 
 ## Current State
 
-**Branch:** `feature/parser-recovery` (off `develop` at `24fb804`)
+**Branch:** `feature/view-recovery` (off `develop` at `986f681`)
 
 **Current phase:** v0.x compiler development
 
 **Active area:** Compiler / language implementation
 
 **Current task:**
+Syntax-error recovery inside `view` blocks (the first follow-up of the previous task; `[x]` in
+`TODO.md`). Before, the whole view was one recovery unit: one error per view, however many were in it.
+
+Measured first, with two metrics, because precision alone is misleading when a whole view is one
+unit (it is trivially "one error"): precision (one mutation gives one error) and recall (two
+mutations at least 3 lines apart in the same view give two errors). Baseline: recall about 0%.
+
+Design (`parser.ts`): `parseTemplateList('braces' | 'tag')` is the single loop for the view body,
+the `if`/`else`/`for` bodies and element children; on an error it records it (`recordSyntaxError()`,
+split out of `recoverFrom()`) and `synchronizeTemplate()` skips to the next node start at the same
+`braceDepth` (a string, `if`, `for`, an opening tag), or to the end of the list. Elements nest by
+tags, so `parseElement()` catches its own errors with a `phase` (open/children/close) and
+`skipDamagedElement()` skips to the element's closing tag counting nested tags; it returns a
+placeholder `Element` so the parent goes on. Repairs found by looking at the actual cascades in the
+probe (each one measured): a mismatched closing tag is not consumed when it names an enclosing
+element (kept in `openTags`) and is consumed when it matches none (a typo in the name); `/p>` with
+its `<` missing closes the current element (`closeWithoutOpeningBracket()`/`closedInline`); an open
+tag without its `>` is dropped, without consuming the next opening tag; a mismatch or a stray
+closing tag after an earlier error in the same element or view (`viewErrorBase`) is not reported
+again. Outside recovery mode `recordSyntaxError()` rethrows at once, so `parseCrescent()` behaves
+exactly as before (the differential test covers it).
+
+Results: stray `;`/`)`/`]` in a view 97.7% single-error (was 100% only because of the one-error limit),
+deleted `<` 100%, deleted `>` 99.7%, deleted word 96%; recall of two separate mistakes 91% (stray `;`)
+and 96% (deleted `>`). An unbalanced `{` in an attribute (a deleted `{`) still cascades, which is the
+known deleted-brace class. A deleted quote gives a parse error and a real "unterminated string" lex
+error (quote parity flips), which is inherent.
+
+Tests: `test-parser-recovery.js` is now 49 checks (was 30): 13 exact view scenarios, 4 precision
+guards (at least 94% single-error inside views) and 2 recall guards (at least 75% for two mistakes);
+the differential over 8000 mutated programs still has 0 mismatches. `npm test` passes (495, was 476);
+the fuzzer (seeds 41-43 at 4000 iterations, seed 44 `deep`) found nothing. `bench:compare` flagged
+`members parseMs` (2.1 to 2.4x) on three runs along with other stages that changed from run to run,
+so I did an A/B against the previous `develop` build on the same machine (best of 40, interleaved,
+three rounds, four shapes): no difference (`members` 3.15-3.63 ms in both), so it was noise.
+
+Not done, in `TODO.md`: recovery after an error in a `style` block (it is raw text, so it still ends
+the list); the flaky scaling guard in `test-bench.js`. README, the grammar spec's §11.8 and the
+"Syntax error recovery" section were updated.
+
+Before that:
+
 Parser error recovery: a file now reports every syntax error the parser can recover from, not only the
 first (the open item the previous task left; `[x]` in `TODO.md`, with three follow-ups added).
 

@@ -47,6 +47,22 @@ expectErrors('a missing closing brace is reported where it shows up, plus one mo
 expectErrors('the end of the file inside a statement is one error', 'component A {\n    void f() {\n        int y = ', 'parse@3');
 expectErrors('an unterminated string is a lex error and the only one', base('    state<string> s = "abc;\n    void f() { int a = ; }'), 'lex@3');
 
+const viewOf = (body) => `component A {\n    state<int> n = 0;\n    state<int[]> xs = [1];\n    view {\n${body}\n    }\n}\n`;
+
+expectErrors('view: bad nodes on different lines are all reported', viewOf('        <p>{n +}</p>\n        <b>"ok"</b>\n        <i>{n *}</i>'), 'parse@5 parse@7');
+expectErrors('view: an open tag without its > does not swallow its siblings', viewOf('        <p class="a"\n        <b>"ok"</b>\n        <i>{n *}</i>'), 'parse@6 parse@7');
+expectErrors('view: a garbled closing tag name ends its element and the next error is found', viewOf('        <div>\n            <p>"a"</bu>\n            <b>{n +}</b>\n        </div>'), 'parse@6 parse@7');
+expectErrors('view: a closing tag without its < ends its element and the next error is found', viewOf('        <div>\n            <p>"a"/p>\n            <b>{n +}</b>\n        </div>'), 'parse@6 parse@7');
+expectErrors('view: a stray closing tag is one error and the next one is found', viewOf('        <p>"a"</p>\n        </div>\n        <b>{n +}</b>'), 'parse@6 parse@7');
+expectErrors('view: an element that is never closed is one error', viewOf('        <div>\n            <p>"a"</p>\n    '), 'parse@8');
+expectErrors('view: a closing tag of an enclosing element ends the unclosed one inside it', viewOf('        <div>\n            <p>"a"\n        </div>\n        <b>{n *}</b>'), 'parse@7 parse@8');
+expectErrors('view: a bad attribute expression and bad nodes around it', viewOf('        <p class={n +}>"a"</p>\n        <b>"ok"</b>\n        <i>{n *}</i>'), 'parse@5 parse@7');
+expectErrors('view: an error in an if header skips its body and else, the next node is checked', viewOf('        if (n > ) {\n            <p>"a"</p>\n        } else {\n            <b>"b"</b>\n        }\n        <i>{n *}</i>'), 'parse@5 parse@10');
+expectErrors('view: errors in the if body, the else body and a for body are all found', viewOf('        if (n > 0) {\n            <p>{n +}</p>\n            <b>{n *}</b>\n        } else {\n            <i>{n /}</i>\n        }\n        for (int x in xs key x) {\n            <u>{x +}</u>\n        }'), 'parse@6 parse@7 parse@9 parse@12');
+expectErrors('view: errors in nested elements are all found', viewOf('        <div>\n            <section>\n                <p>{n +}</p>\n            </section>\n            <p>{n *}</p>\n        </div>'), 'parse@7 parse@9');
+expectErrors('view: two errors on one line are one error', viewOf('        <p>{n +}</p><b>{n *}</b>'), 'parse@5');
+expectErrors('view: an error in the view and one in a member after it', 'component A {\n    state<int> n = 0;\n    view {\n        <p>{n +}</p>\n        <b>{n *}</b>\n    }\n    void f() { int a = ; }\n}\n', 'parse@4 parse@5 parse@7');
+
 const clean = parseCrescentRecovering(base('    void f() {\n        n = 2;\n    }'));
 assert(clean.errors.length === 0 && clean.program && JSON.stringify(clean.program) === JSON.stringify(parseCrescent(base('    void f() {\n        n = 2;\n    }'))), 'a valid program has no errors and the same tree as parseCrescent');
 
@@ -141,6 +157,90 @@ function singleErrorShare(edit) {
 for (const [label, token] of [['a stray semicolon', ';'], ['a stray closing parenthesis', ')']]) {
   const { invalid, share } = singleErrorShare((source, at) => source.slice(0, at) + token + source.slice(at));
   assert(share >= 0.9, `quality: ${label} inserted anywhere in an example gives exactly one error at least 90% of the time (${(share * 100).toFixed(1)}% of ${invalid})`);
+}
+
+function viewRanges(source) {
+  const ranges = [];
+  const pattern = /\bview\s*\{/g;
+  let match;
+  while ((match = pattern.exec(source))) {
+    let depth = 1;
+    let i = pattern.lastIndex;
+    while (i < source.length && depth > 0) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}') depth -= 1;
+      i += 1;
+    }
+    ranges.push([pattern.lastIndex, i - 1]);
+  }
+  return ranges;
+}
+
+function lineAt(source, index) {
+  return source.slice(0, index).split('\n').length;
+}
+
+function viewSingleErrorShare(edit) {
+  let invalid = 0;
+  let single = 0;
+  for (const source of sources) {
+    const ranges = viewRanges(source);
+    if (ranges.length === 0) continue;
+    for (let i = 0; i < 200; i++) {
+      const [lo, hi] = ranges[random(ranges.length)];
+      const edited = edit(source, lo + random(Math.max(1, hi - lo)));
+      if (edited === source) continue;
+      const outcome = parseCrescentRecovering(edited);
+      if (outcome.errors.length === 0) continue;
+      invalid += 1;
+      if (outcome.errors.length === 1) single += 1;
+    }
+  }
+  return { invalid, share: single / invalid };
+}
+
+const deleteNext = (char) => (source, at) => {
+  const index = source.indexOf(char, at);
+  return index < 0 ? source : source.slice(0, index) + source.slice(index + 1);
+};
+for (const [label, edit] of [
+  ['a stray semicolon', (source, at) => source.slice(0, at) + ';' + source.slice(at)],
+  ['a stray closing parenthesis', (source, at) => source.slice(0, at) + ')' + source.slice(at)],
+  ['a deleted <', deleteNext('<')],
+  ['a deleted >', deleteNext('>')],
+]) {
+  const { invalid, share } = viewSingleErrorShare(edit);
+  assert(share >= 0.94, `view quality: ${label} inside a view gives exactly one error at least 94% of the time (${(share * 100).toFixed(1)}% of ${invalid})`);
+}
+
+function viewPairRecall(edit) {
+  let pairs = 0;
+  let both = 0;
+  for (const source of sources) {
+    const ranges = viewRanges(source);
+    if (ranges.length === 0) continue;
+    for (let i = 0; i < 150; i++) {
+      const [lo, hi] = ranges[random(ranges.length)];
+      if (hi - lo < 200) continue;
+      let first = lo + random(hi - lo);
+      let second = lo + random(hi - lo);
+      if (Math.abs(lineAt(source, first) - lineAt(source, second)) < 3) continue;
+      if (first > second) [first, second] = [second, first];
+      const onlyFirst = edit(source, first);
+      const onlySecond = edit(source, second);
+      if (parseCrescentRecovering(onlyFirst).errors.length === 0 || parseCrescentRecovering(onlySecond).errors.length === 0) continue;
+      pairs += 1;
+      if (parseCrescentRecovering(edit(edit(source, second), first)).errors.length >= 2) both += 1;
+    }
+  }
+  return { pairs, share: both / pairs };
+}
+for (const [label, edit] of [
+  ['a stray semicolon', (source, at) => source.slice(0, at) + ';' + source.slice(at)],
+  ['a deleted >', deleteNext('>')],
+]) {
+  const { pairs, share } = viewPairRecall(edit);
+  assert(share >= 0.75, `view recall: two separate mistakes (${label}) in one view are both reported at least 75% of the time (${(share * 100).toFixed(1)}% of ${pairs})`);
 }
 
 const garbage = [];

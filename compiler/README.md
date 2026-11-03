@@ -528,8 +528,8 @@ any stack overflow it still meets into a `ParseError`.
 
 `parseCrescent()` stops at the first problem and throws it. `parseCrescentRecovering()` returns
 `{ program, errors }` instead: after an error it skips ahead to a point where parsing can safely go
-on, and reports the next problem it finds. It recovers at three levels: a statement inside a block,
-a member of a component, and a top-level declaration. Skipping to a safe point means going on to the
+on, and reports the next problem it finds. It recovers at four levels: a statement inside a block,
+a member of a component, a top-level declaration, and a node of a `view` block (see below). Skipping to a safe point means going on to the
 next `;` or the `}` that closes the damaged item, at the same brace depth and outside any
 parentheses or brackets, so a `for (a; b; c)` header is skipped whole.
 
@@ -543,14 +543,22 @@ Rules that keep the list useful instead of long:
   the end of the file.
 - A lex error, or an error inside a `style` block (which is read as raw text, not as tokens), ends the
   list, keeping the errors found before it.
-- The whole `view` block is one recovery unit, so a bad template node is one error per view, not one
-  per node.
+- Inside a `view` block a damaged node is skipped to the next node at the same brace depth (a string,
+  `if`, `for` or opening tag), so every bad node is reported. Elements nest by tags, not braces, so a
+  damaged element is skipped to its own closing tag, counting nested tags. A few repairs keep one
+  mistake from becoming several errors: a closing tag whose name matches no enclosing element ends
+  the current element (a typo in the name), while one that names an enclosing element is left for it
+  (the current element was never closed); `/p>` with its `<` missing closes the current element; an
+  open tag without its `>` is dropped when another tag follows; and a mismatch or stray closing tag
+  after an earlier error in the same element or view is not reported again.
 - With no syntax tree, `program` is `null` whenever there are errors; the file is not checked or built.
 
 `test-parser-recovery.js` holds the exact expectations, a differential test against `parseCrescent()`
-on mutated examples, and a guard that a stray `;` or `)` gives exactly one error at least 90% of the
-time (about 98% today). A deleted brace changes the structure of the file, and does produce
-follow-on errors.
+on mutated examples, and guards that a stray `;` or `)` gives exactly one error at least 90% of the
+time (about 98% today), that the same holds inside views for a stray `;`, `)`, or a deleted `<` or
+`>` (98 to 100%), and that two separate mistakes in one view are both reported at least 75% of the
+time (91 to 97%). A deleted brace, or an unbalanced `{` in an attribute, changes the structure of the
+file, and does produce follow-on errors.
 
 ## What's deliberately not here yet
 
@@ -559,7 +567,7 @@ follow-on errors.
   boundary.
 - No `Selector`/CSS-property validation — style selectors and raw property values are captured as
   opaque strings; only the `{expr}` interpolations are actually parsed.
-- Recovery does not go inside a `view` block, and a deleted brace can still cause follow-on errors; `CodegenError` is
+- A deleted or unbalanced brace can still cause follow-on errors; `CodegenError` is
   fail-fast per file. Module errors and semantic diagnostics are collected per file.
 - The checker is quadratic in the number of members times functions of a single component (see
   "Benchmarks"); nothing realistic reaches it.

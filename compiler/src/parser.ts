@@ -36,6 +36,9 @@ export class Parser {
   private parenDepth = 0;
   private recovering = false;
   private inRaw = false;
+  private openTags: string[] = [];
+  private closedInline = false;
+  private viewErrorBase = 0;
   errors: ParseError[] = [];
 
   constructor(source: string, depth: number = 0, startLine: number = 1) {
@@ -94,13 +97,123 @@ export class Parser {
     this.recovering = true;
   }
 
-  private recoverFrom(e: unknown, blockDepth: number, topLevel: boolean, itemStart: number, itemParens: number): void {
+  private recordSyntaxError(e: unknown): void {
     if (!this.recovering || !(e instanceof ParseError)) throw e;
     const previous = this.errors[this.errors.length - 1];
     if (!previous || previous.line === null || previous.line !== e.line) this.errors.push(e);
     if (this.inRaw || this.errors.length >= MAX_SYNTAX_ERRORS) throw new RecoveryAbort();
+  }
+
+  private recoverFrom(e: unknown, blockDepth: number, topLevel: boolean, itemStart: number, itemParens: number): void {
+    this.recordSyntaxError(e);
     this.synchronize(blockDepth, topLevel, itemParens);
     if (this.check('EOF') || this.current.start === itemStart) throw new RecoveryAbort();
+  }
+
+  private parseTemplateList(kind: 'braces' | 'tag'): AST.TemplateNode[] {
+    const nodes: AST.TemplateNode[] = [];
+    const level = this.braceDepth;
+    while (!(kind === 'braces' ? this.check('RBRACE') : this.check('LT') && this.isClosingTagAhead())) {
+      const itemStart = this.current.start;
+      try {
+        nodes.push(this.parseTemplateNode());
+      } catch (e) {
+        this.recordSyntaxError(e);
+        if (kind === 'tag' && this.closeWithoutOpeningBracket()) {
+          this.closedInline = true;
+          break;
+        }
+        this.synchronizeTemplate(level, kind);
+        if (this.check('EOF')) throw new RecoveryAbort();
+        if (this.current.start === itemStart) {
+          if (kind === 'tag' && this.check('RBRACE')) break;
+          throw new RecoveryAbort();
+        }
+        if (this.braceDepth < level) break;
+      }
+    }
+    return nodes;
+  }
+
+  private closeWithoutOpeningBracket(): boolean {
+    if (!this.check('SLASH') || this.openTags.length === 0) return false;
+    const name = this.openTags[this.openTags.length - 1];
+    const snap = this.snapshot();
+    this.advance();
+    const matches = (name === 'slot' ? this.check('SLOT') : this.check('IDENTIFIER') && this.current.value === name);
+    if (matches) {
+      this.advance();
+      if (this.check('GT')) {
+        this.advance();
+        return true;
+      }
+    }
+    this.restore(snap);
+    return false;
+  }
+
+  private synchronizeTemplate(level: number, kind: 'braces' | 'tag'): void {
+    while (!this.check('EOF')) {
+      if (this.braceDepth === level) {
+        if (this.check('RBRACE') || this.check('STRING_LITERAL') || this.check('IF') || this.check('FOR')) return;
+        if (this.check('LT')) {
+          if (!this.isClosingTagAhead() || kind === 'tag') return;
+        }
+      }
+      this.advance();
+    }
+  }
+
+  private skipDamagedElement(phase: 'open' | 'children' | 'close', base: number): void {
+    if (phase === 'close') {
+      while (!this.check('EOF') && !this.check('GT') && !this.check('RBRACE') && !this.check('LT')) this.advance();
+      if (this.check('GT')) this.advance();
+      return;
+    }
+    if (this.check('SLASH')) {
+      while (!this.check('EOF') && !this.check('GT') && !this.check('RBRACE') && !this.check('LT')) this.advance();
+      if (this.check('GT')) this.advance();
+      return;
+    }
+    let open = 1;
+    let inTag = true;
+    while (!this.check('EOF')) {
+      if (this.braceDepth === base) {
+        if (this.check('RBRACE')) return;
+        if (inTag && this.check('LT')) {
+          if (!this.isClosingTagAhead()) return;
+          inTag = false;
+        }
+        if (inTag && this.check('SLASH_GT')) {
+          this.advance();
+          open -= 1;
+          inTag = false;
+          if (open === 0) return;
+          continue;
+        }
+        if (inTag && this.check('GT')) {
+          this.advance();
+          inTag = false;
+          continue;
+        }
+        if (!inTag && this.check('LT')) {
+          if (this.isClosingTagAhead()) {
+            this.advance();
+            this.advance();
+            while (!this.check('EOF') && !this.check('GT') && !this.check('RBRACE')) this.advance();
+            if (this.check('GT')) this.advance();
+            open -= 1;
+            if (open === 0) return;
+            continue;
+          }
+          this.advance();
+          open += 1;
+          inTag = true;
+          continue;
+        }
+      }
+      this.advance();
+    }
   }
 
   private synchronize(blockDepth: number, topLevel: boolean, itemParens: number): void {
@@ -859,10 +972,8 @@ export class Parser {
   private parseViewBlockDecl(): AST.ViewBlockDecl {
     this.expect('VIEW');
     this.expect('LBRACE');
-    const nodes: AST.TemplateNode[] = [];
-    while (!this.check('RBRACE')) {
-      nodes.push(this.parseTemplateNode());
-    }
+    this.viewErrorBase = this.errors.length;
+    const nodes = this.parseTemplateList('braces');
     this.expect('RBRACE');
     return { kind: 'ViewBlockDecl', nodes , line: 0 };
   }
@@ -895,50 +1006,86 @@ export class Parser {
   }
 
   private parseElement(): AST.TemplateNode {
-    this.expect('LT');
-    let tag: string;
-    if (this.check('SLOT')) {
-      this.advance();
-      tag = 'slot';
-    } else {
-      tag = this.expect('IDENTIFIER').value;
-    }
-    const isComponent = /^[A-Z]/.test(tag);
-    const attributes: AST.Attribute[] = [];
-    while (this.check('IDENTIFIER')) {
-      const attrName = this.advance().value;
-      this.expect('ASSIGN');
-      if (this.check('LBRACE')) {
+    const base = this.braceDepth;
+    let phase: 'open' | 'children' | 'close' = 'open';
+    let tag = '?';
+    const outerOpenTags = this.openTags.length;
+    try {
+      this.expect('LT');
+      if (this.check('SLOT')) {
         this.advance();
-        const exprValue = this.parseExpression();
-        this.expect('RBRACE');
-        attributes.push({ name: attrName, isExpr: true, exprValue });
+        tag = 'slot';
       } else {
-        const token = this.expect('STRING_LITERAL');
-        if (token.stringParts) {
-          attributes.push({ name: attrName, isExpr: true, exprValue: { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) } });
+        tag = this.expect('IDENTIFIER').value;
+      }
+      const isComponent = /^[A-Z]/.test(tag);
+      const attributes: AST.Attribute[] = [];
+      while (this.check('IDENTIFIER')) {
+        const attrName = this.advance().value;
+        this.expect('ASSIGN');
+        if (this.check('LBRACE')) {
+          this.advance();
+          const exprValue = this.parseExpression();
+          this.expect('RBRACE');
+          attributes.push({ name: attrName, isExpr: true, exprValue });
         } else {
-          attributes.push({ name: attrName, isExpr: false, stringValue: token.value });
+          const token = this.expect('STRING_LITERAL');
+          if (token.stringParts) {
+            attributes.push({ name: attrName, isExpr: true, exprValue: { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) } });
+          } else {
+            attributes.push({ name: attrName, isExpr: false, stringValue: token.value });
+          }
         }
       }
+      if (this.check('SLASH_GT')) {
+        this.advance();
+        return { kind: 'Element', tag, isComponent, attributes, children: [], selfClosing: true , line: 0 };
+      }
+      this.expect('GT');
+      phase = 'children';
+      const errorsBefore = this.errors.length;
+      this.openTags.push(tag);
+      let children: AST.TemplateNode[];
+      try {
+        children = this.parseTemplateList('tag');
+      } finally {
+        this.openTags.pop();
+      }
+      if (this.closedInline) {
+        this.closedInline = false;
+        return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
+      }
+      phase = 'close';
+      const closeSnap = this.snapshot();
+      this.expect('LT');
+      this.expect('SLASH');
+      const closeTag = this.check('SLOT') ? (this.advance(), 'slot') : this.expect('IDENTIFIER').value;
+      if (closeTag !== tag) {
+        if (!this.recovering) this.fail(`Mismatched closing tag: expected </${tag}> but got </${closeTag}>`);
+        if (this.errors.length === errorsBefore) {
+          try {
+            this.fail(`Mismatched closing tag: expected </${tag}> but got </${closeTag}>`);
+          } catch (e) {
+            this.recordSyntaxError(e);
+          }
+        }
+        if (this.openTags.includes(closeTag)) {
+          this.restore(closeSnap);
+        } else if (this.check('GT')) {
+          this.advance();
+        }
+        return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
+      }
+      this.expect('GT');
+      return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
+    } catch (e) {
+      this.openTags.length = outerOpenTags;
+      this.closedInline = false;
+      const strayClose = phase === 'open' && tag === '?' && this.check('SLASH') && this.errors.length > this.viewErrorBase;
+      if (!strayClose) this.recordSyntaxError(e);
+      this.skipDamagedElement(phase, base);
+      return { kind: 'Element', tag, isComponent: false, attributes: [], children: [], selfClosing: true, line: 0 };
     }
-    if (this.check('SLASH_GT')) {
-      this.advance();
-      return { kind: 'Element', tag, isComponent, attributes, children: [], selfClosing: true , line: 0 };
-    }
-    this.expect('GT');
-    const children: AST.TemplateNode[] = [];
-    while (!(this.check('LT') && this.isClosingTagAhead())) {
-      children.push(this.parseTemplateNode());
-    }
-    this.expect('LT');
-    this.expect('SLASH');
-    const closeTag = this.check('SLOT') ? (this.advance(), 'slot') : this.expect('IDENTIFIER').value;
-    if (closeTag !== tag) {
-      this.fail(`Mismatched closing tag: expected </${tag}> but got </${closeTag}>`);
-    }
-    this.expect('GT');
-    return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
   }
 
   private tokenAfterIdentifier(): TokenType {
@@ -978,8 +1125,7 @@ export class Parser {
     const test = this.parseExpression();
     this.expect('RPAREN');
     this.expect('LBRACE');
-    const consequent: AST.TemplateNode[] = [];
-    while (!this.check('RBRACE')) consequent.push(this.parseTemplateNode());
+    const consequent = this.parseTemplateList('braces');
     this.expect('RBRACE');
     let alternate: AST.TemplateNode[] | undefined;
     if (this.check('ELSE')) {
@@ -988,8 +1134,7 @@ export class Parser {
         alternate = [this.parseTemplateIf()];
       } else {
         this.expect('LBRACE');
-        alternate = [];
-        while (!this.check('RBRACE')) alternate.push(this.parseTemplateNode());
+        alternate = this.parseTemplateList('braces');
         this.expect('RBRACE');
       }
     }
@@ -1010,8 +1155,7 @@ export class Parser {
     }
     this.expect('RPAREN');
     this.expect('LBRACE');
-    const body: AST.TemplateNode[] = [];
-    while (!this.check('RBRACE')) body.push(this.parseTemplateNode());
+    const body = this.parseTemplateList('braces');
     this.expect('RBRACE');
     return { kind: 'TemplateFor', itemType, itemName, iterable, key, body , line: 0 };
   }
