@@ -730,3 +730,5 @@ for (User user in users key user.id) {
   - The **semantic/type checker** exists and is trustworthy (scope resolution, type checking, the reactivity rules already specified throughout this document actually enforced at compile time, not just documented).
   - Crescent **works well in an editor** — a real language server (LSP) experience in VS Code (diagnostics as you type, autocomplete, go-to-definition, hover types), not just syntax highlighting. This depends on the semantic checker above, since most of what an LSP reports is that checker's output delivered per-keystroke instead of per-build.
 - **Post-1.0:** Only corrections (bug fixes), new things (additive features that don't break the stable v1.0 base), and QoL improvements. No fundamental redesigns of what's already stable.
+
+Version numbers follow `docs/Crescent_Versioning.md`: `0.MINOR.PATCH` until v1.0, where `MINOR` is a feature or an important change and `PATCH` is a fix or an adjustment.

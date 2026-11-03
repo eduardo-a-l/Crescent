@@ -7,13 +7,50 @@
 
 ## Current State
 
-**Branch:** `feature/view-recovery` (off `develop` at `986f681`)
+**Branch:** `feature/versioning` (off `develop` at `9999a11`)
 
 **Current phase:** v0.x compiler development
 
-**Active area:** Compiler / language implementation
+**Active area:** Project process / documentation
 
 **Current task:**
+Documented release and versioning strategy (`TODO.md` item now `[x]`). The owner had no preference and
+described two ideas: the usual `1.21.3` and a two-part `21.3` (feature, then fix). I chose and
+documented the scheme; nothing is tagged, so it is cheap to change.
+
+Decision (`docs/Crescent_Versioning.md`): semantic versioning, `0.MINOR.PATCH` until v1.0. `MINOR` is a
+feature or an important change, `PATCH` a fix or adjustment, so "21.3" reads as `0.21.3`. Reasons found
+by checking, not assumed: npm's semver rejects `21.3` (`valid=null`, `npm version` fails with "Invalid
+version") and the VS Code Marketplace needs three parts too; and the design doc's §14.7 already says
+post-1.0 is "corrections, new things, QoL, no redesigns", which is MINOR/PATCH. One Crescent version for
+language, compiler, runtime and CLI (`compiler/package.json`, because generated code needs its
+runtime); the VS Code extension, `crescent-web` and the playground keep their own. In `0.x` a breaking
+change is a `MINOR` and is listed under "Changed (breaking)"; a `PATCH` never breaks. The version is
+chosen by a person from the changelog, not computed from commit prefixes: the history has many
+mislabeled prefixes ("feat: fix docs", "feat: update file"). Releases: `develop` integrates, `main`
+holds the latest release, tags are `vX.Y.Z` (`vscode-vX.Y.Z` etc. for the others), and only the
+maintainer merges into `main` and tags.
+
+Also: `CHANGELOG.md` (Keep a Changelog format) reconstructed from the 90 commits: `[Unreleased]` holds
+everything since the prototype and is proposed as `0.2.0`; `[0.1.0] - 2026-08-07` is the initial
+prototype, which was never tagged. `AGENTS.md` §14 has a new "Changelog and versions" subsection: a
+user-visible change adds one line under `[Unreleased]` in the same commit; assistants do not bump
+versions, tag or touch `main`. The design doc's §14.7 points to the new document.
+
+Test: `test-versioning.js` (15 checks, in `npm test` after `test-parser-recovery.js`, named in the
+README): every package has a three-part version, `CHANGELOG.md` is well formed (an `[Unreleased]`
+section first, valid dated releases, newest first, no duplicates, known section headings) and its newest
+release is the compiler version. The checking is a function that is also run on deliberately broken
+changelogs (8 cases), so the guard is known to detect problems and not only to pass. One of my own
+test cases was wrong at first (`0.1.5` before `0.1.0` is correctly ordered); the guard was right.
+`npm test` passes (510, was 495).
+
+Not done: no version was bumped and nothing was tagged or merged into `main`. The first release
+(`0.2.0`) is a new open item in `TODO.md` for the maintainer. The other packages are `0.1.0`
+(`crescent-web`, `playground`) and `0.2.0` (the VS Code extension) and were not touched.
+
+Before that:
+
 Syntax-error recovery inside `view` blocks (the first follow-up of the previous task; `[x]` in
 `TODO.md`). Before, the whole view was one recovery unit: one error per view, however many were in it.
 

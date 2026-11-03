@@ -358,6 +358,18 @@ Usually update:
 
 Do not modify documentation merely to make it agree with an accidental implementation bug.
 
+### Changelog and versions
+
+A change a user can notice (a language feature, a fix, a breaking change, a new command or flag, a
+changed API) adds one line under `## [Unreleased]` in `CHANGELOG.md`, in the same commit, under the
+section that fits (Added, Changed, Changed (breaking), Fixed, Fixed (stricter)).
+
+Documentation, tests, CI and benchmark changes do not need a line.
+
+Do not bump a version, and do not create a tag or touch `main`. A release is made by the maintainer, as
+described in `docs/Crescent_Versioning.md`, which also says what counts as a feature, a fix and a
+breaking change.
+
 ---
 
 ## 15. AI Session Size

@@ -61,7 +61,15 @@
   `compiler/scripts/test-readme.js` now keeps it honest in `npm test`: every file in `src/` and every
   test script must be mentioned, every path and `npm run` command it names must exist, and every test
   script must be run by `npm test`
-- [ ] Establish a documented release/versioning strategy
+- [x] Establish a documented release/versioning strategy — `docs/Crescent_Versioning.md`: semantic
+  versioning, `0.MINOR.PATCH` until v1.0 (`MINOR` a feature or important change, `PATCH` a fix or
+  adjustment; a breaking change in `0.x` is a `MINOR` and is listed under "Changed (breaking)"), one
+  Crescent version for the language, compiler, runtime and CLI (`compiler/package.json`), separate
+  versions for the VS Code extension and the web apps, a `CHANGELOG.md`, and the release steps.
+  `test-versioning.js` guards the three-part versions and the changelog. Nothing is tagged yet
+- [ ] Cut the first release under it (`0.2.0`, proposed in the changelog): choose the date, bump
+  `compiler/package.json`, close `[Unreleased]`, merge `develop` into `main` and tag `v0.2.0`
+  (a maintainer step; assistants do not touch `main`)
 
 ---
 

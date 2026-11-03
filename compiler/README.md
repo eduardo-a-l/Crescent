@@ -80,7 +80,7 @@ nothing but those three (see "Robustness" below).
   `test-array-mutators-native.js`); modules (`test-modules.js`, `test-missing-import.js`,
   `test-circular-import.js`, `test-import-conflicts.js`, `test-unused-imports.js`,
   `test-module-diagnostics.js`, `test-module-recovery.js`, `test-module-semantics.js`,
-  `test-module-discovery.js`, `test-module-graphs.js`); error locations and recovery (`test-error-locations.js`, `test-codegen-error-lines.js`, `test-parser-recovery.js`); the runtime and generated code in `jsdom`
+  `test-module-discovery.js`, `test-module-graphs.js`); error locations and recovery (`test-error-locations.js`, `test-codegen-error-lines.js`, `test-parser-recovery.js`); versions and the changelog (`test-versioning.js`, see `docs/Crescent_Versioning.md`); the runtime and generated code in `jsdom`
   (`test-counter.js`, `test-day-picker.js`, `test-theme-toggle.js`, `test-composition.js`,
   `test-reactive-list.js`, `test-keyed-list.js`, `test-effect-disposal.js`,
   `test-provide-inject.js`, `test-multi-root.js`, `test-derived-lifecycle.js`, `test-web.js`,
