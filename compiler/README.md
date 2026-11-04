@@ -147,8 +147,13 @@ slower than the baseline in those units and takes more than 5 ms. Regenerate the
 deliberate change with `node bench/run.js --json bench/baseline.json`.
 
 `npm test` does not run the benchmark, but `scripts/test-bench.js` checks that five of the shapes
-scale linearly (a 4 times larger input must take under 8 times as long, which a quadratic stage would
-not satisfy), unit-tests the comparison logic and smoke-tests a quick run. The `functions` shape is
+scale linearly: it times four sizes (2000 to 16000, the best of five runs each) and fits the exponent
+of time against size, which must stay under 1.5 (linear is 1, quadratic is 2; the shapes measure 0.9
+to 1.2). A failed measurement is repeated up to three times, because noise only ever makes a genuinely
+linear stage look worse by chance, while a quadratic one stays over the limit every time. The guard
+itself is checked too: a workload that is linear by construction must measure under the limit and a
+quadratic one over it, timed in CPU time so that other processes competing for the processor cannot
+bend the result. The test also unit-tests the comparison logic and smoke-tests a quick run. The `functions` shape is
 left out on purpose: it is quadratic in the number of members times functions of one component,
 because every function body starts from a copy of the component's whole scope. It is harmless at
 realistic sizes (about 25 ms for 1000 functions) and shows up in the table above 2000.

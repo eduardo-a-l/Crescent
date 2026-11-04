@@ -23,16 +23,80 @@ function bestTotal(source, attempts) {
   return min;
 }
 
-const small = 4000;
-const large = 16000;
+function growthExponent(points) {
+  const xs = points.map((p) => Math.log(p[0]));
+  const ys = points.map((p) => Math.log(p[1]));
+  const n = xs.length;
+  const meanX = xs.reduce((a, b) => a + b, 0) / n;
+  const meanY = ys.reduce((a, b) => a + b, 0) / n;
+  let covariance = 0;
+  let variance = 0;
+  for (let i = 0; i < n; i++) {
+    covariance += (xs[i] - meanX) * (ys[i] - meanY);
+    variance += (xs[i] - meanX) ** 2;
+  }
+  return covariance / variance;
+}
+
+function bestCpuTime(fn, attempts) {
+  let min = Infinity;
+  for (let i = 0; i < attempts; i++) {
+    const start = process.cpuUsage();
+    fn();
+    const used = process.cpuUsage(start);
+    min = Math.min(min, (used.user + used.system) / 1000);
+  }
+  return min;
+}
+
+const MAX_EXPONENT = 1.5;
+const EXPONENT_ATTEMPTS = 3;
+const sizes = [2000, 4000, 8000, 16000];
+
+function measureExponent(sources) {
+  const points = sizes.map((size, i) => [size, bestTotal(sources[i], 5)]);
+  return growthExponent(points);
+}
+
 for (const shape of linearShapes) {
-  bestTotal(single[shape](small), 1);
-  const ratio = bestTotal(single[shape](large), 3) / bestTotal(single[shape](small), 3);
+  const sources = sizes.map((size) => single[shape](size));
+  for (const source of sources) bestTotal(source, 1);
+  let exponent = Infinity;
+  for (let attempt = 0; attempt < EXPONENT_ATTEMPTS && !(exponent < MAX_EXPONENT); attempt++) {
+    exponent = Math.min(exponent, measureExponent(sources));
+  }
   assert(
-    ratio < 8,
-    `scaling: '${shape}' input ${large / small} times larger takes ${ratio.toFixed(1)} times as long to parse, check and generate, and doubling is linear at ${large / small} and quadratic at ${(large / small) ** 2}`
+    exponent < MAX_EXPONENT,
+    `scaling: '${shape}' takes time proportional to size raised to ${exponent.toFixed(2)} from ${sizes[0]} to ${sizes[sizes.length - 1]} (1 is linear, 2 is quadratic, the limit is ${MAX_EXPONENT})`
   );
 }
+
+let sink = 0;
+function syntheticExponent(work, workSizes) {
+  for (const size of workSizes) work(size);
+  return growthExponent(workSizes.map((size) => [size, bestCpuTime(() => work(size), 5)]));
+}
+const linearWork = (n) => {
+  for (let i = 0; i < n * 4000; i++) sink += i & 7;
+};
+const quadraticWork = (n) => {
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) sink += (i ^ j) & 7;
+};
+const syntheticSizes = [500, 1000, 2000, 4000];
+function firstAccepted(measure, accept) {
+  let value;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    value = measure();
+    if (accept(value)) return value;
+  }
+  return value;
+}
+const linearExponent = firstAccepted(() => syntheticExponent(linearWork, syntheticSizes), (value) => value < MAX_EXPONENT);
+const quadraticExponent = firstAccepted(() => syntheticExponent(quadraticWork, syntheticSizes), (value) => value > MAX_EXPONENT);
+assert(linearExponent < MAX_EXPONENT, `guard: a workload that is linear by construction measures ${linearExponent.toFixed(2)}, under the limit`);
+assert(quadraticExponent > MAX_EXPONENT, `guard: a workload that is quadratic by construction measures ${quadraticExponent.toFixed(2)}, over the limit, so a real quadratic regression would be caught`);
+assert(Math.abs(growthExponent([[1, 3], [2, 6], [4, 12], [8, 24]]) - 1) < 1e-9 && Math.abs(growthExponent([[1, 1], [2, 4], [4, 16]]) - 2) < 1e-9, 'guard: the exponent of exact linear and quadratic data is 1 and 2');
+assert(sink >= 0, 'guard: the synthetic workloads ran');
 
 const baseline = {
   meta: { calibrationMs: 100 },

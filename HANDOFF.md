@@ -7,13 +7,42 @@
 
 ## Current State
 
-**Branch:** `feature/web-tests-and-ci` (off `develop` at `3e39b3c`)
+**Branch:** `feature/scaling-guard` (off `develop` at `da53bfa`)
 
 **Current phase:** v0.x compiler development
 
-**Active area:** Web projects / CI
+**Active area:** Test reliability
 
 **Current task:**
+Made the benchmark scaling guard in `scripts/test-bench.js` stable (it had failed at random on unchanged
+code: the 4x ratio for `members` ranged from 3.2 to 8.8 against a limit of 8).
+
+Measured first: over 12 rounds per shape the old statistic (a 4x ratio of two single measurements)
+spread from 2.75 to 5.79, while the exponent of a log-log fit over four sizes (2000, 4000, 8000, 16000,
+best of 5 each) stayed between 0.88 and 1.18 (linear is 1, quadratic is 2). The guard now asserts the
+exponent is under 1.5, with up to three attempts (noise only makes a linear stage look worse by chance,
+a quadratic one stays over the limit on every attempt).
+
+The guard also checks itself: a workload linear by construction must measure under 1.5 and a quadratic
+one over it (1.00 and 2.01 idle), plus exact-data checks of the fit (exponent 1 and 2). That self-check
+was itself flaky at first, and the cause was worth finding: under heavy CPU contention wall-clock time
+is biased, not just noisy (a workload shorter than the scheduler's time slice runs undisturbed while a
+longer one is stretched by the competing processes, which bends the slope), so retrying could not help
+(2.4 on every retry). Timing the synthetic workloads in CPU time (`process.cpuUsage()`) fixed it. The
+real shapes never failed under that load because all their sizes are longer than a time slice, so the
+stretch cancels in the slope.
+
+Verified: 12 idle runs and 6 more on the final file, no failures; 4 runs on one core shared with three
+busy loops, no failures (the version before the CPU-time change failed 3 of 4 under that load). `npm
+test` passes with 514 checks (was 510): the four new ones are the guard's own self-checks. README's
+benchmark section describes the new rule.
+
+Not done: `bench:compare` can still flag a stage on a noisy machine (it flagged `members parseMs` and
+other stages on three consecutive runs earlier, and an A/B against the previous build showed no real
+difference); its threshold and calibration were not changed here.
+
+Before that:
+
 The owner asked whether the Vercel site (`crescent-lang.vercel.app`, deployed from `develop`) could
 break from my recent work. I checked instead of assuming, and found a real gap on my side.
 

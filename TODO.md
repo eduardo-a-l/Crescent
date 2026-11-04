@@ -49,8 +49,12 @@
   mistakes in one view are both found 91 to 97% of the time (about 0% before). An unbalanced `{`
   in an attribute still cascades
 - [ ] Recover after an error in a `style` block (it is read as raw text, so today it ends the list)
-- [ ] Make the benchmark scaling guard less noisy (`test-bench.js`: the ratio for `members` ranged from
-  3.4 to 8.8 over repeated runs on the same code, so it fails now and then at random)
+- [x] Make the benchmark scaling guard less noisy — it compared one 4x pair of sizes with a limit of 8
+  (the ratio for `members` ranged from 3.2 to 8.8 on unchanged code); it now fits the growth exponent over
+  four sizes (limit 1.5, the shapes measure 0.9 to 1.2) with up to three attempts, and checks itself on
+  workloads that are linear and quadratic by construction, in CPU time. 12 idle runs and 4 runs on a
+  single core shared with three busy loops all passed (the first version of the self-check failed 3 of 4
+  under that load, which is how the CPU-time measurement was found necessary)
 - [x] Improve compiler README so its description matches the current implementation — rewritten
   where it had drifted: a new "Pipeline and errors" overview (which stage owns which error class and
   what happens to it), a Structure section covering `narrowing.ts`, `references.ts`, `cli.ts`,
