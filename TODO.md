@@ -48,7 +48,13 @@
   a stray `;`/`)` or a deleted `<`/`>` gives exactly one error 98 to 100% of the time, and two separate
   mistakes in one view are both found 91 to 97% of the time (about 0% before). An unbalanced `{`
   in an attribute still cascades
-- [ ] Recover after an error in a `style` block (it is read as raw text, so today it ends the list)
+- [x] Recover after an error in a `style` block — a damaged declaration is skipped by characters to its
+  `;` or the `}` of its rule (counting `{ }` so an interpolation is not cut), a selector read as a
+  declaration ends the unclosed rule before it, and an unterminated rule or block at the end of the
+  file or any error at the end of the file after an earlier one is not reported again. Inside a style
+  block: a deleted colon, a deleted closing brace and a stray `;` give exactly one error 99.6 to 100% of
+  the time, a deleted value 95%, a stray `{` 89%, and two separate mistakes are both found 97 to 99.7%
+  (before, the list ended at the first style error, so a second mistake was never found)
 - [x] Make the benchmark scaling guard less noisy — it compared one 4x pair of sizes with a limit of 8
   (the ratio for `members` ranged from 3.2 to 8.8 on unchanged code); it now fits the growth exponent over
   four sizes (limit 1.5, the shapes measure 0.9 to 1.2) with up to three attempts, and checks itself on

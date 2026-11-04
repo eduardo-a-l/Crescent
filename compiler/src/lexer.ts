@@ -61,6 +61,14 @@ export class Lexer {
     return this.isAtEnd();
   }
 
+  position(): number {
+    return this.pos;
+  }
+
+  peekRaw(length: number): string {
+    return this.source.slice(this.pos, this.pos + length);
+  }
+
   private skipWhitespaceAndComments(): void {
     while (!this.isAtEnd()) {
       const c = this.peekChar();

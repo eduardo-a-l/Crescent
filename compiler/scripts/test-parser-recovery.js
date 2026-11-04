@@ -42,7 +42,7 @@ expectErrors('bad declarations are all reported', 'component {\n}\ncomponent B {
 expectErrors('a stray closing brace is one error and the next declaration is still read', '}\ncomponent A {\n    state n = 1;\n}\n', 'parse@1 parse@3');
 expectErrors('an error in a view and one after it', base('    void f() { int a = ; }', '<div>\n            <p>{n +}</p>\n        </div>'), 'parse@3 parse@6');
 expectErrors('a lex error ends the list but keeps the earlier errors', base('    void f() {\n        int a = ;\n        int b = 1 # 2;\n        int c = ;\n    }'), 'parse@4 lex@5');
-expectErrors('an error in a style block ends the list but keeps the earlier errors', 'component A {\n    void f() { int a = ; }\n    view { <p/> }\n    style {\n        p { color red; }\n    }\n    void h() { int b = ; }\n}\n', 'parse@2 parse@5');
+expectErrors('errors before, inside and after a style block are all reported', 'component A {\n    void f() { int a = ; }\n    view { <p/> }\n    style {\n        p { color red; }\n    }\n    void h() { int b = ; }\n}\n', 'parse@2 parse@5 parse@7');
 expectErrors('a missing closing brace is reported where it shows up, plus one more where the structure breaks, not a pile', base('    void f() {\n        n = 1;\n') + '\ncomponent B {\n    view {\n        <p/>\n    }\n}\n', 'parse@6 parse@11');
 expectErrors('the end of the file inside a statement is one error', 'component A {\n    void f() {\n        int y = ', 'parse@3');
 expectErrors('an unterminated string is a lex error and the only one', base('    state<string> s = "abc;\n    void f() { int a = ; }'), 'lex@3');
@@ -62,6 +62,21 @@ expectErrors('view: errors in the if body, the else body and a for body are all 
 expectErrors('view: errors in nested elements are all found', viewOf('        <div>\n            <section>\n                <p>{n +}</p>\n            </section>\n            <p>{n *}</p>\n        </div>'), 'parse@7 parse@9');
 expectErrors('view: two errors on one line are one error', viewOf('        <p>{n +}</p><b>{n *}</b>'), 'parse@5');
 expectErrors('view: an error in the view and one in a member after it', 'component A {\n    state<int> n = 0;\n    view {\n        <p>{n +}</p>\n        <b>{n *}</b>\n    }\n    void f() { int a = ; }\n}\n', 'parse@4 parse@5 parse@7');
+
+const styleOf = (css, after = '') => `component A {\n    state<int> n = 0;\n    view { <p/> }\n    style {\n${css}\n    }\n${after}}\n`;
+
+expectErrors('style: a declaration without its colon is one error and the next declaration is read', styleOf('        p {\n            color red;\n            margin: 0;\n        }'), 'parse@6');
+expectErrors('style: every bad declaration in every rule is reported on its own line', styleOf('        p {\n            color red;\n            margin: 0;\n            padding;\n            width: {n +};\n        }\n        b {\n            height: ;\n        }'), 'parse@6 parse@8 parse@9 parse@12');
+expectErrors('style: a property without a value is one error', styleOf('        p {\n            color: ;\n            margin: 0;\n        }'), 'parse@6');
+expectErrors('style: a bad expression in a value is one error on its line', styleOf('        p {\n            width: {n +}px;\n            margin: 0;\n        }'), 'parse@6');
+expectErrors('style: a declaration without its semicolon before the closing brace is one error', styleOf('        p {\n            color red\n        }'), 'parse@6');
+expectErrors('style: two errors on one line are one error', styleOf('        p { color red; margin blue; }'), 'parse@5');
+expectErrors('style: members after the style block are still checked', styleOf('        p { color red; }', '    void f() { int a = ; }\n'), 'parse@5 parse@7');
+expectErrors('style: a rule whose closing brace is missing ends where the next selector starts', styleOf('        .a {\n            color: red;\n\n        .b {\n            width: 1px;\n        }\n        .c {\n            display: block;\n        }'), 'parse@8');
+expectErrors('style: a missing closing brace on the last rule is one error, not one more at the end of the file', 'component A {\n    state<int> n = 0;\n    view {\n        <p/>\n    }\n    style {\n        .a {\n            color: red;\n        }\n        .b {\n            width: 1px;\n    }\n    void f() {\n        n = 1;\n    }\n}\n', 'parse@14');
+expectErrors('style: a truncated style block is one error', 'component A {\n    view { <p/> }\n    style {\n        p {\n            color red;\n', 'parse@5');
+expectErrors('style: an interpolation in a value does not hide the errors around it', styleOf('        p {\n            width: {n > 0 ? 1 : 2}px;\n            color red;\n            margin: {n +};\n        }'), 'parse@7 parse@8');
+expectErrors('a missing closing brace discovered at the end of the file adds nothing to an earlier error', 'component A {\n    void f() {\n        int a = ;\n    }\n    void g() {\n', 'parse@3');
 
 const clean = parseCrescentRecovering(base('    void f() {\n        n = 2;\n    }'));
 assert(clean.errors.length === 0 && clean.program && JSON.stringify(clean.program) === JSON.stringify(parseCrescent(base('    void f() {\n        n = 2;\n    }'))), 'a valid program has no errors and the same tree as parseCrescent');
@@ -157,6 +172,84 @@ function singleErrorShare(edit) {
 for (const [label, token] of [['a stray semicolon', ';'], ['a stray closing parenthesis', ')']]) {
   const { invalid, share } = singleErrorShare((source, at) => source.slice(0, at) + token + source.slice(at));
   assert(share >= 0.9, `quality: ${label} inserted anywhere in an example gives exactly one error at least 90% of the time (${(share * 100).toFixed(1)}% of ${invalid})`);
+}
+
+const styleProps = ['color', 'margin', 'padding', 'width', 'height', 'border', 'display', 'font-size', 'background'];
+const styleValues = ['red', '0', '10px 20px', '{n}px', '1px solid blue', '{n > 0 ? 1 : 2}em', 'block', '#fff', 'calc(100% - 4px)'];
+function styleProgram() {
+  let css = '';
+  const rules = 3 + random(4);
+  for (let r = 0; r < rules; r++) {
+    css += `        .rule${r} {\n`;
+    const declarations = 3 + random(4);
+    for (let i = 0; i < declarations; i++) css += `            ${styleProps[random(styleProps.length)]}: ${styleValues[random(styleValues.length)]};\n`;
+    css += '        }\n';
+  }
+  const head = 'component A {\n    state<int> n = 0;\n    view {\n        <p/>\n    }\n    style {\n';
+  const tail = '    }\n    void f() {\n        n = 1;\n    }\n}\n';
+  return { source: head + css + tail, lo: head.length, hi: head.length + css.length };
+}
+const styleSubjects = [];
+for (let i = 0; i < 60; i++) styleSubjects.push(styleProgram());
+assert(styleSubjects.every((subject) => parseCrescentRecovering(subject.source).errors.length === 0), 'the generated style programs are valid before they are damaged');
+
+const deleteNextChar = (char) => (source, at) => {
+  const index = source.indexOf(char, at);
+  return index < 0 ? source : source.slice(0, index) + source.slice(index + 1);
+};
+const deleteValue = (source, at) => {
+  const colon = source.indexOf(': ', at);
+  if (colon < 0) return source;
+  return source.slice(0, colon + 2) + source.slice(source.indexOf(';', colon));
+};
+const insertSemicolon = (source, at) => source.slice(0, at) + ';' + source.slice(at);
+const insertBrace = (source, at) => source.slice(0, at) + '{' + source.slice(at);
+
+function styleSingleErrorShare(edit) {
+  let invalid = 0;
+  let single = 0;
+  for (const subject of styleSubjects) {
+    for (let i = 0; i < 40; i++) {
+      const edited = edit(subject.source, subject.lo + random(subject.hi - subject.lo));
+      if (edited === subject.source) continue;
+      const outcome = parseCrescentRecovering(edited);
+      if (outcome.errors.length === 0) continue;
+      invalid += 1;
+      if (outcome.errors.length === 1) single += 1;
+    }
+  }
+  return { invalid, share: single / invalid };
+}
+for (const [label, edit, minimum] of [
+  ['a deleted colon', deleteNextChar(':'), 0.94],
+  ['a deleted value', deleteValue, 0.94],
+  ['a stray semicolon', insertSemicolon, 0.94],
+  ['a deleted closing brace', deleteNextChar('}'), 0.94],
+  ['a stray opening brace', insertBrace, 0.8],
+]) {
+  const { invalid, share } = styleSingleErrorShare(edit);
+  assert(share >= minimum, `style quality: ${label} inside a style block gives exactly one error at least ${minimum * 100}% of the time (${(share * 100).toFixed(1)}% of ${invalid})`);
+}
+
+function styleRecall(edit) {
+  let pairs = 0;
+  let both = 0;
+  for (const subject of styleSubjects) {
+    for (let i = 0; i < 40; i++) {
+      let first = subject.lo + random(subject.hi - subject.lo);
+      let second = subject.lo + random(subject.hi - subject.lo);
+      if (Math.abs(lineAt(subject.source, first) - lineAt(subject.source, second)) < 2) continue;
+      if (first > second) [first, second] = [second, first];
+      if (parseCrescentRecovering(edit(subject.source, first)).errors.length === 0 || parseCrescentRecovering(edit(subject.source, second)).errors.length === 0) continue;
+      pairs += 1;
+      if (parseCrescentRecovering(edit(edit(subject.source, second), first)).errors.length >= 2) both += 1;
+    }
+  }
+  return { pairs, share: both / pairs };
+}
+for (const [label, edit] of [['a deleted colon', deleteNextChar(':')], ['a deleted value', deleteValue]]) {
+  const { pairs, share } = styleRecall(edit);
+  assert(share >= 0.9, `style recall: two separate mistakes (${label}) in one style block are both reported at least 90% of the time (${(share * 100).toFixed(1)}% of ${pairs})`);
 }
 
 function viewRanges(source) {

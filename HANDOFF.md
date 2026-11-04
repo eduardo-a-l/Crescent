@@ -7,13 +7,53 @@
 
 ## Current State
 
-**Branch:** `feature/scaling-guard` (off `develop` at `da53bfa`)
+**Branch:** `feature/style-recovery` (off `develop` at `b77cc46`)
 
 **Current phase:** v0.x compiler development
 
-**Active area:** Test reliability
+**Active area:** Compiler / parser
 
 **Current task:**
+Syntax-error recovery inside `style` blocks, the last place an error ended the list (`TODO.md` item `[x]`).
+
+Why it needed its own design: a style block is read as raw characters through the lexer, not as tokens,
+so the token-level `synchronize()` does not apply (the earlier version aborted recovery there, via
+`inRaw`). Only three errors are recoverable and all are inside a declaration (no `:`, no value, a bad
+`{expr}`); an unterminated rule or block can only happen at the end of the file.
+
+What changed (`parser.ts`, `lexer.ts`): `parseStyleRule()` wraps each declaration; on an error
+`recordSyntaxError(e, true)` records it (the `true` lets it through the `inRaw` abort) and
+`skipStyleDeclaration()` skips by characters to the next `;` (consumed) or the `}` of the rule (not
+consumed), counting `{ }` so an interpolation is not cut in half; a progress guard advances one
+character if nothing was consumed. The missing-value check now runs before the `;` is consumed (else
+the skip would eat the next declaration). Three further rules, each found by looking at the actual
+cascades: (1) if the failed "declaration" is followed by `{` and a body starting with `name:` or `}`
+(`peekRaw(200)`), the rule before it was never closed, so the rule ends there, the lexer is rewound to
+the selector, and it is read as a new rule (a deleted `}` went from 0% to 40% single-error with this);
+(2) `failUnterminatedStyle()` does not report an unterminated rule/block at the end of the file when an
+error was already found in the same block (`styleErrorBase`); (3) in `recordSyntaxError()` any error
+found at the end of the file after an earlier error is dropped (a general rule, it is almost always a
+consequence of an unclosed brace or tag), which took a deleted `}` to 100% single-error.
+
+A real bug fixed on the way, which changes parseCrescent() output for bad input only: a property name was
+read up to whitespace or `:`, so `padding;` swallowed its `;` and the newline, was reported a line late,
+and named `padding;`. It now stops at `:`, `;`, `}` and whitespace (`padding` on its own line).
+
+Measured on 60 generated style-heavy programs (the examples have only one style block): one error for a
+deleted `:` 100%, a deleted `}` 100%, a stray `;` 99.6%, a deleted value 95%, a stray `{` 89% (it opens an
+interpolation that swallows the structure; accepted); two separate mistakes both found 97% to 99.7% (0%
+before, because the list ended at the first one).
+
+Tests: `test-parser-recovery.js` is 69 checks (was 49): 12 exact style/EOF scenarios (the old case that
+asserted "a style error ends the list" now expects all three errors), 5 precision and 2 recall guards on
+generated programs. `npm test` passes (534, was 514); the fuzzer (seeds 51-53 at 4000 iterations, 54
+`deep`) found nothing; `crescent-web` and `playground` still pass (59 each, run because an error
+message and line changed). Known limit: `skipStyleDeclaration()` does not understand CSS strings or
+comments, so a `;` or `}` inside a quoted value ends the skip early (a rare input that is already an
+error). README's recovery section, grammar spec §11.8, `TODO.md` and `CHANGELOG.md` are updated.
+
+Before that:
+
 Made the benchmark scaling guard in `scripts/test-bench.js` stable (it had failed at random on unchanged
 code: the 4x ratio for `members` ranged from 3.2 to 8.8 against a limit of 8).
 

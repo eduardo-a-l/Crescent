@@ -25,7 +25,8 @@ changelog was introduced, and is proposed as `0.2.0`.
   `if`/`else`, `&&`/`||`, ternaries, loop tests and early exits by `return`, `break` and `continue`.
 - **Command line**: `crescent check` and `crescent build`.
 - **Syntax errors**: every syntax error of a file is reported, up to 20, instead of only the first. The
-  parser recovers at statements, component members, top-level declarations and view nodes.
+  parser recovers at statements, component members, top-level declarations, view nodes and style
+  declarations.
 - **Editor and web**: a VS Code extension (diagnostics, syntax highlighting, a preview panel and a browser
   preview), a web playground with syntax highlighting, and the `crescent-web` site.
 - **Quality tooling**: a fuzzer, a benchmark suite with a scaling guard, and regression suites for the
@@ -63,6 +64,8 @@ changelog was introduced, and is proposed as `0.2.0`.
 - An error inside a string or `style` interpolation is reported on its real line, not on line 1, and an
   unterminated string is reported where it started.
 - The code generator now rejects a second `view` block itself, instead of silently ignoring it.
+- A style declaration without a colon, such as `padding;`, is reported on its own line and names the
+  property without the `;` (it used to be reported a line late, and to swallow the next declaration).
 
 ## [0.1.0] - 2026-08-07
 

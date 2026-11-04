@@ -594,9 +594,9 @@ depend on the length of the chain.
 ### 11.8 Known limitations
 
 - There are no re-exports, so a name has to be imported from the file that declares it.
-- Recovery after a syntax error works at statement, member, declaration and view-node level; a lex
-  error or an error in a `style` block ends the list, and a brace that is deleted or left unbalanced
-  can still cause follow-on errors.
+- Recovery after a syntax error works at statement, member, declaration, view-node and style-declaration
+  level; a lex error ends the list, and a brace that is deleted or left unbalanced can still cause
+  follow-on errors.
 - There is no wildcard import and no import path that starts at the project root.
 - A file whose name is not an identifier cannot be imported.
 - Whether a name is used is judged by its spelling, so an unrelated identifier with the same name

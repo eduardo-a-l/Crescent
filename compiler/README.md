@@ -533,8 +533,9 @@ any stack overflow it still meets into a `ParseError`.
 
 `parseCrescent()` stops at the first problem and throws it. `parseCrescentRecovering()` returns
 `{ program, errors }` instead: after an error it skips ahead to a point where parsing can safely go
-on, and reports the next problem it finds. It recovers at four levels: a statement inside a block,
-a member of a component, a top-level declaration, and a node of a `view` block (see below). Skipping to a safe point means going on to the
+on, and reports the next problem it finds. It recovers at five levels: a statement inside a block,
+a member of a component, a top-level declaration, a node of a `view` block, and a declaration inside
+a `style` rule (see below). Skipping to a safe point means going on to the
 next `;` or the `}` that closes the damaged item, at the same brace depth and outside any
 parentheses or brackets, so a `for (a; b; c)` header is skipped whole.
 
@@ -546,8 +547,17 @@ Rules that keep the list useful instead of long:
   statement in two gives one error, not two).
 - At most 20 errors are reported, and recovery gives up when skipping makes no progress or reaches
   the end of the file.
-- A lex error, or an error inside a `style` block (which is read as raw text, not as tokens), ends the
-  list, keeping the errors found before it.
+- A lex error ends the list, keeping the errors found before it.
+- An error found at the end of the file is not reported when an earlier error exists: it is almost
+  always a consequence of a brace or tag that was never closed.
+- A `style` block is read as raw characters, not tokens, so it is recovered by characters: a damaged
+  declaration (no `:`, no value, a bad `{expr}`) is skipped to its `;`, or to the `}` of its rule,
+  counting `{ }` so an interpolation is not cut in half, and the rest of the block is read. If the
+  damaged "declaration" is really the next selector (it is followed by `{` and a body that starts with
+  `name:` or `}`), the rule before it was never closed: it ends there and the selector is read as a
+  new rule. An unterminated rule or block at the end of the file is not reported after an earlier
+  error in the same block. A property name ends at whitespace, `:`, `;` or `}`, so `padding;` is
+  reported on its own line, as `padding`.
 - Inside a `view` block a damaged node is skipped to the next node at the same brace depth (a string,
   `if`, `for` or opening tag), so every bad node is reported. Elements nest by tags, not braces, so a
   damaged element is skipped to its own closing tag, counting nested tags. A few repairs keep one

@@ -39,6 +39,7 @@ export class Parser {
   private openTags: string[] = [];
   private closedInline = false;
   private viewErrorBase = 0;
+  private styleErrorBase = 0;
   errors: ParseError[] = [];
 
   constructor(source: string, depth: number = 0, startLine: number = 1) {
@@ -97,11 +98,34 @@ export class Parser {
     this.recovering = true;
   }
 
-  private recordSyntaxError(e: unknown): void {
+  private recordSyntaxError(e: unknown, insideRaw: boolean = false): void {
     if (!this.recovering || !(e instanceof ParseError)) throw e;
+    if (!insideRaw && !this.inRaw && this.errors.length > 0 && this.check('EOF')) throw new RecoveryAbort();
     const previous = this.errors[this.errors.length - 1];
     if (!previous || previous.line === null || previous.line !== e.line) this.errors.push(e);
-    if (this.inRaw || this.errors.length >= MAX_SYNTAX_ERRORS) throw new RecoveryAbort();
+    if ((this.inRaw && !insideRaw) || this.errors.length >= MAX_SYNTAX_ERRORS) throw new RecoveryAbort();
+  }
+
+  private failUnterminatedStyle(message: string): never {
+    if (this.recovering && this.errors.length > this.styleErrorBase) throw new RecoveryAbort();
+    throw new ParseError(message, this.lexer.currentLine());
+  }
+
+  private skipStyleDeclaration(): void {
+    let depth = 0;
+    while (!this.lexer.atEnd()) {
+      const c = this.lexer.peekChar();
+      if (c === '{') {
+        depth += 1;
+      } else if (c === '}') {
+        if (depth === 0) return;
+        depth -= 1;
+      } else if (c === ';' && depth === 0) {
+        this.lexer.advanceChar();
+        return;
+      }
+      this.lexer.advanceChar();
+    }
   }
 
   private recoverFrom(e: unknown, blockDepth: number, topLevel: boolean, itemStart: number, itemParens: number): void {
@@ -1164,11 +1188,12 @@ export class Parser {
     this.expect('STYLE');
     this.expect('LBRACE');
     this.inRaw = true;
+    this.styleErrorBase = this.errors.length;
     this.lexer.setPos(this.current.start, this.lexer.lineBefore(this.current.start));
     const rules: AST.StyleRule[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
-      if (this.lexer.atEnd()) throw new ParseError("Unterminated style block: expected '}'", this.lexer.currentLine());
+      if (this.lexer.atEnd()) this.failUnterminatedStyle("Unterminated style block: expected '}'");
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
@@ -1188,19 +1213,31 @@ export class Parser {
     const declarations: AST.StyleDeclaration[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
-      if (this.lexer.atEnd()) throw new ParseError(`Unterminated style rule '${selector}': expected '}'`, this.lexer.currentLine());
+      if (this.lexer.atEnd()) this.failUnterminatedStyle(`Unterminated style rule '${selector}': expected '}'`);
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
       }
-      declarations.push(this.parseStyleDeclaration());
+      const before = this.lexer.position();
+      const beforeLine = this.lexer.currentLine();
+      try {
+        declarations.push(this.parseStyleDeclaration());
+      } catch (e) {
+        this.recordSyntaxError(e, true);
+        if (this.recovering && /^\{\s*([A-Za-z-]+\s*:|\})/.test(this.lexer.peekRaw(200))) {
+          this.lexer.setPos(before, beforeLine);
+          return { selector, declarations };
+        }
+        this.skipStyleDeclaration();
+        if (this.lexer.position() === before) this.lexer.advanceChar();
+      }
     }
     return { selector, declarations };
   }
 
   private parseStyleDeclaration(): AST.StyleDeclaration {
     let property = '';
-    while (!this.lexer.atEnd() && !/[:\s]/.test(this.lexer.peekChar())) property += this.lexer.advanceChar();
+    while (!this.lexer.atEnd() && !/[:;}\s]/.test(this.lexer.peekChar())) property += this.lexer.advanceChar();
     this.lexer.skipRawWhitespace();
     if (this.lexer.peekChar() !== ':') throw new ParseError(`Expected ':' after style property '${property}'`, this.lexer.currentLine());
     this.lexer.advanceChar();
@@ -1228,8 +1265,8 @@ export class Parser {
     if (rawBuf.length > 0) {
       parts.push({ kind: 'raw', text: rawBuf.replace(/\s+$/, '') });
     }
-    if (this.lexer.peekChar() === ';') this.lexer.advanceChar();
     if (parts.length === 0) throw new ParseError(`Expected a value for style property '${property}'`, this.lexer.currentLine());
+    if (this.lexer.peekChar() === ';') this.lexer.advanceChar();
     return { property, parts };
   }
 }
