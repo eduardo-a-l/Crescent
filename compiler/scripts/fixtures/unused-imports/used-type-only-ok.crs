@@ -1,0 +1,13 @@
+use lib::Point;
+
+component Main {
+    state<Point?> maybe = null;
+
+    void show(Point p) {
+        console.log(p.x);
+    }
+
+    view {
+        <p>"main"</p>
+    }
+}

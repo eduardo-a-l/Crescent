@@ -1,0 +1,7 @@
+component Broken {
+    state<int> count = "not a number";
+
+    view {
+        <p>{count}</p>
+    }
+}

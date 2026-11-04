@@ -1,0 +1,10 @@
+struct Point {
+    int x;
+    int y;
+}
+
+component PointBadge(Point p) {
+    view {
+        <span class="point">"(" {p.x} ", " {p.y} ")"</span>
+    }
+}

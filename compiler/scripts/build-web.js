@@ -9,6 +9,16 @@ fs.mkdirSync(outDir, { recursive: true });
 const targets = [
   { file: 'counter.js', globalName: 'CrescentCounter', mountFn: 'Counter', rootId: 'counter-root' },
   { file: 'day_picker.js', globalName: 'CrescentDayPicker', mountFn: 'DayPicker', rootId: 'day-picker-root' },
+  { file: 'theme_toggle.js', globalName: 'CrescentThemeToggle', mountFn: 'ThemeToggle', rootId: 'theme-toggle-root' },
+  { file: 'composition.js', globalName: 'CrescentComposition', mountFn: 'App', rootId: 'composition-root' },
+  { file: 'reactive_list.js', globalName: 'CrescentReactiveList', mountFn: 'TaskBoard', rootId: 'reactive-list-root' },
+  { file: 'derived_and_lifecycle.js', globalName: 'CrescentDerivedLifecycle', mountFn: 'Cart', rootId: 'derived-lifecycle-root' },
+  { file: path.join('modules', 'main.js'), globalName: 'CrescentModules', mountFn: 'App', rootId: 'modules-root' },
+  { file: 'keyed_list.js', globalName: 'CrescentKeyedList', mountFn: 'TodoList', rootId: 'keyed-list-root' },
+  { file: 'array_mutators.js', globalName: 'CrescentArrayMutators', mountFn: 'TaskList', rootId: 'array-mutators-root' },
+  { file: 'array_mutators_native.js', globalName: 'CrescentArrayMutatorsNative', mountFn: 'NumberList', rootId: 'array-mutators-native-root' },
+  { file: 'provide_inject.js', globalName: 'CrescentProvideInject', mountFn: 'App', rootId: 'provide-inject-root' },
+  { file: 'multi_root.js', globalName: 'CrescentMultiRoot', mountFn: 'Header', rootId: 'multi-root-root' },
 ];
 
 async function main() {

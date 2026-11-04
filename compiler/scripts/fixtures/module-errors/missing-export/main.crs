@@ -1,0 +1,9 @@
+use lib::Lib;
+
+use lib::Ghost;
+
+component Main {
+    view {
+        <p>"main"</p>
+    }
+}

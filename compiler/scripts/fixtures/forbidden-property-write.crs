@@ -1,0 +1,16 @@
+struct User {
+    string name;
+    int age;
+}
+
+component Profile {
+    state<User> user = User { name: "Alex", age: 25 };
+
+    void rename() {
+        user.name = "Sam";
+    }
+
+    view {
+        <p>{user.name}</p>
+    }
+}

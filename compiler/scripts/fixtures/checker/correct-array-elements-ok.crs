@@ -1,0 +1,17 @@
+component Fine {
+    state<int[]> nums = [1, 2, 3];
+    state<int?[]> maybe_nums = [1, null, 3];
+    state<int[][]> grid = [[1, 2], [3, 4]];
+
+    int sum(int[] values) {
+        return 0;
+    }
+
+    void run() {
+        sum([1, 2, 3]);
+    }
+
+    view {
+        <p>{nums[0]}</p>
+    }
+}

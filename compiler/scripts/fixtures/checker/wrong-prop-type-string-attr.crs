@@ -1,0 +1,11 @@
+component Age(int value) {
+    view {
+        <p>{value}</p>
+    }
+}
+
+component Broken {
+    view {
+        <Age value="5"/>
+    }
+}

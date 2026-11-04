@@ -1,0 +1,10 @@
+use super::shapes::Point;
+
+component Card(Point origin) {
+    view {
+        <div class="card">
+            <p class="origin">"Origin: (" {origin.x} ", " {origin.y} ")"</p>
+            <slot />
+        </div>
+    }
+}

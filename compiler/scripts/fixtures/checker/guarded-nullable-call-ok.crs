@@ -1,0 +1,65 @@
+component CallsOk {
+    state<string?> name = "Ada";
+    state<string?> other = null;
+    state<int> count = 0;
+    state<string[]> names = ["a"];
+
+    void set_other() {
+        other = "x";
+    }
+
+    void bump() {
+        count = count + 1;
+    }
+
+    void reset_name() {
+        name = "fresh";
+    }
+
+    void clear_name() {
+        name = null;
+    }
+
+    void touch_param(string? name) {
+        name = null;
+    }
+
+    void keeps_narrowing() {
+        if (name != null) {
+            set_other();
+            bump();
+            touch_param(null);
+            reset_name();
+            console.log(name.length);
+        }
+    }
+
+    void exiting_branch_does_not_flow() {
+        if (name == null) {
+            clear_name();
+            return;
+        }
+        console.log(name.length);
+    }
+
+    void loop_test_renarrows() {
+        while (name != null) {
+            console.log(name.length);
+            clear_name();
+        }
+    }
+
+    void continue_skips_the_rest() {
+        for (string item in names) {
+            if (name == null) {
+                clear_name();
+                continue;
+            }
+            console.log(name.length);
+        }
+    }
+
+    view {
+        <p>"callsok"</p>
+    }
+}

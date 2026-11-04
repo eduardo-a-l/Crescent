@@ -1,0 +1,22 @@
+component CustomButton(string label, void() action) {
+    view {
+        <button class="btn" onclick={action}>
+            {label}
+        </button>
+    }
+}
+
+component ClickCounter {
+    state<int> clicks = 0;
+
+    void handle_click() {
+        clicks++;
+    }
+
+    view {
+        <main>
+            <h1>"Total Clicks: " {clicks}</h1>
+            <CustomButton action={handle_click} label="Click Me!"/>
+        </main>
+    }
+}

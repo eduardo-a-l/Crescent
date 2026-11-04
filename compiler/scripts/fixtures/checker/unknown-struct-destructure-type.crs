@@ -1,0 +1,11 @@
+component Broken {
+    state<int> origin = 0;
+
+    void run() {
+        Ghost { x, y } = origin;
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

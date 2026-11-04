@@ -1,0 +1,17 @@
+component Card {
+    view {
+        <p>"card"</p>
+    }
+}
+
+component Broken {
+    state<int> origin = 0;
+
+    void run() {
+        Card { x, y } = origin;
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

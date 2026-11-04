@@ -1,0 +1,21 @@
+component Fine {
+    state<string?[]> names = ["Ada", null, "Grace"];
+
+    void logAll() {
+        for (string? item in names) {
+            if (item != null) {
+                console.log(item.length);
+            }
+        }
+    }
+
+    view {
+        for (string? item in names key item) {
+            if (item != null) {
+                <p>{item.length}</p>
+            } else {
+                <p>"(none)"</p>
+            }
+        }
+    }
+}

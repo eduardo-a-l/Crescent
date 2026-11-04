@@ -1,0 +1,100 @@
+struct Box {
+    int v;
+}
+
+component DerivedWrites {
+    state<int> count = 0;
+    state<Box> box = Box { v: 1 };
+    state<int[]> items = [1];
+    derived<string?> label = count > 3 ? null : "x";
+    derived<string?> alias = label;
+    derived<string?> via_fn = compute();
+    derived<string?> via_box = box.v > 3 ? null : "x";
+    derived<string?> first = items.length > 3 ? null : "x";
+
+    string? compute() {
+        return count > 3 ? null : "x";
+    }
+
+    int bump() {
+        count = 5;
+        return 1;
+    }
+
+    void literal_write() {
+        if (label != null) {
+            count = 5;
+            console.log(label.length);
+        }
+    }
+
+    void compound_write() {
+        if (label != null) {
+            count += 5;
+            console.log(label.length);
+        }
+    }
+
+    void postfix_write() {
+        if (label != null) {
+            count++;
+            console.log(label.length);
+        }
+    }
+
+    void call_that_writes() {
+        if (label != null) {
+            bump();
+            console.log(label.length);
+        }
+    }
+
+    void derived_of_derived() {
+        if (alias != null) {
+            count = 5;
+            console.log(alias.length);
+        }
+    }
+
+    void through_function_read() {
+        if (via_fn != null) {
+            count = 5;
+            console.log(via_fn.length);
+        }
+    }
+
+    void whole_struct_reassigned() {
+        if (via_box != null) {
+            box = Box { v: 5 };
+            console.log(via_box.length);
+        }
+    }
+
+    void mutating_method_call() {
+        if (first != null) {
+            items.push(1);
+            items.push(2);
+            items.push(3);
+            console.log(first.length);
+        }
+    }
+
+    void loop_back_edge() {
+        if (label != null) {
+            for (int i = 0; i < 3; i++) {
+                console.log(label.length);
+                count = 5;
+            }
+        }
+    }
+
+    void inside_one_expression() {
+        if (label != null) {
+            int total = bump() + label.length;
+        }
+    }
+
+    view {
+        <p>"derived"</p>
+    }
+}

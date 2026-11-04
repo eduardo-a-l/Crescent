@@ -1,0 +1,41 @@
+component Awaited {
+    state<string?> name = "Ada";
+    derived<string?> label = name;
+
+    async string get_text() {
+        return "t";
+    }
+
+    async void after_await() {
+        if (name != null) {
+            string t = await get_text();
+            console.log(name.length);
+        }
+    }
+
+    async void guard_test_await() {
+        if (name != null && await get_text() == "t") {
+            console.log(name.length);
+        }
+    }
+
+    async void loop_with_await() {
+        if (name != null) {
+            for (int i = 0; i < 3; i++) {
+                console.log(name.length);
+                string t = await get_text();
+            }
+        }
+    }
+
+    async void derived_after_await() {
+        if (label != null) {
+            string t = await get_text();
+            console.log(label.length);
+        }
+    }
+
+    view {
+        <p>"awaited"</p>
+    }
+}

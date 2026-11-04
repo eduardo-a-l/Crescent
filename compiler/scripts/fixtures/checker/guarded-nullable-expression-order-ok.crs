@@ -1,0 +1,87 @@
+struct Pair {
+    int a;
+    int b;
+}
+
+component OrderedOk {
+    state<string?> name = "Ada";
+    state<string?> other = "Bob";
+
+    int reset() {
+        name = null;
+        return 1;
+    }
+
+    int reset_other() {
+        other = null;
+        return 1;
+    }
+
+    int pair(int a, int b) {
+        return a + b;
+    }
+
+    async int slow() {
+        return 1;
+    }
+
+    void binary_use_before_call() {
+        if (name == null) {
+            return;
+        }
+        int total = name.length + reset();
+    }
+
+    void call_arguments_use_before_call() {
+        if (name == null) {
+            return;
+        }
+        int total = pair(name.length, reset());
+    }
+
+    void array_literal_use_before_call() {
+        if (name == null) {
+            return;
+        }
+        int[] values = [name.length, reset()];
+    }
+
+    void struct_literal_use_before_call() {
+        if (name == null) {
+            return;
+        }
+        Pair p = Pair { a: name.length, b: reset() };
+    }
+
+    void call_that_nulls_something_else() {
+        if (name == null) {
+            return;
+        }
+        int total = reset_other() + name.length;
+    }
+
+    void and_chain_with_access_first() {
+        if (name != null && name.length > 0 && reset() > 0) {
+            console.log("x");
+        }
+    }
+
+    void ternary_without_calls() {
+        int total = name == null ? 0 : name.length;
+    }
+
+    void ternary_call_after_access() {
+        int total = name != null ? name.length + reset() : 0;
+    }
+
+    async void await_after_access() {
+        if (name == null) {
+            return;
+        }
+        int total = name.length + (await slow());
+    }
+
+    view {
+        <p>"orderedok"</p>
+    }
+}

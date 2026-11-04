@@ -1,0 +1,50 @@
+component Guarded {
+    state<string?> message = null;
+    state<string?> other = null;
+    state<string[]> names = ["a", "b"];
+
+    void with_break() {
+        for (int i = 0; i < 3; i++) {
+            if (message == null) {
+                break;
+            }
+            console.log(message.length);
+        }
+    }
+
+    void with_continue() {
+        while (names.length > 0) {
+            if (message == null) {
+                continue;
+            }
+            console.log(message.length);
+        }
+    }
+
+    void with_do_while() {
+        do {
+            if (message == null || other == null) {
+                continue;
+            }
+            console.log(message.length);
+            console.log(other.length);
+        } while (names.length > 0);
+    }
+
+    void with_for_each() {
+        for (string name in names) {
+            if (message == null) {
+                if (other == null) {
+                    break;
+                } else {
+                    continue;
+                }
+            }
+            console.log(message.length);
+        }
+    }
+
+    view {
+        <p>"guarded"</p>
+    }
+}

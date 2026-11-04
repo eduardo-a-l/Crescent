@@ -1,0 +1,7 @@
+use b::Bee;
+
+component Ant {
+    view {
+        <p>"ant"</p>
+    }
+}

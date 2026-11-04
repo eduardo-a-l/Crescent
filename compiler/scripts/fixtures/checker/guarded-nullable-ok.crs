@@ -1,0 +1,11 @@
+component Fine {
+    state<string?> user_name = null;
+
+    view {
+        if (user_name != null) {
+            <p>{user_name}</p>
+        } else {
+            <p>"Please log in."</p>
+        }
+    }
+}

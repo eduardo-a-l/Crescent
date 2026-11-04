@@ -1,11 +1,9 @@
 name: CI
-
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
-
+    branches: [main, develop]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -20,3 +18,32 @@ jobs:
       - run: npm install
       - run: npx tsc --noEmit
       - run: npm test
+
+  web:
+    runs-on: ubuntu-latest
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [crescent-web, playground]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the compiler
+        working-directory: compiler
+        run: |
+          npm install
+          npm run build
+      - name: Install ${{ matrix.project }}
+        working-directory: ${{ matrix.project }}
+        run: npm install
+      - name: Test ${{ matrix.project }}
+        working-directory: ${{ matrix.project }}
+        run: npm test
+      - name: Build the site, as Vercel does
+        if: matrix.project == 'crescent-web'
+        working-directory: crescent-web
+        run: npm run build

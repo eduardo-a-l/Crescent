@@ -1,0 +1,15 @@
+component Fine {
+    state<int> total = 0;
+
+    int add(int a, int b) {
+        return a + b;
+    }
+
+    void run() {
+        total = add(1, 2);
+    }
+
+    view {
+        <p>{total}</p>
+    }
+}

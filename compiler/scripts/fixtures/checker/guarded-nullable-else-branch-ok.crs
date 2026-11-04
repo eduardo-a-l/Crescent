@@ -1,0 +1,23 @@
+struct User {
+    string name;
+}
+
+component Profile {
+    state<User?> user = null;
+
+    void greet() {
+        if (user == null) {
+            console.log("no user");
+        } else {
+            console.log(user.name);
+        }
+    }
+
+    view {
+        if (user == null) {
+            <p>"Please log in."</p>
+        } else {
+            <p>{user.name}</p>
+        }
+    }
+}

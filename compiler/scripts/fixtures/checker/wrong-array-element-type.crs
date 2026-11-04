@@ -1,0 +1,7 @@
+component Broken {
+    state<int[]> nums = [1, 2, "three"];
+
+    view {
+        <p>"static"</p>
+    }
+}

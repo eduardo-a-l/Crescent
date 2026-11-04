@@ -1,0 +1,13 @@
+component Broken {
+    int sum(int[] values) {
+        return 0;
+    }
+
+    void run() {
+        sum([1, 2, "three"]);
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

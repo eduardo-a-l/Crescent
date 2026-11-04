@@ -1,0 +1,92 @@
+component LoopsDemo {
+    state<int> total = 0;
+    state<string> counting = "";
+    state<string> skipping = "";
+    state<string> doubling = "";
+    state<string> once = "";
+    state<string> stateful = "";
+    state<string> pairs = "";
+    state<string> each = "";
+
+    void run_loops() {
+        string text = "";
+        for (int i = 0; i < 5; i++) {
+            text = text + i;
+        }
+        counting = text;
+
+        string odds = "";
+        for (int i = 0; i < 10; i++) {
+            if (i == 7) {
+                break;
+            }
+            if (i % 2 == 0) {
+                continue;
+            }
+            odds = odds + i;
+        }
+        skipping = odds;
+
+        int n = 1;
+        int steps = 0;
+        while (n < 100) {
+            n = n * 2;
+            steps++;
+        }
+        doubling = "n=" + n + " steps=" + steps;
+
+        int d = 10;
+        string ran = "";
+        do {
+            ran = ran + "ran";
+            d++;
+        } while (d < 5);
+        once = ran + " d=" + d;
+
+        string seen = "";
+        for (total = 0; total < 3; total++) {
+            seen = seen + total;
+        }
+        stateful = seen + " total=" + total;
+
+        string grid = "";
+        for (int a = 0; a < 3; a++) {
+            for (int b = 0; b < 3; b++) {
+                if (b == 2) {
+                    break;
+                }
+                if (a == 1) {
+                    continue;
+                }
+                grid = grid + a + b + ";";
+            }
+        }
+        pairs = grid;
+
+        string letters = "";
+        for (string word in ["a", "skip", "b", "stop", "c"]) {
+            if (word == "skip") {
+                continue;
+            }
+            if (word == "stop") {
+                break;
+            }
+            letters = letters + word;
+        }
+        each = letters;
+    }
+
+    on_mount {
+        run_loops();
+    }
+
+    view {
+        <p class="counting">{counting}</p>
+        <p class="skipping">{skipping}</p>
+        <p class="doubling">{doubling}</p>
+        <p class="once">{once}</p>
+        <p class="stateful">{stateful}</p>
+        <p class="pairs">{pairs}</p>
+        <p class="each">{each}</p>
+    }
+}

@@ -1,8 +1,11 @@
 export type TokenType =
   | 'COMPONENT' | 'STATE' | 'DERIVED' | 'PROVIDE' | 'INJECT' | 'CONST' | 'STRUCT'
   | 'VIEW' | 'STYLE' | 'IF' | 'ELSE' | 'FOR' | 'IN' | 'KEY' | 'RETURN'
+  | 'WHILE' | 'DO' | 'BREAK' | 'CONTINUE'
   | 'ASYNC' | 'AWAIT' | 'VOID' | 'TRUE' | 'FALSE' | 'NULL'
+
   | 'ON_MOUNT' | 'ON_CHANGE' | 'SLOT'
+  | 'USE' | 'SUPER' | 'AS'
   | 'INT_TYPE' | 'FLOAT_TYPE' | 'STRING_TYPE' | 'BOOL_TYPE'
   | 'IDENTIFIER' | 'INT_LITERAL' | 'FLOAT_LITERAL' | 'STRING_LITERAL'
   | 'LPAREN' | 'RPAREN' | 'LBRACE' | 'RBRACE' | 'LBRACKET' | 'RBRACKET'
@@ -11,7 +14,7 @@ export type TokenType =
   | 'PLUS' | 'MINUS' | 'STAR' | 'SLASH' | 'PERCENT'
   | 'PLUS_PLUS' | 'MINUS_MINUS'
   | 'BANG' | 'AND_AND' | 'OR_OR'
-  | 'QUESTION' | 'COLON' | 'SEMI' | 'COMMA' | 'DOT'
+  | 'QUESTION' | 'COLON' | 'COLONCOLON' | 'SEMI' | 'COMMA' | 'DOT'
   | 'SLASH_GT'
   | 'EOF';
 
@@ -20,6 +23,7 @@ export interface Token {
   value: string;
   line: number;
   start: number;
+  stringParts?: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string; line: number }>;
 }
 
 export const KEYWORDS: Record<string, TokenType> = {
@@ -37,7 +41,12 @@ export const KEYWORDS: Record<string, TokenType> = {
   for: 'FOR',
   in: 'IN',
   key: 'KEY',
+  while: 'WHILE',
+  do: 'DO',
+  break: 'BREAK',
+  continue: 'CONTINUE',
   return: 'RETURN',
+
   async: 'ASYNC',
   await: 'AWAIT',
   void: 'VOID',
@@ -47,6 +56,9 @@ export const KEYWORDS: Record<string, TokenType> = {
   on_mount: 'ON_MOUNT',
   on_change: 'ON_CHANGE',
   slot: 'SLOT',
+  use: 'USE',
+  super: 'SUPER',
+  as: 'AS',
   int: 'INT_TYPE',
   float: 'FLOAT_TYPE',
   string: 'STRING_TYPE',

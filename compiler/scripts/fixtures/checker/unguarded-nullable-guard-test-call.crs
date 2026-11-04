@@ -1,0 +1,18 @@
+component TestCall {
+    state<string?> name = "Ada";
+
+    bool clear_and_check() {
+        name = null;
+        return true;
+    }
+
+    void greet() {
+        if (name != null && clear_and_check()) {
+            console.log(name.length);
+        }
+    }
+
+    view {
+        <p>"testcall"</p>
+    }
+}

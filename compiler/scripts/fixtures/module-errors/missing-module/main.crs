@@ -1,0 +1,9 @@
+use lib::Lib;
+
+use nothere::Foo;
+
+component Main {
+    view {
+        <p>"main"</p>
+    }
+}

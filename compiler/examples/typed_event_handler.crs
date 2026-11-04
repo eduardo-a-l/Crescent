@@ -1,0 +1,14 @@
+component SearchBox {
+    state<string> query = "";
+
+    void handle_key(KeyboardEvent e) {
+        query = "key pressed";
+    }
+
+    view {
+        <div class="search">
+            <input onkeydown={handle_key} />
+            <p>{query}</p>
+        </div>
+    }
+}

@@ -1,28 +1,78 @@
-import { Lexer } from './lexer';
+import { Lexer, LexError } from './lexer';
 import { Token, TokenType, PRIMITIVE_TYPE_TOKENS } from './tokens';
 import * as AST from './ast';
 
-export class ParseError extends Error {}
+export class ParseError extends Error {
+  file?: string;
+  line: number | null;
+
+  constructor(message: string, line: number | null = null) {
+    super(message);
+    this.line = line;
+  }
+}
 
 interface Snapshot {
   pos: number;
+  line: number;
+  braces: number;
+  parens: number;
 }
+
+class RecoveryAbort extends Error {}
+
+export const MAX_SYNTAX_ERRORS = 20;
+
+export const parseStats = { backtracks: 0 };
+
+export const MAX_NESTING = 256;
+export const MAX_AST_DEPTH = 1000;
 
 export class Parser {
   private lexer: Lexer;
   private current: Token;
+  private depth: number;
+  private braceDepth = 0;
+  private parenDepth = 0;
+  private recovering = false;
+  private inRaw = false;
+  private openTags: string[] = [];
+  private closedInline = false;
+  private viewErrorBase = 0;
+  private styleErrorBase = 0;
+  errors: ParseError[] = [];
 
-  constructor(source: string) {
-    this.lexer = new Lexer(source);
+  constructor(source: string, depth: number = 0, startLine: number = 1) {
+    this.depth = depth;
+    this.lexer = new Lexer(source, startLine);
     this.current = this.lexer.nextToken();
   }
 
+  private nested<T>(fn: () => T): T {
+    if (this.depth >= MAX_NESTING) {
+      throw new ParseError(`Nesting is too deep: more than ${MAX_NESTING} levels of nested expressions, statements, types or template nodes`, this.current.line);
+    }
+    this.depth += 1;
+    try {
+      return fn();
+    } finally {
+      this.depth -= 1;
+    }
+  }
+
   private snapshot(): Snapshot {
-    return { pos: this.current.start };
+    return { pos: this.current.start, line: this.lexer.lineBefore(this.current.start), braces: this.braceDepth, parens: this.parenDepth };
+  }
+
+  private backtrack(snap: Snapshot): void {
+    parseStats.backtracks += 1;
+    this.restore(snap);
   }
 
   private restore(snap: Snapshot): void {
-    this.lexer.setPos(snap.pos);
+    this.lexer.setPos(snap.pos, snap.line);
+    this.braceDepth = snap.braces;
+    this.parenDepth = snap.parens;
     this.current = this.lexer.nextToken();
   }
 
@@ -36,36 +86,259 @@ export class Parser {
 
   private advance(): Token {
     const prev = this.current;
+    if (prev.type === 'LBRACE') this.braceDepth += 1;
+    else if (prev.type === 'RBRACE' && this.braceDepth > 0) this.braceDepth -= 1;
+    else if (prev.type === 'LPAREN' || prev.type === 'LBRACKET') this.parenDepth += 1;
+    else if ((prev.type === 'RPAREN' || prev.type === 'RBRACKET') && this.parenDepth > 0) this.parenDepth -= 1;
     this.current = this.lexer.nextToken();
     return prev;
+  }
+
+  enableRecovery(): void {
+    this.recovering = true;
+  }
+
+  private recordSyntaxError(e: unknown, insideRaw: boolean = false): void {
+    if (!this.recovering || !(e instanceof ParseError)) throw e;
+    if (!insideRaw && !this.inRaw && this.errors.length > 0 && this.check('EOF')) throw new RecoveryAbort();
+    const previous = this.errors[this.errors.length - 1];
+    if (!previous || previous.line === null || previous.line !== e.line) this.errors.push(e);
+    if ((this.inRaw && !insideRaw) || this.errors.length >= MAX_SYNTAX_ERRORS) throw new RecoveryAbort();
+  }
+
+  private failUnterminatedStyle(message: string): never {
+    if (this.recovering && this.errors.length > this.styleErrorBase) throw new RecoveryAbort();
+    throw new ParseError(message, this.lexer.currentLine());
+  }
+
+  private skipStyleDeclaration(): void {
+    let depth = 0;
+    while (!this.lexer.atEnd()) {
+      const c = this.lexer.peekChar();
+      if (c === '{') {
+        depth += 1;
+      } else if (c === '}') {
+        if (depth === 0) return;
+        depth -= 1;
+      } else if (c === ';' && depth === 0) {
+        this.lexer.advanceChar();
+        return;
+      }
+      this.lexer.advanceChar();
+    }
+  }
+
+  private recoverFrom(e: unknown, blockDepth: number, topLevel: boolean, itemStart: number, itemParens: number): void {
+    this.recordSyntaxError(e);
+    this.synchronize(blockDepth, topLevel, itemParens);
+    if (this.check('EOF') || this.current.start === itemStart) throw new RecoveryAbort();
+  }
+
+  private parseTemplateList(kind: 'braces' | 'tag'): AST.TemplateNode[] {
+    const nodes: AST.TemplateNode[] = [];
+    const level = this.braceDepth;
+    while (!(kind === 'braces' ? this.check('RBRACE') : this.check('LT') && this.isClosingTagAhead())) {
+      const itemStart = this.current.start;
+      try {
+        nodes.push(this.parseTemplateNode());
+      } catch (e) {
+        this.recordSyntaxError(e);
+        if (kind === 'tag' && this.closeWithoutOpeningBracket()) {
+          this.closedInline = true;
+          break;
+        }
+        this.synchronizeTemplate(level, kind);
+        if (this.check('EOF')) throw new RecoveryAbort();
+        if (this.current.start === itemStart) {
+          if (kind === 'tag' && this.check('RBRACE')) break;
+          throw new RecoveryAbort();
+        }
+        if (this.braceDepth < level) break;
+      }
+    }
+    return nodes;
+  }
+
+  private closeWithoutOpeningBracket(): boolean {
+    if (!this.check('SLASH') || this.openTags.length === 0) return false;
+    const name = this.openTags[this.openTags.length - 1];
+    const snap = this.snapshot();
+    this.advance();
+    const matches = (name === 'slot' ? this.check('SLOT') : this.check('IDENTIFIER') && this.current.value === name);
+    if (matches) {
+      this.advance();
+      if (this.check('GT')) {
+        this.advance();
+        return true;
+      }
+    }
+    this.restore(snap);
+    return false;
+  }
+
+  private synchronizeTemplate(level: number, kind: 'braces' | 'tag'): void {
+    while (!this.check('EOF')) {
+      if (this.braceDepth === level) {
+        if (this.check('RBRACE') || this.check('STRING_LITERAL') || this.check('IF') || this.check('FOR')) return;
+        if (this.check('LT')) {
+          if (!this.isClosingTagAhead() || kind === 'tag') return;
+        }
+      }
+      this.advance();
+    }
+  }
+
+  private skipDamagedElement(phase: 'open' | 'children' | 'close', base: number): void {
+    if (phase === 'close') {
+      while (!this.check('EOF') && !this.check('GT') && !this.check('RBRACE') && !this.check('LT')) this.advance();
+      if (this.check('GT')) this.advance();
+      return;
+    }
+    if (this.check('SLASH')) {
+      while (!this.check('EOF') && !this.check('GT') && !this.check('RBRACE') && !this.check('LT')) this.advance();
+      if (this.check('GT')) this.advance();
+      return;
+    }
+    let open = 1;
+    let inTag = true;
+    while (!this.check('EOF')) {
+      if (this.braceDepth === base) {
+        if (this.check('RBRACE')) return;
+        if (inTag && this.check('LT')) {
+          if (!this.isClosingTagAhead()) return;
+          inTag = false;
+        }
+        if (inTag && this.check('SLASH_GT')) {
+          this.advance();
+          open -= 1;
+          inTag = false;
+          if (open === 0) return;
+          continue;
+        }
+        if (inTag && this.check('GT')) {
+          this.advance();
+          inTag = false;
+          continue;
+        }
+        if (!inTag && this.check('LT')) {
+          if (this.isClosingTagAhead()) {
+            this.advance();
+            this.advance();
+            while (!this.check('EOF') && !this.check('GT') && !this.check('RBRACE')) this.advance();
+            if (this.check('GT')) this.advance();
+            open -= 1;
+            if (open === 0) return;
+            continue;
+          }
+          this.advance();
+          open += 1;
+          inTag = true;
+          continue;
+        }
+      }
+      this.advance();
+    }
+  }
+
+  private synchronize(blockDepth: number, topLevel: boolean, itemParens: number): void {
+    while (!this.check('EOF')) {
+      if (!topLevel && this.braceDepth === blockDepth && this.check('RBRACE')) return;
+      if (topLevel && this.braceDepth === 0 && this.checkAny(['COMPONENT', 'STRUCT', 'USE'])) return;
+      const consumed = this.advance();
+      if (consumed.type === 'SEMI' && this.parenDepth <= itemParens && this.braceDepth === blockDepth) return;
+      if (consumed.type === 'RBRACE' && this.braceDepth === blockDepth) return;
+      if (this.braceDepth < blockDepth) return;
+    }
   }
 
   private expect(type: TokenType, message?: string): Token {
     if (!this.check(type)) {
       throw new ParseError(
         message ??
-          `Expected token ${type} but got ${this.current.type} ('${this.current.value}') at line ${this.current.line}`
+          `Expected token ${type} but got ${this.current.type} ('${this.current.value}')`,
+        this.current.line
       );
     }
     return this.advance();
   }
 
   private fail(message: string): never {
-    throw new ParseError(`${message} at line ${this.current.line} (got ${this.current.type} '${this.current.value}')`);
+    throw new ParseError(`${message} (got ${this.current.type} '${this.current.value}')`, this.current.line);
   }
 
   parseProgram(): AST.Program {
     const declarations: AST.TopLevelDecl[] = [];
     while (!this.check('EOF')) {
-      declarations.push(this.parseTopLevelDecl());
+      const itemStart = this.current.start;
+      const itemParens = this.parenDepth;
+      try {
+        declarations.push(this.parseTopLevelDecl());
+      } catch (e) {
+        this.recoverFrom(e, 0, true, itemStart, itemParens);
+      }
     }
     return { kind: 'Program', declarations };
   }
 
   private parseTopLevelDecl(): AST.TopLevelDecl {
+    const line = this.current.line;
+    const decl = this.parseTopLevelDeclInner();
+    decl.line = line;
+    return decl;
+  }
+
+  private parseTopLevelDeclInner(): AST.TopLevelDecl {
     if (this.check('STRUCT')) return this.parseStructDecl();
     if (this.check('COMPONENT')) return this.parseComponentDecl();
-    this.fail("Expected 'component' or 'struct' at top level");
+    if (this.check('USE')) return this.parseUseDecl();
+    this.fail("Expected 'component', 'struct', or 'use' at top level");
+  }
+
+  private parsePathSegment(): string {
+    if (this.check('SUPER')) {
+      this.advance();
+      return 'super';
+    }
+    return this.expect('IDENTIFIER').value;
+  }
+
+  private parseImportItem(): AST.ImportItem {
+    const name = this.expect('IDENTIFIER').value;
+    if (this.check('AS')) {
+      this.advance();
+      const alias = this.expect('IDENTIFIER').value;
+      return { name, alias };
+    }
+    return { name };
+  }
+
+  private parseUseDecl(): AST.UseDecl {
+    const useLine = this.current.line;
+    this.expect('USE');
+    const segments: string[] = [this.parsePathSegment()];
+
+    while (this.check('COLONCOLON')) {
+      this.advance();
+      if (this.check('LBRACE')) {
+        this.advance();
+        const items: AST.ImportItem[] = [this.parseImportItem()];
+        while (this.check('COMMA')) {
+          this.advance();
+          items.push(this.parseImportItem());
+        }
+        this.expect('RBRACE');
+        this.expect('SEMI');
+        return { kind: 'UseDecl', pathSegments: segments, items , line: 0 };
+      }
+      segments.push(this.parsePathSegment());
+    }
+
+    this.expect('SEMI');
+    const itemName = segments.pop();
+    if (itemName === undefined || segments.length === 0) {
+      throw new ParseError("'use' must reference a module path before the imported item, e.g. 'use card::UserCard;'", useLine);
+    }
+    return { kind: 'UseDecl', pathSegments: segments, items: [{ name: itemName }] , line: 0 };
   }
 
   private parseStructDecl(): AST.StructDecl {
@@ -80,7 +353,7 @@ export class Parser {
       fields.push({ type, name: fieldName });
     }
     this.expect('RBRACE');
-    return { kind: 'StructDecl', name, fields };
+    return { kind: 'StructDecl', name, fields , line: 0 };
   }
 
   private parseComponentDecl(): AST.ComponentDecl {
@@ -94,11 +367,19 @@ export class Parser {
     }
     this.expect('LBRACE');
     const members: AST.ComponentMember[] = [];
+    const memberDepth = this.braceDepth;
     while (!this.check('RBRACE')) {
-      members.push(this.parseComponentMember());
+      const itemStart = this.current.start;
+      const itemParens = this.parenDepth;
+      try {
+        members.push(this.parseComponentMember());
+      } catch (e) {
+        this.recoverFrom(e, memberDepth, false, itemStart, itemParens);
+        if (this.braceDepth < memberDepth) return { kind: 'ComponentDecl', name, params, members , line: 0 };
+      }
     }
     this.expect('RBRACE');
-    return { kind: 'ComponentDecl', name, params, members };
+    return { kind: 'ComponentDecl', name, params, members , line: 0 };
   }
 
   private parseParamList(): AST.Param[] {
@@ -125,6 +406,13 @@ export class Parser {
   }
 
   private parseComponentMember(): AST.ComponentMember {
+    const line = this.current.line;
+    const member = this.parseComponentMemberInner();
+    member.line = line;
+    return member;
+  }
+
+  private parseComponentMemberInner(): AST.ComponentMember {
     switch (this.current.type) {
       case 'STATE': return this.parseStateDecl();
       case 'DERIVED': return this.parseDerivedDecl();
@@ -156,7 +444,7 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'StateDecl', type, name, init };
+    return { kind: 'StateDecl', type, name, init , line: 0 };
   }
 
   private parseDerivedDecl(): AST.DerivedDecl {
@@ -168,7 +456,7 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'DerivedDecl', type, name, init };
+    return { kind: 'DerivedDecl', type, name, init , line: 0 };
   }
 
   private parseProvideDecl(): AST.ProvideDecl {
@@ -180,7 +468,7 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'ProvideDecl', type, name, init };
+    return { kind: 'ProvideDecl', type, name, init , line: 0 };
   }
 
   private parseInjectDecl(): AST.InjectDecl {
@@ -190,7 +478,7 @@ export class Parser {
     this.expect('GT');
     const name = this.expect('IDENTIFIER').value;
     this.expect('SEMI');
-    return { kind: 'InjectDecl', type, name };
+    return { kind: 'InjectDecl', type, name , line: 0 };
   }
 
   private parseConstDecl(): AST.ConstDecl {
@@ -200,13 +488,13 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'ConstDecl', type, name, init };
+    return { kind: 'ConstDecl', type, name, init , line: 0 };
   }
 
   private parseOnMountDecl(): AST.OnMountDecl {
     this.expect('ON_MOUNT');
     const body = this.parseBlock();
-    return { kind: 'OnMountDecl', body };
+    return { kind: 'OnMountDecl', body , line: 0 };
   }
 
   private parseOnChangeDecl(): AST.OnChangeDecl {
@@ -219,7 +507,7 @@ export class Parser {
     }
     this.expect('RPAREN');
     const body = this.parseBlock();
-    return { kind: 'OnChangeDecl', watched, body };
+    return { kind: 'OnChangeDecl', watched, body , line: 0 };
   }
 
   private parseFunctionDecl(): AST.FunctionDecl {
@@ -241,10 +529,14 @@ export class Parser {
     if (!this.check('RPAREN')) params = this.parseParamList();
     this.expect('RPAREN');
     const body = this.parseBlock();
-    return { kind: 'FunctionDecl', isAsync, returnType, name, params, body };
+    return { kind: 'FunctionDecl', isAsync, returnType, name, params, body , line: 0 };
   }
 
   parseType(): AST.CrescentType {
+    return this.nested(() => this.parseTypeInner());
+  }
+
+  private parseTypeInner(): AST.CrescentType {
     let base = this.parseBaseType();
     while (true) {
       if (this.check('QUESTION')) {
@@ -279,28 +571,57 @@ export class Parser {
   private parseBlock(): AST.Stmt[] {
     this.expect('LBRACE');
     const stmts: AST.Stmt[] = [];
+    const blockDepth = this.braceDepth;
     while (!this.check('RBRACE')) {
-      stmts.push(this.parseStatement());
+      const itemStart = this.current.start;
+      const itemParens = this.parenDepth;
+      try {
+        stmts.push(this.parseStatement());
+      } catch (e) {
+        this.recoverFrom(e, blockDepth, false, itemStart, itemParens);
+        if (this.braceDepth < blockDepth) return stmts;
+      }
     }
     this.expect('RBRACE');
     return stmts;
   }
 
   private parseStatement(): AST.Stmt {
+    const line = this.current.line;
+    const stmt = this.nested(() => this.parseStatementInner());
+    stmt.line = line;
+    return stmt;
+  }
+
+  private parseStatementInner(): AST.Stmt {
     if (PRIMITIVE_TYPE_TOKENS.includes(this.current.type)) {
       return this.parseVarDeclStatement();
     }
     if (this.check('IDENTIFIER')) {
-      const snap = this.snapshot();
-      try {
-        return this.parseVarDeclStatement();
-      } catch (e) {
-        this.restore(snap);
+      const next = this.tokenAfterIdentifier();
+      if (next === 'LBRACE') {
+        const destructureSnap = this.snapshot();
+        try {
+          return this.parseStructDestructureStatement();
+        } catch (e) {
+          this.backtrack(destructureSnap);
+        }
+      } else if (this.identifierMayStartDeclaration()) {
+        const snap = this.snapshot();
+        try {
+          return this.parseVarDeclStatement();
+        } catch (e) {
+          this.backtrack(snap);
+        }
       }
       return this.parseAssignmentOrExprStatement();
     }
     if (this.check('IF')) return this.parseIfStatement();
     if (this.check('FOR')) return this.parseForStatement();
+    if (this.check('WHILE')) return this.parseWhileStatement();
+    if (this.check('DO')) return this.parseDoWhileStatement();
+    if (this.check('BREAK')) return this.parseLoopControlStatement('BREAK', 'Break');
+    if (this.check('CONTINUE')) return this.parseLoopControlStatement('CONTINUE', 'Continue');
     if (this.check('RETURN')) return this.parseReturnStatement();
     return this.parseAssignmentOrExprStatement();
   }
@@ -312,24 +633,39 @@ export class Parser {
     this.expect('ASSIGN');
     const init = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'VarDecl', type, name, init };
+    return { kind: 'VarDecl', type, name, init, line: 0 };
   }
 
-  private parseAssignmentOrExprStatement(): AST.Stmt {
+  private parseStructDestructureStatement(): AST.Stmt {
+    const typeName = this.expect('IDENTIFIER').value;
+    this.expect('LBRACE');
+    const fields: string[] = [this.expect('IDENTIFIER').value];
+    while (this.check('COMMA')) {
+      this.advance();
+      fields.push(this.expect('IDENTIFIER').value);
+    }
+    this.expect('RBRACE');
+    this.expect('ASSIGN');
+    const init = this.parseExpression();
+    this.expect('SEMI');
+    return { kind: 'StructDestructure', typeName, fields, init, line: 0 };
+  }
+
+  private parseAssignmentOrExprStatement(requireSemi: boolean = true): AST.Stmt {
     const expr = this.parseExpression();
     const assignOps: TokenType[] = ['ASSIGN', 'PLUS_ASSIGN', 'MINUS_ASSIGN', 'STAR_ASSIGN', 'SLASH_ASSIGN'];
     if (this.checkAny(assignOps)) {
       const op = this.advance().value;
       const value = this.parseExpression();
-      this.expect('SEMI');
-      return { kind: 'Assignment', target: expr, op, value };
+      if (requireSemi) this.expect('SEMI');
+      return { kind: 'Assignment', target: expr, op, value, line: 0 };
     }
     if (expr.kind === 'Postfix') {
-      this.expect('SEMI');
-      return { kind: 'PostfixStmt', target: expr.operand, op: expr.op };
+      if (requireSemi) this.expect('SEMI');
+      return { kind: 'PostfixStmt', target: expr.operand, op: expr.op, line: 0 };
     }
-    this.expect('SEMI');
-    return { kind: 'ExprStatement', expr };
+    if (requireSemi) this.expect('SEMI');
+    return { kind: 'ExprStatement', expr, line: 0 };
   }
 
   private parseIfStatement(): AST.Stmt {
@@ -347,34 +683,106 @@ export class Parser {
         alternate = this.parseBlock();
       }
     }
-    return { kind: 'If', test, consequent, alternate };
+    return { kind: 'If', test, consequent, alternate, line: 0 };
   }
 
   private parseForStatement(): AST.Stmt {
     this.expect('FOR');
     this.expect('LPAREN');
-    const itemType = this.parseType();
-    const itemName = this.expect('IDENTIFIER').value;
-    this.expect('IN');
-    const iterable = this.parseExpression();
+    const headerSnap = this.snapshot();
+    let itemType: AST.CrescentType | null = null;
+    let itemName = '';
+    const headerMayDeclare =
+      PRIMITIVE_TYPE_TOKENS.includes(this.current.type) || (this.check('IDENTIFIER') && this.identifierMayStartDeclaration());
+    if (headerMayDeclare) {
+      try {
+        itemType = this.parseType();
+        itemName = this.expect('IDENTIFIER').value;
+        this.expect('IN');
+      } catch (e) {
+        itemType = null;
+        this.backtrack(headerSnap);
+      }
+    }
+    if (itemType) {
+      const iterable = this.parseExpression();
+      this.expect('RPAREN');
+      const body = this.parseBlock();
+      return { kind: 'For', itemType, itemName, iterable, body, line: 0 };
+    }
+    const init = this.parseForInit();
+    const test = this.parseExpression();
+    this.expect('SEMI');
+    let update: AST.Stmt | undefined;
+    if (!this.check('RPAREN')) {
+      const updateLine = this.current.line;
+      update = this.parseAssignmentOrExprStatement(false);
+      update.line = updateLine;
+    }
     this.expect('RPAREN');
     const body = this.parseBlock();
-    return { kind: 'For', itemType, itemName, iterable, body };
+    return { kind: 'ForC', init, test, update, body, line: 0 };
+  }
+
+  private parseForInit(): AST.Stmt {
+    const line = this.current.line;
+    let init: AST.Stmt;
+    if (PRIMITIVE_TYPE_TOKENS.includes(this.current.type)) {
+      init = this.parseVarDeclStatement();
+    } else if (this.check('IDENTIFIER') && this.identifierMayStartDeclaration()) {
+      const snap = this.snapshot();
+      try {
+        init = this.parseVarDeclStatement();
+      } catch (e) {
+        this.backtrack(snap);
+        init = this.parseAssignmentOrExprStatement();
+      }
+    } else {
+      init = this.parseAssignmentOrExprStatement();
+    }
+    init.line = line;
+    return init;
+  }
+
+  private parseWhileStatement(): AST.Stmt {
+    this.expect('WHILE');
+    this.expect('LPAREN');
+    const test = this.parseExpression();
+    this.expect('RPAREN');
+    const body = this.parseBlock();
+    return { kind: 'While', test, body, line: 0 };
+  }
+
+  private parseDoWhileStatement(): AST.Stmt {
+    this.expect('DO');
+    const body = this.parseBlock();
+    this.expect('WHILE');
+    this.expect('LPAREN');
+    const test = this.parseExpression();
+    this.expect('RPAREN');
+    this.expect('SEMI');
+    return { kind: 'DoWhile', body, test, line: 0 };
+  }
+
+  private parseLoopControlStatement(token: TokenType, kind: 'Break' | 'Continue'): AST.Stmt {
+    this.expect(token);
+    this.expect('SEMI');
+    return { kind, line: 0 };
   }
 
   private parseReturnStatement(): AST.Stmt {
     this.expect('RETURN');
     if (this.check('SEMI')) {
       this.advance();
-      return { kind: 'Return' };
+      return { kind: 'Return', line: 0 };
     }
     const value = this.parseExpression();
     this.expect('SEMI');
-    return { kind: 'Return', value };
+    return { kind: 'Return', value, line: 0 };
   }
 
   parseExpression(): AST.Expr {
-    return this.parseTernary();
+    return this.nested(() => this.parseTernary());
   }
 
   private parseTernary(): AST.Expr {
@@ -452,12 +860,12 @@ export class Parser {
   private parseUnary(): AST.Expr {
     if (this.checkAny(['BANG', 'MINUS'])) {
       const op = this.advance().value as '!' | '-';
-      const operand = this.parseUnary();
+      const operand = this.nested(() => this.parseUnary());
       return { kind: 'Unary', op, operand };
     }
     if (this.check('AWAIT')) {
       this.advance();
-      const operand = this.parseUnary();
+      const operand = this.nested(() => this.parseUnary());
       return { kind: 'Unary', op: 'await', operand };
     }
     return this.parsePostfix();
@@ -497,6 +905,12 @@ export class Parser {
     return expr;
   }
 
+  private parseInterpolatedStringParts(token: Token): AST.InterpolatedPart[] {
+    return token.stringParts!.map((p) =>
+      p.kind === 'raw' ? { kind: 'raw', text: p.text } : { kind: 'expr', expr: new Parser(p.source, this.depth, p.line).parseExpression() }
+    );
+  }
+
   private parsePrimary(): AST.Expr {
     if (this.check('INT_LITERAL')) {
       return { kind: 'IntLiteral', value: parseInt(this.advance().value, 10) };
@@ -505,7 +919,11 @@ export class Parser {
       return { kind: 'FloatLiteral', value: parseFloat(this.advance().value) };
     }
     if (this.check('STRING_LITERAL')) {
-      return { kind: 'StringLiteral', value: this.advance().value };
+      const token = this.advance();
+      if (token.stringParts) {
+        return { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) };
+      }
+      return { kind: 'StringLiteral', value: token.value };
     }
     if (this.check('TRUE')) {
       this.advance();
@@ -545,7 +963,7 @@ export class Parser {
         try {
           return this.parseStructLiteralTail(name);
         } catch (e) {
-          this.restore(snap);
+          this.backtrack(snap);
           this.advance();
         }
       }
@@ -578,15 +996,20 @@ export class Parser {
   private parseViewBlockDecl(): AST.ViewBlockDecl {
     this.expect('VIEW');
     this.expect('LBRACE');
-    const nodes: AST.TemplateNode[] = [];
-    while (!this.check('RBRACE')) {
-      nodes.push(this.parseTemplateNode());
-    }
+    this.viewErrorBase = this.errors.length;
+    const nodes = this.parseTemplateList('braces');
     this.expect('RBRACE');
-    return { kind: 'ViewBlockDecl', nodes };
+    return { kind: 'ViewBlockDecl', nodes , line: 0 };
   }
 
   private parseTemplateNode(): AST.TemplateNode {
+    const line = this.current.line;
+    const node = this.nested(() => this.parseTemplateNodeInner());
+    node.line = line;
+    return node;
+  }
+
+  private parseTemplateNodeInner(): AST.TemplateNode {
     if (this.check('LT')) return this.parseElement();
     if (this.check('IF')) return this.parseTemplateIf();
     if (this.check('FOR')) return this.parseTemplateFor();
@@ -594,55 +1017,122 @@ export class Parser {
       this.advance();
       const expr = this.parseExpression();
       this.expect('RBRACE');
-      return { kind: 'TextInterpolation', expr };
+      return { kind: 'TextInterpolation', expr, line: 0 };
     }
     if (this.check('STRING_LITERAL')) {
-      return { kind: 'TextLiteral', value: this.advance().value };
+      const token = this.advance();
+      if (token.stringParts) {
+        return { kind: 'TextInterpolation', expr: { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) }, line: 0 };
+      }
+      return { kind: 'TextLiteral', value: token.value, line: 0 };
     }
     this.fail('Expected a template node inside view block');
   }
 
   private parseElement(): AST.TemplateNode {
-    this.expect('LT');
-    let tag: string;
-    if (this.check('SLOT')) {
-      this.advance();
-      tag = 'slot';
-    } else {
-      tag = this.expect('IDENTIFIER').value;
-    }
-    const isComponent = /^[A-Z]/.test(tag);
-    const attributes: AST.Attribute[] = [];
-    while (this.check('IDENTIFIER')) {
-      const attrName = this.advance().value;
-      this.expect('ASSIGN');
-      if (this.check('LBRACE')) {
+    const base = this.braceDepth;
+    let phase: 'open' | 'children' | 'close' = 'open';
+    let tag = '?';
+    const outerOpenTags = this.openTags.length;
+    try {
+      this.expect('LT');
+      if (this.check('SLOT')) {
         this.advance();
-        const exprValue = this.parseExpression();
-        this.expect('RBRACE');
-        attributes.push({ name: attrName, isExpr: true, exprValue });
+        tag = 'slot';
       } else {
-        const stringValue = this.expect('STRING_LITERAL').value;
-        attributes.push({ name: attrName, isExpr: false, stringValue });
+        tag = this.expect('IDENTIFIER').value;
       }
+      const isComponent = /^[A-Z]/.test(tag);
+      const attributes: AST.Attribute[] = [];
+      while (this.check('IDENTIFIER')) {
+        const attrName = this.advance().value;
+        this.expect('ASSIGN');
+        if (this.check('LBRACE')) {
+          this.advance();
+          const exprValue = this.parseExpression();
+          this.expect('RBRACE');
+          attributes.push({ name: attrName, isExpr: true, exprValue });
+        } else {
+          const token = this.expect('STRING_LITERAL');
+          if (token.stringParts) {
+            attributes.push({ name: attrName, isExpr: true, exprValue: { kind: 'TemplateString', parts: this.parseInterpolatedStringParts(token) } });
+          } else {
+            attributes.push({ name: attrName, isExpr: false, stringValue: token.value });
+          }
+        }
+      }
+      if (this.check('SLASH_GT')) {
+        this.advance();
+        return { kind: 'Element', tag, isComponent, attributes, children: [], selfClosing: true , line: 0 };
+      }
+      this.expect('GT');
+      phase = 'children';
+      const errorsBefore = this.errors.length;
+      this.openTags.push(tag);
+      let children: AST.TemplateNode[];
+      try {
+        children = this.parseTemplateList('tag');
+      } finally {
+        this.openTags.pop();
+      }
+      if (this.closedInline) {
+        this.closedInline = false;
+        return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
+      }
+      phase = 'close';
+      const closeSnap = this.snapshot();
+      this.expect('LT');
+      this.expect('SLASH');
+      const closeTag = this.check('SLOT') ? (this.advance(), 'slot') : this.expect('IDENTIFIER').value;
+      if (closeTag !== tag) {
+        if (!this.recovering) this.fail(`Mismatched closing tag: expected </${tag}> but got </${closeTag}>`);
+        if (this.errors.length === errorsBefore) {
+          try {
+            this.fail(`Mismatched closing tag: expected </${tag}> but got </${closeTag}>`);
+          } catch (e) {
+            this.recordSyntaxError(e);
+          }
+        }
+        if (this.openTags.includes(closeTag)) {
+          this.restore(closeSnap);
+        } else if (this.check('GT')) {
+          this.advance();
+        }
+        return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
+      }
+      this.expect('GT');
+      return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false , line: 0 };
+    } catch (e) {
+      this.openTags.length = outerOpenTags;
+      this.closedInline = false;
+      const strayClose = phase === 'open' && tag === '?' && this.check('SLASH') && this.errors.length > this.viewErrorBase;
+      if (!strayClose) this.recordSyntaxError(e);
+      this.skipDamagedElement(phase, base);
+      return { kind: 'Element', tag, isComponent: false, attributes: [], children: [], selfClosing: true, line: 0 };
     }
-    if (this.check('SLASH_GT')) {
-      this.advance();
-      return { kind: 'Element', tag, isComponent, attributes, children: [], selfClosing: true };
-    }
-    this.expect('GT');
-    const children: AST.TemplateNode[] = [];
-    while (!(this.check('LT') && this.isClosingTagAhead())) {
-      children.push(this.parseTemplateNode());
-    }
-    this.expect('LT');
-    this.expect('SLASH');
-    const closeTag = this.check('SLOT') ? (this.advance(), 'slot') : this.expect('IDENTIFIER').value;
-    if (closeTag !== tag) {
-      this.fail(`Mismatched closing tag: expected </${tag}> but got </${closeTag}>`);
-    }
-    this.expect('GT');
-    return { kind: 'Element', tag, isComponent, attributes, children, selfClosing: false };
+  }
+
+  private tokenAfterIdentifier(): TokenType {
+    const snap = this.snapshot();
+    this.advance();
+    const next = this.current.type;
+    this.restore(snap);
+    return next;
+  }
+
+  private bracketsCloseImmediately(): boolean {
+    const snap = this.snapshot();
+    this.advance();
+    this.advance();
+    const closed = this.check('RBRACKET');
+    this.restore(snap);
+    return closed;
+  }
+
+  private identifierMayStartDeclaration(): boolean {
+    const next = this.tokenAfterIdentifier();
+    if (next === 'LBRACKET') return this.bracketsCloseImmediately();
+    return next === 'IDENTIFIER' || next === 'LT' || next === 'QUESTION';
   }
 
   private isClosingTagAhead(): boolean {
@@ -659,8 +1149,7 @@ export class Parser {
     const test = this.parseExpression();
     this.expect('RPAREN');
     this.expect('LBRACE');
-    const consequent: AST.TemplateNode[] = [];
-    while (!this.check('RBRACE')) consequent.push(this.parseTemplateNode());
+    const consequent = this.parseTemplateList('braces');
     this.expect('RBRACE');
     let alternate: AST.TemplateNode[] | undefined;
     if (this.check('ELSE')) {
@@ -669,12 +1158,11 @@ export class Parser {
         alternate = [this.parseTemplateIf()];
       } else {
         this.expect('LBRACE');
-        alternate = [];
-        while (!this.check('RBRACE')) alternate.push(this.parseTemplateNode());
+        alternate = this.parseTemplateList('braces');
         this.expect('RBRACE');
       }
     }
-    return { kind: 'TemplateIf', test, consequent, alternate };
+    return { kind: 'TemplateIf', test, consequent, alternate , line: 0 };
   }
 
   private parseTemplateFor(): AST.TemplateNode {
@@ -691,67 +1179,164 @@ export class Parser {
     }
     this.expect('RPAREN');
     this.expect('LBRACE');
-    const body: AST.TemplateNode[] = [];
-    while (!this.check('RBRACE')) body.push(this.parseTemplateNode());
+    const body = this.parseTemplateList('braces');
     this.expect('RBRACE');
-    return { kind: 'TemplateFor', itemType, itemName, iterable, key, body };
+    return { kind: 'TemplateFor', itemType, itemName, iterable, key, body , line: 0 };
   }
 
   private parseStyleBlockDecl(): AST.StyleBlockDecl {
     this.expect('STYLE');
     this.expect('LBRACE');
-    this.lexer.setPos(this.current.start);
+    this.inRaw = true;
+    this.styleErrorBase = this.errors.length;
+    this.lexer.setPos(this.current.start, this.lexer.lineBefore(this.current.start));
     const rules: AST.StyleRule[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
+      if (this.lexer.atEnd()) this.failUnterminatedStyle("Unterminated style block: expected '}'");
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
       }
       rules.push(this.parseStyleRule());
     }
+    this.inRaw = false;
+    this.braceDepth -= 1;
     this.current = this.lexer.nextToken();
-    return { kind: 'StyleBlockDecl', rules };
+    return { kind: 'StyleBlockDecl', rules , line: 0 };
   }
 
   private parseStyleRule(): AST.StyleRule {
     const selector = this.lexer.readRawSelector();
+    if (this.lexer.atEnd()) throw new ParseError(`Expected '{' after style selector '${selector}'`, this.lexer.currentLine());
     this.lexer.advanceChar();
     const declarations: AST.StyleDeclaration[] = [];
     while (true) {
       this.lexer.skipRawWhitespace();
+      if (this.lexer.atEnd()) this.failUnterminatedStyle(`Unterminated style rule '${selector}': expected '}'`);
       if (this.lexer.peekChar() === '}') {
         this.lexer.advanceChar();
         break;
       }
-      declarations.push(this.parseStyleDeclaration());
+      const before = this.lexer.position();
+      const beforeLine = this.lexer.currentLine();
+      try {
+        declarations.push(this.parseStyleDeclaration());
+      } catch (e) {
+        this.recordSyntaxError(e, true);
+        if (this.recovering && /^\{\s*([A-Za-z-]+\s*:|\})/.test(this.lexer.peekRaw(200))) {
+          this.lexer.setPos(before, beforeLine);
+          return { selector, declarations };
+        }
+        this.skipStyleDeclaration();
+        if (this.lexer.position() === before) this.lexer.advanceChar();
+      }
     }
     return { selector, declarations };
   }
 
   private parseStyleDeclaration(): AST.StyleDeclaration {
     let property = '';
-    while (!/[:\s]/.test(this.lexer.peekChar())) property += this.lexer.advanceChar();
+    while (!this.lexer.atEnd() && !/[:;}\s]/.test(this.lexer.peekChar())) property += this.lexer.advanceChar();
     this.lexer.skipRawWhitespace();
-    if (this.lexer.peekChar() !== ':') throw new ParseError(`Expected ':' after style property '${property}'`);
+    if (this.lexer.peekChar() !== ':') throw new ParseError(`Expected ':' after style property '${property}'`, this.lexer.currentLine());
     this.lexer.advanceChar();
     this.lexer.skipRawWhitespace();
-    if (this.lexer.peekChar() === '{') {
-      this.lexer.advanceChar();
-      const exprSource = this.lexer.readInterpolationSource();
-      this.lexer.advanceChar();
-      const subParser = new Parser(exprSource);
-      const exprValue = subParser.parseExpression();
-      this.lexer.skipRawWhitespace();
-      if (this.lexer.peekChar() === ';') this.lexer.advanceChar();
-      return { property, isExpr: true, exprValue };
+
+    const parts: AST.StyleValuePart[] = [];
+    let rawBuf = '';
+    while (!this.lexer.atEnd() && this.lexer.peekChar() !== ';' && this.lexer.peekChar() !== '}') {
+      if (this.lexer.peekChar() === '{') {
+        if (rawBuf.length > 0) {
+          parts.push({ kind: 'raw', text: rawBuf });
+          rawBuf = '';
+        }
+        this.lexer.advanceChar();
+        const exprLine = this.lexer.currentLine();
+        const exprSource = this.lexer.readInterpolationSource();
+        this.lexer.advanceChar();
+        const subParser = new Parser(exprSource, this.depth, exprLine);
+        const exprValue = subParser.parseExpression();
+        parts.push({ kind: 'expr', expr: exprValue });
+      } else {
+        rawBuf += this.lexer.advanceChar();
+      }
     }
-    const rawValue = this.lexer.readRawStyleValueUntilTerminator();
+    if (rawBuf.length > 0) {
+      parts.push({ kind: 'raw', text: rawBuf.replace(/\s+$/, '') });
+    }
+    if (parts.length === 0) throw new ParseError(`Expected a value for style property '${property}'`, this.lexer.currentLine());
     if (this.lexer.peekChar() === ';') this.lexer.advanceChar();
-    return { property, isExpr: false, rawValue };
+    return { property, parts };
   }
 }
 
+function assertAstDepth(program: AST.Program): void {
+  const stack: { node: unknown; depth: number }[] = [{ node: program, depth: 0 }];
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop()!;
+    if (Array.isArray(node)) {
+      for (const item of node) stack.push({ node: item, depth });
+      continue;
+    }
+    if (node === null || typeof node !== 'object') continue;
+    const obj = node as Record<string, unknown>;
+    const next = typeof obj.kind === 'string' ? depth + 1 : depth;
+    if (next > MAX_AST_DEPTH) {
+      throw new ParseError(`Expression or statement is too long: it nests more than ${MAX_AST_DEPTH} levels deep (a very long chain of operators, member accesses or calls)`);
+    }
+    for (const key of Object.keys(obj)) stack.push({ node: obj[key], depth: next });
+  }
+}
+
+export interface ParseOutcome {
+  program: AST.Program | null;
+  errors: Array<ParseError | LexError>;
+}
+
+export function parseCrescentRecovering(source: string): ParseOutcome {
+  const errors: Array<ParseError | LexError> = [];
+  let parser: Parser;
+  try {
+    parser = new Parser(source);
+  } catch (e) {
+    if (e instanceof LexError) return { program: null, errors: [e] };
+    throw e;
+  }
+  parser.enableRecovery();
+  let program: AST.Program | null = null;
+  try {
+    program = parser.parseProgram();
+  } catch (e) {
+    if (e instanceof RecoveryAbort) {
+      program = null;
+    } else if (e instanceof ParseError || e instanceof LexError) {
+      errors.push(e);
+    } else if (e instanceof RangeError) {
+      errors.push(new ParseError('The program is nested too deeply to parse'));
+    } else {
+      throw e;
+    }
+  }
+  errors.unshift(...parser.errors);
+  if (errors.length > 0) return { program: null, errors };
+  try {
+    assertAstDepth(program!);
+  } catch (e) {
+    if (e instanceof ParseError) return { program: null, errors: [e] };
+    throw e;
+  }
+  return { program, errors };
+}
+
 export function parseCrescent(source: string): AST.Program {
-  return new Parser(source).parseProgram();
+  let program: AST.Program;
+  try {
+    program = new Parser(source).parseProgram();
+  } catch (e) {
+    if (e instanceof RangeError) throw new ParseError('The program is nested too deeply to parse');
+    throw e;
+  }
+  assertAstDepth(program);
+  return program;
 }

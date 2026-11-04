@@ -1,0 +1,13 @@
+component Broken {
+    state<int> count = 0;
+
+    void stop() {
+        if (count > 3) {
+            break;
+        }
+    }
+
+    view {
+        <p>{count}</p>
+    }
+}

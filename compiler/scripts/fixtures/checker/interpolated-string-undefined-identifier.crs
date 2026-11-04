@@ -1,0 +1,5 @@
+component Broken {
+    view {
+        <p>"Hello, {missing}!"</p>
+    }
+}

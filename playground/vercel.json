@@ -1,0 +1,8 @@
+{
+  "outputDirectory": "public",
+  "functions": {
+    "api/compile.js": {
+      "maxDuration": 15
+    }
+  }
+}

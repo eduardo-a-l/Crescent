@@ -1,0 +1,22 @@
+component Pair {
+    state<string?> first = null;
+    state<string?> second = null;
+
+    void greet() {
+        if (first == null || second == null) {
+            console.log("missing");
+        } else {
+            console.log(first);
+            console.log(second);
+        }
+    }
+
+    view {
+        if (first == null || second == null) {
+            <p>"missing"</p>
+        } else {
+            <p>{first}</p>
+            <p>{second}</p>
+        }
+    }
+}

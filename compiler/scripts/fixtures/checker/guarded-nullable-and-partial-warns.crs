@@ -1,0 +1,10 @@
+component Pair {
+    state<string?> first = null;
+    state<string?> second = null;
+
+    void greet() {
+        if (first != null && second.length > 0) {
+            console.log(first);
+        }
+    }
+}

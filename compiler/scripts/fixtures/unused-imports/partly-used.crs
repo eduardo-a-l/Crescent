@@ -1,0 +1,7 @@
+use lib::{Widget, Point};
+
+component Main {
+    view {
+        <Widget />
+    }
+}

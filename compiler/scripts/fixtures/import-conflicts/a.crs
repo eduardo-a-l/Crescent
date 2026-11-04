@@ -1,0 +1,5 @@
+component Thing {
+    view {
+        <p>"a"</p>
+    }
+}

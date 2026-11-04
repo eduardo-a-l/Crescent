@@ -1,0 +1,11 @@
+component Broken {
+    state<int> count = 0;
+
+    void skip() {
+        continue;
+    }
+
+    view {
+        <p>{count}</p>
+    }
+}

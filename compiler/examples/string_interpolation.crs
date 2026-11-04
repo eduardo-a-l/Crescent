@@ -1,0 +1,16 @@
+component StringInterpolation {
+    state<string> name = "Ada";
+    state<int> count = 0;
+
+    void increment() {
+        count++;
+    }
+
+    view {
+        <div class="interp-card" title="Greeting for {name}">
+            <p class="greeting">"Hello, {name}! You've clicked {count} times."</p>
+            <p class="escaped">"Literal braces: \{not interpolated\}"</p>
+            <button onclick={increment}>"Click me"</button>
+        </div>
+    }
+}

@@ -1,0 +1,5 @@
+component Broken(BogusType value) {
+    view {
+        <p>"static"</p>
+    }
+}

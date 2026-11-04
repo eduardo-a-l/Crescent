@@ -1,0 +1,15 @@
+use lib::{Widget, Point};
+
+component Main {
+    state<Point> origin = Point { x: 0, y: 0 };
+    state<string> summary = "";
+
+    void describe() {
+        Point { x } = origin;
+        summary = "x is " + x;
+    }
+
+    view {
+        <Widget />
+    }
+}

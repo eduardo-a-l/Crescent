@@ -1,0 +1,7 @@
+use lib::Point;
+
+component Main {
+    view {
+        <p>"main"</p>
+    }
+}

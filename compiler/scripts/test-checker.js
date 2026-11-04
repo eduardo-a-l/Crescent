@@ -1,0 +1,602 @@
+const path = require('path');
+const { loadAllPrograms, resolveFileImports } = require(path.join(__dirname, '..', 'dist', 'modules.js'));
+const { checkFile } = require(path.join(__dirname, '..', 'dist', 'checker.js'));
+
+function assert(cond, message) {
+  if (!cond) {
+    console.error('FAIL:', message);
+    process.exitCode = 1;
+  } else {
+    console.log('PASS:', message);
+  }
+}
+
+const fixturesDir = path.join(__dirname, 'fixtures', 'checker');
+const files = loadAllPrograms(fixturesDir);
+
+function diagnosticsFor(relPath) {
+  const file = files.get(relPath);
+  const imports = resolveFileImports(file, files);
+  return checkFile(file, files, imports);
+}
+
+function hasDiagnostic(diagnostics, severity, pattern) {
+  return diagnostics.some((d) => d.severity === severity && pattern.test(d.message));
+}
+
+const cases = [
+  {
+    file: 'undefined-identifier.crs',
+    severity: 'error',
+    pattern: /Undefined identifier 'message'/,
+    label: 'an undefined identifier used in an assignment target',
+  },
+  {
+    file: 'undefined-identifier-read.crs',
+    severity: 'error',
+    pattern: /Undefined identifier 'missing'/,
+    label: 'an undefined identifier read in a view interpolation',
+  },
+  {
+    file: 'interpolated-string-undefined-identifier.crs',
+    severity: 'error',
+    pattern: /Undefined identifier 'missing'/,
+    label: 'an undefined identifier read inside a {...} string interpolation',
+  },
+  {
+    file: 'interpolated-string-type-mismatch.crs',
+    severity: 'error',
+    pattern: /Type mismatch: declared as 'int' but initialized with a 'string' value/,
+    label: 'a state<int> initialized with an interpolated string (always type string)',
+  },
+  {
+    file: 'missing-struct-field.crs',
+    severity: 'error',
+    pattern: /Missing field 'age' in struct literal 'User'/,
+    label: 'a struct literal missing a required field',
+  },
+  {
+    file: 'unknown-struct-field.crs',
+    severity: 'error',
+    pattern: /Unknown field 'nickname' on struct 'User'/,
+    label: 'a struct literal with an unknown field',
+  },
+  {
+    file: 'unknown-component.crs',
+    severity: 'error',
+    pattern: /Unknown component '<Missing>'/,
+    label: 'a template element referencing a component that does not exist',
+  },
+  {
+    file: 'struct-as-component.crs',
+    severity: 'error',
+    pattern: /'User' is a struct, not a component — it cannot be used as an element/,
+    label: 'a template element referencing a struct name instead of a component',
+  },
+  {
+    file: 'unknown-prop.crs',
+    severity: 'error',
+    pattern: /Unknown prop 'nickname' passed to <Greeting> \(not declared as a param\)/,
+    label: 'a component call passing a prop the component does not declare',
+  },
+  {
+    file: 'missing-view-block.crs',
+    severity: 'error',
+    pattern: /Component has no 'view' block/,
+    label: 'a component with no view block at all',
+  },
+  {
+    file: 'duplicate-view-block.crs',
+    severity: 'error',
+    pattern: /Component has more than one 'view' block/,
+    label: 'a component with two view blocks',
+  },
+  {
+    file: 'derived-assignment-forbidden.crs',
+    severity: 'error',
+    pattern: /Cannot assign to derived 'total'; reassign one of its dependencies instead/,
+    label: 'a direct assignment to a derived<T> value',
+  },
+  {
+    file: 'direct-property-write-forbidden.crs',
+    severity: 'error',
+    pattern: /Direct property write on state 'user' is forbidden; reassign the whole state instead/,
+    label: 'a direct property write on a state<T> holding a struct',
+  },
+  {
+    file: 'missing-prop.crs',
+    severity: 'error',
+    pattern: /Missing prop 'name' passed to <Greeting>/,
+    label: 'a component call missing a required prop',
+  },
+  {
+    file: 'type-mismatch.crs',
+    severity: 'error',
+    pattern: /declared as 'int' but initialized with a 'string' value/,
+    label: 'a state<int> initialized with a string literal',
+  },
+  {
+    file: 'unguarded-nullable.crs',
+    severity: 'warning',
+    pattern: /'user_name' is nullable \(string\?\) and is accessed here without a null check/,
+    label: 'a nullable value accessed without a narrowing guard',
+  },
+  {
+    file: 'unguarded-nullable-in-null-branch.crs',
+    severity: 'warning',
+    pattern: /'user' is nullable \(User\?\) and is accessed here without a null check/,
+    label: "a nullable value accessed inside the then-branch of 'if (x == null)', where it is known to be null",
+  },
+  {
+    file: 'unknown-generic-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Response<int>' referenced by variable 'pending'/,
+    label: 'a local variable declared with an unresolvable generic type name',
+  },
+  {
+    file: 'unknown-return-and-for-types.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Response<int>' referenced by return type of function 'load'/,
+    label: 'an unresolvable function return type',
+  },
+  {
+    file: 'unknown-return-and-for-types.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Entry' referenced by for-loop item 'entry'/,
+    label: 'an unresolvable statement for-loop item type',
+  },
+  {
+    file: 'unknown-return-and-for-types.crs',
+    severity: 'error',
+    pattern: /Unknown type 'Row' referenced by template for-loop item 'row'/,
+    label: 'an unresolvable template for-loop item type',
+  },
+  {
+    file: 'unknown-function-param-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by param 'x'/,
+    label: 'a function param declared with an unresolvable type',
+  },
+  {
+    file: 'component-param-unknown-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by param 'value'/,
+    label: 'a component-level param (not a function param) declared with an unresolvable type',
+  },
+  {
+    file: 'struct-field-unknown-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by field 'value'/,
+    label: 'a struct field declared with an unresolvable type',
+  },
+  {
+    file: 'inject-unknown-type.crs',
+    severity: 'error',
+    pattern: /Unknown type 'BogusType' referenced by inject 'value'/,
+    label: 'an inject<T> declared with an unresolvable type',
+  },
+  {
+    file: 'wrong-arg-count.crs',
+    severity: 'error',
+    pattern: /Function 'add' expects 2 argument\(s\) but received 1/,
+    label: 'a call to a local function with too few arguments',
+  },
+  {
+    file: 'wrong-arg-type.crs',
+    severity: 'error',
+    pattern: /argument 'b' of function 'add' expects 'int' but received a 'string' value/,
+    label: 'a call to a local function with a mismatched argument type',
+  },
+  {
+    file: 'wrong-prop-type.crs',
+    severity: 'error',
+    pattern: /prop 'name' expects 'string' but received a 'int' value/,
+    label: 'a component prop passed an expr literal of the wrong type',
+  },
+  {
+    file: 'wrong-prop-type-string-attr.crs',
+    severity: 'error',
+    pattern: /prop 'value' expects 'int' but received a 'string' value/,
+    label: 'a component prop passed a plain string attribute for a non-string param',
+  },
+  {
+    file: 'duplicate-top-level.crs',
+    severity: 'error',
+    pattern: /Duplicate top-level declaration 'Greeting'/,
+    label: 'two top-level declarations sharing a name in the same file',
+  },
+  {
+    file: 'duplicate-struct-field.crs',
+    severity: 'error',
+    pattern: /Duplicate field 'name' in struct 'User'/,
+    label: 'a struct with two fields sharing a name',
+  },
+  {
+    file: 'duplicate-component-member.crs',
+    severity: 'error',
+    pattern: /'count' is declared more than once in component 'Broken'/,
+    label: 'a component with two members (a state and a function) sharing a name',
+  },
+  {
+    file: 'duplicate-function-param.crs',
+    severity: 'error',
+    pattern: /Duplicate param 'a' in function 'add'/,
+    label: 'a function with two params sharing a name',
+  },
+  {
+    file: 'wrong-return-type.crs',
+    severity: 'error',
+    pattern: /function 'compute' declares return type 'int' but returns a 'string' value/,
+    label: 'a function returning a literal of the wrong type',
+  },
+  {
+    file: 'missing-return-value.crs',
+    severity: 'error',
+    pattern: /Function 'compute' must return a value of type 'int'/,
+    label: 'a non-void function with a bare "return;" statement',
+  },
+  {
+    file: 'void-return-with-value.crs',
+    severity: 'error',
+    pattern: /Function 'run' has a 'void' return type but returns a value/,
+    label: 'a void function returning a value',
+  },
+  {
+    file: 'null-return-not-nullable.crs',
+    severity: 'error',
+    pattern: /'null' returned from function 'compute', which is not nullable \('int'\)/,
+    label: 'a non-nullable function returning null',
+  },
+  {
+    file: 'wrong-array-element-type.crs',
+    severity: 'error',
+    pattern: /Type mismatch: array element at index 2 expects 'int' but received a 'string' value/,
+    label: 'an array literal state initializer with a mismatched element type',
+  },
+  {
+    file: 'null-array-element-not-nullable.crs',
+    severity: 'error',
+    pattern: /'null' at index 1 is not allowed because the element type 'int' is not nullable/,
+    label: 'an array literal with a null element whose element type is not nullable',
+  },
+  {
+    file: 'wrong-array-element-type-arg.crs',
+    severity: 'error',
+    pattern: /Type mismatch: element of argument 'values' of function 'sum' at index 2 expects 'int' but received a 'string' value/,
+    label: 'a function call with an inline array-literal argument containing a mismatched element',
+  },
+  {
+    file: 'unknown-struct-destructure-type.crs',
+    severity: 'error',
+    pattern: /Unknown struct type 'Ghost'/,
+    label: 'a struct destructure naming an unknown struct type',
+  },
+  {
+    file: 'unknown-struct-destructure-field.crs',
+    severity: 'error',
+    pattern: /Unknown field 'z' on struct 'Point'/,
+    label: 'a struct destructure naming a field that does not exist on the struct',
+  },
+  {
+    file: 'duplicate-struct-destructure-field.crs',
+    severity: 'error',
+    pattern: /Duplicate field 'x' in struct destructure of 'Point'/,
+    label: 'a struct destructure naming the same field twice',
+  },
+  {
+    file: 'component-as-struct-destructure.crs',
+    severity: 'error',
+    pattern: /'Card' is a component, not a struct — it cannot be used in a struct destructure/,
+    label: 'a struct destructure naming a component instead of a struct',
+  },
+  {
+    file: 'wrong-assignment-type.crs',
+    severity: 'error',
+    pattern: /Type mismatch: declared as 'int' but assigned a 'string' value/,
+    label: 'reassigning a state variable with a value of the wrong type',
+  },
+  {
+    file: 'wrong-assignment-array-element-type.crs',
+    severity: 'error',
+    pattern: /Type mismatch: array element at index 2 expects 'int' but received a 'string' value/,
+    label: 'reassigning a state array with a mismatched element type',
+  },
+  {
+    file: 'null-assignment-not-nullable.crs',
+    severity: 'error',
+    pattern: /'null' assigned to non-nullable type 'int'/,
+    label: 'reassigning null to a non-nullable state variable',
+  },
+  {
+    file: 'const-reassignment-forbidden.crs',
+    severity: 'error',
+    pattern: /Cannot assign to const 'title'; it can only be set at declaration/,
+    label: 'reassigning a const member with a plain assignment',
+  },
+  {
+    file: 'unguarded-nullable-local.crs',
+    severity: 'warning',
+    pattern: /'name' is nullable \(string\?\) and is accessed here without a null check/,
+    label: 'a nullable local variable accessed without a narrowing guard',
+  },
+  {
+    file: 'unguarded-nullable-param.crs',
+    severity: 'warning',
+    pattern: /'name' is nullable \(string\?\) and is accessed here without a null check/,
+    label: 'a nullable function parameter accessed without a narrowing guard',
+  },
+];
+
+for (const c of cases) {
+  const diagnostics = diagnosticsFor(c.file);
+  assert(hasDiagnostic(diagnostics, c.severity, c.pattern), `${c.file}: flags ${c.label}`);
+}
+
+const guardedDiagnostics = diagnosticsFor('guarded-nullable-ok.crs');
+assert(guardedDiagnostics.length === 0, `guarded-nullable-ok.crs: an if (x != null) guard suppresses the nullable-access warning, got ${JSON.stringify(guardedDiagnostics)}`);
+
+const guardedElseDiagnostics = diagnosticsFor('guarded-nullable-else-branch-ok.crs');
+assert(
+  guardedElseDiagnostics.length === 0,
+  `guarded-nullable-else-branch-ok.crs: an if (x == null) {...} else {...} correctly narrows x as non-null in the else branch, in both a function body and a view block, got ${JSON.stringify(guardedElseDiagnostics)}`
+);
+
+const guardedAndThenDiagnostics = diagnosticsFor('guarded-nullable-and-then-branch-ok.crs');
+assert(
+  guardedAndThenDiagnostics.length === 0,
+  `guarded-nullable-and-then-branch-ok.crs: an if (x != null && y != null) guard narrows both x and y in the then branch, in both a function body and a view block, got ${JSON.stringify(guardedAndThenDiagnostics)}`
+);
+
+const guardedOrElseDiagnostics = diagnosticsFor('guarded-nullable-or-else-branch-ok.crs');
+assert(
+  guardedOrElseDiagnostics.length === 0,
+  `guarded-nullable-or-else-branch-ok.crs: an if (x == null || y == null) {...} else {...} narrows both x and y in the else branch, in both a function body and a view block, got ${JSON.stringify(guardedOrElseDiagnostics)}`
+);
+
+const guardedAndPartialDiagnostics = diagnosticsFor('guarded-nullable-and-partial-warns.crs');
+assert(
+  hasDiagnostic(guardedAndPartialDiagnostics, 'warning', /'second' is nullable \(string\?\) and is accessed here without a null check/),
+  `guarded-nullable-and-partial-warns.crs: an if (x != null && ...) guard only narrows x, not an unguarded sibling accessed on the right side of &&, got ${JSON.stringify(guardedAndPartialDiagnostics)}`
+);
+
+const guardedShortCircuitDiagnostics = diagnosticsFor('guarded-nullable-short-circuit-ok.crs');
+assert(
+  guardedShortCircuitDiagnostics.length === 0,
+  `guarded-nullable-short-circuit-ok.crs: && and || narrow a nullable value while their right operand is evaluated, in both function and view conditions, got ${JSON.stringify(guardedShortCircuitDiagnostics)}`
+);
+
+const guardedTernaryDiagnostics = diagnosticsFor('guarded-nullable-ternary-ok.crs');
+assert(
+  guardedTernaryDiagnostics.length === 0,
+  `guarded-nullable-ternary-ok.crs: ternary branches narrow a nullable value according to the test, in both function and view expressions, got ${JSON.stringify(guardedTernaryDiagnostics)}`
+);
+
+const guardedEarlyReturnDiagnostics = diagnosticsFor('guarded-nullable-early-return-ok.crs');
+assert(
+  guardedEarlyReturnDiagnostics.length === 0,
+  `guarded-nullable-early-return-ok.crs: a terminal null guard narrows the following statements, including after a nested terminal branch, got ${JSON.stringify(guardedEarlyReturnDiagnostics)}`
+);
+
+const unguardedAfterNonterminalIfDiagnostics = diagnosticsFor('unguarded-nullable-after-nonterminal-if.crs');
+assert(
+  hasDiagnostic(unguardedAfterNonterminalIfDiagnostics, 'warning', /'message' is nullable \(string\?\) and is accessed here without a null check/),
+  `unguarded-nullable-after-nonterminal-if.crs: a non-terminal null branch does not narrow following statements, got ${JSON.stringify(unguardedAfterNonterminalIfDiagnostics)}`
+);
+
+const guardedBreakContinueDiagnostics = diagnosticsFor('guarded-nullable-break-continue-ok.crs');
+assert(
+  guardedBreakContinueDiagnostics.length === 0,
+  `guarded-nullable-break-continue-ok.crs: a null guard that breaks or continues narrows the rest of the loop body in for, while, do-while and for-each loops, got ${JSON.stringify(guardedBreakContinueDiagnostics)}`
+);
+
+const unguardedAfterLoopGuardDiagnostics = diagnosticsFor('unguarded-nullable-after-loop-guard.crs');
+assert(
+  unguardedAfterLoopGuardDiagnostics.length === 1 &&
+    unguardedAfterLoopGuardDiagnostics[0].line === 11 &&
+    /'message' is nullable \(string\?\) and is accessed here without a null check/.test(unguardedAfterLoopGuardDiagnostics[0].message),
+  `unguarded-nullable-after-loop-guard.crs: narrowing from a break guard applies inside the loop body only, not after the loop, got ${JSON.stringify(unguardedAfterLoopGuardDiagnostics)}`
+);
+
+const unguardedNestedLoopBreakDiagnostics = diagnosticsFor('unguarded-nullable-nested-loop-break.crs');
+assert(
+  unguardedNestedLoopBreakDiagnostics.length === 1 &&
+    unguardedNestedLoopBreakDiagnostics[0].line === 12 &&
+    /'message' is nullable \(string\?\) and is accessed here without a null check/.test(unguardedNestedLoopBreakDiagnostics[0].message),
+  `unguarded-nullable-nested-loop-break.crs: a break that only exits a nested loop does not make the outer guard terminal, got ${JSON.stringify(unguardedNestedLoopBreakDiagnostics)}`
+);
+
+const guardedLocalDiagnostics = diagnosticsFor('guarded-nullable-local-ok.crs');
+assert(
+  guardedLocalDiagnostics.length === 0,
+  `guarded-nullable-local-ok.crs: a locally-declared nullable variable is narrowed by an if guard like any other nullable value, got ${JSON.stringify(guardedLocalDiagnostics)}`
+);
+
+const guardedParamDiagnostics = diagnosticsFor('guarded-nullable-param-ok.crs');
+assert(
+  guardedParamDiagnostics.length === 0,
+  `guarded-nullable-param-ok.crs: a nullable function parameter is narrowed by an if guard like any other nullable value, got ${JSON.stringify(guardedParamDiagnostics)}`
+);
+
+const unguardedForItemDiagnostics = diagnosticsFor('unguarded-nullable-for-item.crs');
+assert(
+  unguardedForItemDiagnostics.filter((d) => d.severity === 'warning' && /'item' is nullable \(string\?\) and is accessed here without a null check/.test(d.message)).length === 2,
+  `unguarded-nullable-for-item.crs: an unguarded nullable for-loop item warns in both the function body and the view block, got ${JSON.stringify(unguardedForItemDiagnostics)}`
+);
+
+const guardedForItemDiagnostics = diagnosticsFor('guarded-nullable-for-item-ok.crs');
+assert(
+  guardedForItemDiagnostics.length === 0,
+  `guarded-nullable-for-item-ok.crs: a nullable for-loop item is narrowed by an if guard in both the function body and the view block, got ${JSON.stringify(guardedForItemDiagnostics)}`
+);
+
+const guardedNestedAndLoopDiagnostics = diagnosticsFor('guarded-nullable-nested-and-loop-ok.crs');
+assert(
+  guardedNestedAndLoopDiagnostics.length === 0,
+  `guarded-nullable-nested-and-loop-ok.crs: narrowing composes correctly across nested ifs and propagates into a for-loop body, got ${JSON.stringify(guardedNestedAndLoopDiagnostics)}`
+);
+
+function nullableWarningLines(diagnostics) {
+  return diagnostics
+    .filter((d) => d.severity === 'warning' && /is nullable \(.*\) and is accessed here without a null check/.test(d.message))
+    .map((d) => d.line);
+}
+
+function assertWarnedLines(file, expected, label) {
+  const diagnostics = diagnosticsFor(file);
+  const lines = nullableWarningLines(diagnostics);
+  assert(
+    diagnostics.length === lines.length && JSON.stringify(lines) === JSON.stringify(expected),
+    `${file}: ${label}; expected nullable warnings on lines ${JSON.stringify(expected)}, got ${JSON.stringify(diagnostics)}`
+  );
+}
+
+assertWarnedLines(
+  'unguarded-nullable-across-call-boundary.crs',
+  [11],
+  'a call to a function that reassigns a narrowed value to null invalidates the narrowing'
+);
+assertWarnedLines(
+  'unguarded-nullable-after-assignment.crs',
+  [8, 17, 24, 35],
+  'assigning a possibly-null value invalidates narrowing, including for locals, after an early-return guard, and after a branch that assigns'
+);
+assertWarnedLines(
+  'unguarded-nullable-loop-backedge.crs',
+  [10, 19, 28, 39],
+  'a null assignment or nulling call inside a loop invalidates narrowing on the next iteration and after the loop'
+);
+assertWarnedLines(
+  'unguarded-nullable-transitive-call.crs',
+  [28, 35],
+  'invalidation follows calls transitively, including through mutually recursive functions'
+);
+assertWarnedLines(
+  'unguarded-nullable-guard-test-call.crs',
+  [11],
+  'a call inside a guard test that nulls the checked value stops the guard from narrowing'
+);
+
+assertWarnedLines(
+  'unguarded-nullable-after-await.crs',
+  [12, 18, 25, 34],
+  'an await invalidates narrowing of component state, also when it sits in the guard test or later in a loop body, and for derived values'
+);
+
+const guardedAwaitOkDiagnostics = diagnosticsFor('guarded-nullable-await-ok.crs');
+assert(
+  guardedAwaitOkDiagnostics.length === 0,
+  `guarded-nullable-await-ok.crs: a guard placed after an await, a use before it, a narrowed local, and an await only on an exiting branch all stay clean, got ${JSON.stringify(guardedAwaitOkDiagnostics)}`
+);
+
+assertWarnedLines(
+  'unguarded-nullable-expression-order.crs',
+  [26, 33, 40, 47, 51, 60, 67],
+  'inside one expression a call or await that comes first invalidates narrowing for what follows it: binary operands, call arguments, array and struct literal elements, an && chain, a ternary test and an awaited operand'
+);
+
+const guardedExpressionOrderOkDiagnostics = diagnosticsFor('guarded-nullable-expression-order-ok.crs');
+assert(
+  guardedExpressionOrderOkDiagnostics.length === 0,
+  `guarded-nullable-expression-order-ok.crs: the same expressions stay clean when the access comes before the call or await, or the call nulls something else, got ${JSON.stringify(guardedExpressionOrderOkDiagnostics)}`
+);
+
+assertWarnedLines(
+  'unguarded-nullable-derived-after-write.crs',
+  [27, 34, 41, 48, 55, 62, 69, 78, 85, 93],
+  'a narrowed derived value is invalidated by any write to something it depends on: a literal, compound or postfix write, a call that writes, a derived-of-derived chain, a dependency read through a function, a reassigned struct, a mutating method call, a later loop iteration, and an earlier operand of the same expression'
+);
+
+const guardedDerivedOkDiagnostics = diagnosticsFor('guarded-nullable-derived-ok.crs');
+assert(
+  guardedDerivedOkDiagnostics.length === 0,
+  `guarded-nullable-derived-ok.crs: writes to unrelated state, an access before the write, a guard placed after the write and an access before the writing call all stay clean, got ${JSON.stringify(guardedDerivedOkDiagnostics)}`
+);
+
+const guardedCallOkDiagnostics = diagnosticsFor('guarded-nullable-call-ok.crs');
+assert(
+  guardedCallOkDiagnostics.length === 0,
+  `guarded-nullable-call-ok.crs: calls that assign other names, non-null literals, or only their own parameter keep narrowing, a guard branch that exits does not carry its nulling calls forward, and a loop test re-narrows each iteration, got ${JSON.stringify(guardedCallOkDiagnostics)}`
+);
+
+const correctCallDiagnostics = diagnosticsFor('correct-call-ok.crs');
+assert(correctCallDiagnostics.length === 0, `correct-call-ok.crs: a call with the right argument count and types produces no diagnostics, got ${JSON.stringify(correctCallDiagnostics)}`);
+
+const correctPropDiagnostics = diagnosticsFor('correct-prop-type-ok.crs');
+assert(correctPropDiagnostics.length === 0, `correct-prop-type-ok.crs: correctly-typed literal and non-literal props produce no diagnostics, got ${JSON.stringify(correctPropDiagnostics)}`);
+
+const noDuplicatesDiagnostics = diagnosticsFor('no-duplicates-ok.crs');
+assert(noDuplicatesDiagnostics.length === 0, `no-duplicates-ok.crs: unique names across params, members, struct fields, and top-level decls produce no diagnostics, got ${JSON.stringify(noDuplicatesDiagnostics)}`);
+
+const correctReturnDiagnostics = diagnosticsFor('correct-return-ok.crs');
+assert(correctReturnDiagnostics.length === 0, `correct-return-ok.crs: correctly-typed returns (including a nullable return and a bare void "return;") produce no diagnostics, got ${JSON.stringify(correctReturnDiagnostics)}`);
+
+const correctArrayElementsDiagnostics = diagnosticsFor('correct-array-elements-ok.crs');
+assert(correctArrayElementsDiagnostics.length === 0, `correct-array-elements-ok.crs: correctly-typed array literals (including nullable elements and a nested array) produce no diagnostics, got ${JSON.stringify(correctArrayElementsDiagnostics)}`);
+
+const unknownStateTypeDiagnostics = diagnosticsFor('unknown-state-type.crs');
+assert(
+  unknownStateTypeDiagnostics.length === 1 && unknownStateTypeDiagnostics[0].message === "Unknown type 'BogusType'",
+  `unknown-state-type.crs: an unknown declared state type reports exactly one 'Unknown type' diagnostic, not a redundant 'Type mismatch' against the initializer too, got ${JSON.stringify(unknownStateTypeDiagnostics)}`
+);
+
+const correctStructDestructureDiagnostics = diagnosticsFor('correct-struct-destructure-ok.crs');
+assert(
+  correctStructDestructureDiagnostics.length === 0,
+  `correct-struct-destructure-ok.crs: a full-field and a partial-field struct destructure both produce no diagnostics, got ${JSON.stringify(correctStructDestructureDiagnostics)}`
+);
+
+const correctAssignmentDiagnostics = diagnosticsFor('correct-assignment-ok.crs');
+assert(
+  correctAssignmentDiagnostics.length === 0,
+  `correct-assignment-ok.crs: correctly-typed reassignments, a non-literal reassignment, a compound '+=', a nullable reassignment, and reading (not reassigning) a const all produce no diagnostics, got ${JSON.stringify(correctAssignmentDiagnostics)}`
+);
+
+const breakOutsideLoopDiagnostics = diagnosticsFor('break-outside-loop.crs');
+assert(
+  hasDiagnostic(breakOutsideLoopDiagnostics, 'error', /'break' can only be used inside a loop/),
+  `break-outside-loop.crs: a break outside any loop is an error, got ${JSON.stringify(breakOutsideLoopDiagnostics)}`
+);
+
+const continueOutsideLoopDiagnostics = diagnosticsFor('continue-outside-loop.crs');
+assert(
+  hasDiagnostic(continueOutsideLoopDiagnostics, 'error', /'continue' can only be used inside a loop/),
+  `continue-outside-loop.crs: a continue outside any loop is an error, got ${JSON.stringify(continueOutsideLoopDiagnostics)}`
+);
+
+const loopsOkDiagnostics = diagnosticsFor('loops-ok.crs');
+assert(
+  loopsOkDiagnostics.length === 0,
+  `loops-ok.crs: for, while, do-while and for-each loops with break/continue (including inside nested ifs and nested loops, a state-variable for header, and an omitted update clause) produce no diagnostics, got ${JSON.stringify(loopsOkDiagnostics)}`
+);
+
+const loopVariableScopeDiagnostics = diagnosticsFor('loop-variable-scoped-to-for.crs');
+assert(
+  hasDiagnostic(loopVariableScopeDiagnostics, 'error', /Undefined identifier 'i'/),
+  `loop-variable-scoped-to-for.crs: a for-loop's declared variable is not visible after the loop, got ${JSON.stringify(loopVariableScopeDiagnostics)}`
+);
+
+const loopUpdateScopeDiagnostics = diagnosticsFor('loop-body-local-not-visible-to-update.crs');
+assert(
+  hasDiagnostic(loopUpdateScopeDiagnostics, 'error', /Undefined identifier 'leftover'/),
+  `loop-body-local-not-visible-to-update.crs: a variable declared inside the loop body is not visible to the for-loop update clause, got ${JSON.stringify(loopUpdateScopeDiagnostics)}`
+);
+
+const guardedWhileDiagnostics = diagnosticsFor('guarded-nullable-while-ok.crs');
+assert(
+  guardedWhileDiagnostics.length === 0,
+  `guarded-nullable-while-ok.crs: a while or for-loop test that null-checks a value narrows it inside the loop body, got ${JSON.stringify(guardedWhileDiagnostics)}`
+);
+
+const unguardedDoWhileDiagnostics = diagnosticsFor('unguarded-nullable-do-while.crs');
+assert(
+  unguardedDoWhileDiagnostics.filter((d) => d.severity === 'warning' && /'name' is nullable \(string\?\) and is accessed here without a null check/.test(d.message)).length === 1,
+  `unguarded-nullable-do-while.crs: a do-while body runs before its test, so the test's null check does not narrow the body, got ${JSON.stringify(unguardedDoWhileDiagnostics)}`
+);
+
+const exampleFiles = loadAllPrograms(path.join(__dirname, '..', 'examples'));
+let totalExampleDiagnostics = 0;
+for (const [relPath, file] of exampleFiles) {
+  const imports = resolveFileImports(file, exampleFiles);
+  totalExampleDiagnostics += checkFile(file, exampleFiles, imports).length;
+}
+assert(totalExampleDiagnostics === 0, `all real examples pass the semantic checker cleanly, got ${totalExampleDiagnostics} diagnostic(s)`);

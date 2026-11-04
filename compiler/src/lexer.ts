@@ -1,22 +1,44 @@
 import { KEYWORDS, Token, TokenType } from './tokens';
 
-export class LexError extends Error {}
+export class LexError extends Error {
+  file?: string;
+  line: number | null;
+
+  constructor(message: string, line: number | null = null) {
+    super(message);
+    this.line = line;
+  }
+}
 
 export class Lexer {
   private source: string;
   private pos: number = 0;
   private line: number = 1;
 
-  constructor(source: string) {
+  constructor(source: string, startLine: number = 1) {
     this.source = source;
+    this.line = startLine;
+  }
+
+  currentLine(): number {
+    return this.line;
   }
 
   getPos(): number {
     return this.pos;
   }
 
-  setPos(pos: number): void {
+  setPos(pos: number, line?: number): void {
     this.pos = pos;
+    if (line !== undefined) this.line = line;
+  }
+
+  lineBefore(tokenStart: number): number {
+    let newlines = 0;
+    for (let i = tokenStart; i < this.pos; i++) {
+      if (this.source[i] === '\n') newlines += 1;
+    }
+    return this.line - newlines;
   }
 
   peekChar(offset: number = 0): string {
@@ -33,6 +55,18 @@ export class Lexer {
 
   private isAtEnd(): boolean {
     return this.pos >= this.source.length;
+  }
+
+  atEnd(): boolean {
+    return this.isAtEnd();
+  }
+
+  position(): number {
+    return this.pos;
+  }
+
+  peekRaw(length: number): string {
+    return this.source.slice(this.pos, this.pos + length);
   }
 
   private skipWhitespaceAndComments(): void {
@@ -98,7 +132,10 @@ export class Lexer {
     }
 
     if (c === '"') {
+      const stringLine = this.line;
+      const parts: Array<{ kind: 'raw'; text: string } | { kind: 'expr'; source: string; line: number }> = [];
       let str = '';
+      let hasInterpolation = false;
       while (!this.isAtEnd() && this.peekChar() !== '"') {
         const ch = this.advanceChar();
         if (ch === '\\') {
@@ -106,13 +143,25 @@ export class Lexer {
           if (next === 'n') str += '\n';
           else if (next === 't') str += '\t';
           else str += next;
+        } else if (ch === '{') {
+          hasInterpolation = true;
+          parts.push({ kind: 'raw', text: str });
+          str = '';
+          const exprLine = this.line;
+          const exprSource = this.readInterpolationSource();
+          this.advanceChar();
+          parts.push({ kind: 'expr', source: exprSource, line: exprLine });
         } else {
           str += ch;
         }
       }
-      if (this.isAtEnd()) throw new LexError(`Unterminated string literal at line ${this.line}`);
+      if (this.isAtEnd()) throw new LexError('Unterminated string literal', stringLine);
       this.advanceChar();
-      return this.makeToken('STRING_LITERAL', str, start);
+      if (!hasInterpolation) return this.makeToken('STRING_LITERAL', str, start);
+      parts.push({ kind: 'raw', text: str });
+      const token = this.makeToken('STRING_LITERAL', str, start);
+      token.stringParts = parts;
+      return token;
     }
 
     switch (c) {
@@ -124,7 +173,9 @@ export class Lexer {
       case ']': return this.makeToken('RBRACKET', c, start);
       case ',': return this.makeToken('COMMA', c, start);
       case '.': return this.makeToken('DOT', c, start);
-      case ':': return this.makeToken('COLON', c, start);
+      case ':':
+        if (this.peekChar() === ':') { this.advanceChar(); return this.makeToken('COLONCOLON', '::', start); }
+        return this.makeToken('COLON', c, start);
       case ';': return this.makeToken('SEMI', c, start);
       case '?': return this.makeToken('QUESTION', c, start);
       case '!':
@@ -141,10 +192,10 @@ export class Lexer {
         return this.makeToken('GT', c, start);
       case '&':
         if (this.peekChar() === '&') { this.advanceChar(); return this.makeToken('AND_AND', '&&', start); }
-        throw new LexError(`Unexpected character '&' at line ${this.line}`);
+        throw new LexError("Unexpected character '&'", this.line);
       case '|':
         if (this.peekChar() === '|') { this.advanceChar(); return this.makeToken('OR_OR', '||', start); }
-        throw new LexError(`Unexpected character '|' at line ${this.line}`);
+        throw new LexError("Unexpected character '|'", this.line);
       case '+':
         if (this.peekChar() === '+') { this.advanceChar(); return this.makeToken('PLUS_PLUS', '++', start); }
         if (this.peekChar() === '=') { this.advanceChar(); return this.makeToken('PLUS_ASSIGN', '+=', start); }
@@ -163,7 +214,7 @@ export class Lexer {
       case '%':
         return this.makeToken('PERCENT', c, start);
       default:
-        throw new LexError(`Unexpected character '${c}' at line ${this.line}`);
+        throw new LexError(`Unexpected character '${c}'`, this.line);
     }
   }
 
@@ -175,15 +226,8 @@ export class Lexer {
     return text.trim();
   }
 
-  readRawStyleValueUntilTerminator(): string {
-    let text = '';
-    while (!this.isAtEnd() && this.peekChar() !== ';' && this.peekChar() !== '}') {
-      text += this.advanceChar();
-    }
-    return text.trim();
-  }
-
   readInterpolationSource(): string {
+    const startLine = this.line;
     let depth = 1;
     let text = '';
     while (!this.isAtEnd() && depth > 0) {
@@ -195,7 +239,7 @@ export class Lexer {
       }
       text += this.advanceChar();
     }
-    if (this.isAtEnd()) throw new LexError('Unterminated style interpolation');
+    if (this.isAtEnd()) throw new LexError('Unterminated interpolation', startLine);
     return text;
   }
 

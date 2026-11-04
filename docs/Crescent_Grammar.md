@@ -5,7 +5,7 @@
 >
 > **v0.2 changes:** resolves all three open items from v0.1 §9 — struct declarations, nullable/array
 > modifier chaining, and generic type resolution — and reflects the implementation choices made in
-> the reference parser (`crescent-compiler/`).
+> the reference parser (`compiler/`).
 
 ---
 
@@ -81,6 +81,49 @@ condition). Any other `{` in `MODE_VIEW` is an **interpolation** and pushes `MOD
 
 Inside `MODE_STYLE`: every `{` is an interpolation (style rule bodies use `{ }` for the CSS rule
 itself, which is structural, not a mode-entering brace — see `StyleRule` in §7).
+
+### 2.4 `{` / `}` inside a `StringLiteral` — interpolation vs. literal text
+
+A `StringLiteral`'s lexical scan (§6) treats an unescaped `{` the same way `MODE_VIEW`/`MODE_STYLE`
+treat one: it starts an interpolation, pushes `MODE_CODE`, parses a single `Expression`, and
+resumes literal-text scanning at the matching `}`. Unlike `MODE_VIEW`/`MODE_STYLE`, this is not a
+token-stream-level mode transition the parser drives — it is entirely internal to how the lexer
+scans one `"..."` token. The lexer performs a raw, unparsed brace-depth count to find the matching
+`}` (the same technique `MODE_STYLE` already uses, see `Lexer.readInterpolationSource()` in the
+reference implementation) and hands the raw text of each interpolation back to the parser, which
+parses it as a standalone `Expression` — so a nested brace pair inside the interpolation (e.g. a
+`StructLiteral`, as in `"{Point { x: 1, y: 2 }}"`) is handled correctly by depth-counting, not
+misread as the interpolation's own closing brace.
+
+`\{` and `\}` are literal-brace escapes — they fall through the same backslash-escape mechanism as
+`\n`, `\t`, and `\"` (§6) rather than needing a distinct escaping convention. A bare `}` outside an
+active interpolation has no special meaning and never needs escaping.
+
+This applies to every `StringLiteral`, regardless of surrounding mode — a `StringLiteral` inside
+`MODE_VIEW` text or a `MODE_VIEW`/native-HTML attribute value can contain an interpolation exactly
+the same way a `StringLiteral` in ordinary `MODE_CODE` can, since the lexer doesn't know which mode
+requested the token. See §7's `Attribute`/`TextLiteral` note, which this supersedes.
+
+### 2.5 `Identifier '{' Identifier` at statement start — struct destructure vs. struct literal
+
+At the start of a `Statement`, `Identifier '{'` is ambiguous on paper with two different
+productions: a `VarDeclStatement` attempting `Type Identifier`, where `Identifier` happened to be
+a bare type name immediately followed by a block-shaped thing, and the new
+`StructDestructureStatement` (§6). In practice the reference implementation decides by
+looking at the token after the `Identifier`: `'{'` can only begin a `StructDestructureStatement`
+(`Identifier '{' Identifier { ',' Identifier } '}' '=' Expression ';'`), because a `Type` is never
+followed by `'{'`, so that production alone is attempted; an `Identifier`, `'<'`, `'?'` or a `'['`
+followed directly by `']'` can only begin a `VarDeclStatement` (`Type Identifier '=' Expression
+';'`), so that one is attempted; and any other token means an `Assignment` or `ExprStatement`. The
+attempted production is parsed speculatively and, if it fails after all, the parser falls back to
+`Assignment`/`ExprStatement`, so the result is the same as trying every production in turn.
+
+This never collides with a `StructLiteral` **expression** (`Identifier '{' FieldInit ... '}'`,
+where each `FieldInit` is `Identifier ':' Expression`): a destructure pattern's field list is bare
+identifiers separated by `','`, so the first field inside `'{' '}'` immediately diverges from
+`FieldInit`'s required `':' `token, and parsing fails/restores rather than silently misreading one
+production as the other. A `StructLiteral` can still appear as an ordinary expression anywhere an
+`Expression` is expected — including, unambiguously, on the *right* of a destructure's `'='`.
 
 ---
 
@@ -169,23 +212,38 @@ completeness so the whole grammar is in one place.
 Block          ::= '{' { Statement } '}'
 
 Statement      ::= VarDecl
+                  | StructDestructureStatement
                   | Assignment ';'
                   | ExprStatement ';'
                   | IfStatement
                   | ForStatement
+                  | WhileStatement
+                  | DoWhileStatement
+                  | BreakStatement ';'
+                  | ContinueStatement ';'
                   | ReturnStatement ';'
                   | Block
 
 VarDecl        ::= Type Identifier '=' Expression ';'
+StructDestructureStatement
+               ::= Identifier '{' Identifier { ',' Identifier } '}' '=' Expression ';'
 Assignment     ::= LValue AssignOp Expression ';'
                   | LValue ( '++' | '--' ) ';'
 LValue         ::= Identifier { '.' Identifier | '[' Expression ']' }
 AssignOp       ::= '=' | '+=' | '-=' | '*=' | '/='
 
 IfStatement    ::= 'if' '(' Expression ')' Block [ 'else' ( IfStatement | Block ) ]
-ForStatement   ::= 'for' '(' Type Identifier 'in' Expression ')' Block
+ForStatement   ::= ForEachStatement | CForStatement
+ForEachStatement ::= 'for' '(' Type Identifier 'in' Expression ')' Block
+CForStatement  ::= 'for' '(' ( VarDecl | SimpleStatement ';' ) Expression ';' [ SimpleStatement ] ')' Block
+SimpleStatement ::= LValue AssignOp Expression | LValue ( '++' | '--' ) | Expression
+WhileStatement ::= 'while' '(' Expression ')' Block
+DoWhileStatement ::= 'do' Block 'while' '(' Expression ')' ';'
+BreakStatement ::= 'break'
+ContinueStatement ::= 'continue'
 ReturnStatement ::= 'return' [ Expression ]
 ExprStatement  ::= Expression
+
 
 Expression     ::= Ternary
 Ternary        ::= LogicalOr [ '?' Expression ':' Expression ]
@@ -204,7 +262,18 @@ FieldInit      ::= Identifier ':' Expression
 ArrayLiteral   ::= '[' [ Expression { ',' Expression } ] ']'
 ArgList        ::= Expression { ',' Expression }
 Literal        ::= IntLiteral | FloatLiteral | StringLiteral | 'true' | 'false' | 'null'
+
+StringLiteral  ::= '"' { StringPart } '"'
+StringPart     ::= StringChar | StringEscape | '{' Expression '}'
+StringChar     ::= any source character except '"', '\', or an unescaped '{'
+StringEscape   ::= '\' AnyChar
 ```
+
+`StringEscape` recognizes `\n` (newline) and `\t` (tab) specially; every other escaped character
+(`\"`, `\\`, `\{`, `\}`, or anything else) is inserted literally. See §2.4 for how the `{ Expression }`
+alternative is disambiguated from literal text, and how nested braces inside the expression are
+handled. A `StringLiteral` with no `{ Expression }` part behaves exactly as in v0.2 — this is a
+strict addition, not a change to any string literal that doesn't use interpolation.
 
 Note: `Relational`'s `'<'` is the comparison case from §2.1 — reachable here only because
 `Relational` is only ever entered from within `MODE_CODE` expression parsing, never from a type or
@@ -241,8 +310,13 @@ TextLiteral          ::= StringLiteral
 `TagName`'s three alternatives resolve per §2.2: `UppercaseIdentifier` is a component instantiation,
 `LowercaseIdentifier` is a native HTML tag, and `slot` is reserved and self-closing only.
 
-`Attribute` values are unambiguous per the v0.2 fix: bare `{Expression}` for expressions, plain
-`StringLiteral` for static strings. No quoted-brace hybrid form is legal.
+`Attribute` values are unambiguous per the v0.2 fix: bare `{Expression}` for a value that is itself
+an arbitrary expression, or a `StringLiteral` (per §6, now itself capable of containing
+`{ Expression }` interpolations per §2.4) for a value written as a string. An attribute whose
+`StringLiteral` contains at least one interpolation is parsed as if `isExpr` had been written
+directly — it is checked and code-generated as a computed value, not a static string. There is
+still no separate "hybrid" attribute-value alternative in the grammar above; interpolation is a
+property of `StringLiteral` itself; nothing about the `Attribute` production changes.
 
 `TemplateFor`'s `key` clause is required per §14.4 of the design doc; its absence is a parse-level
 warning, not a parse error — the parser should still accept the loop and fall back to index-based
@@ -257,8 +331,14 @@ StyleBlock         ::= 'style' '{' { StyleRule } '}'
 StyleRule          ::= Selector '{' { StyleDeclaration } '}'
 Selector           ::= SelectorToken { SelectorToken }
 StyleDeclaration    ::= CSSProperty ':' StyleValue ';'
-StyleValue          ::= CSSValueLiteral | '{' Expression '}'
+StyleValue          ::= { StyleValuePart }
+StyleValuePart      ::= CSSValueLiteral | '{' Expression '}'
 ```
+
+A `StyleValue` is a sequence of raw-CSS and `{Expression}` parts concatenated together, so a value
+may freely mix the two — `border: 2px solid {accent_color};` is `[raw "2px solid ", expr
+accent_color]`. A value with no `{Expression}` parts is purely static; a value with at least one
+compiles to a single reactive binding covering the whole property (see `compiler/README.md`).
 
 `Selector` and `CSSProperty` / `CSSValueLiteral` are treated as raw CSS token sequences (the
 grammar doesn't attempt to model full CSS syntax — that's delegated to a CSS sub-lexer). The only
@@ -272,19 +352,278 @@ Crescent-specific hook into `MODE_STYLE` is the `{ Expression }` interpolation i
 - **Nullable/array chaining** — resolved: left-to-right, per §4. `T[]?` and `T?[]` are both legal
   and mean different things.
 - **General generics** — resolved: no dedicated syntax needed. `Identifier '<' Type '>'` in
-  `BaseType` (§4) handles it via the same type-position rule as the reserved keywords. Validated
-  against `Response<User>` in the reference parser's test fixtures.
-- **Struct definitions** — resolved: added as a top-level `StructDecl` (§3), separate from
-  `StructLiteral` (§6), which now assumes the referenced type name has been declared via
-  `StructDecl` elsewhere in the program. Cross-file/forward-reference resolution is left to a future
-  semantic-analysis pass — this grammar only defines the syntax.
+  `BaseType` (§4) handles it via the same type-position rule as the reserved keywords. This covers
+  both parsing and existence-checking: the semantic checker (`compiler/src/checker.ts`) resolves a
+  `GenericType`'s own name against declared components/structs, the same way it resolves a plain
+  `NamedType`, in addition to recursively checking the type argument. See
+  `compiler/scripts/fixtures/checker/unknown-generic-type.crs` for the negative case. Note that
+  Crescent has no syntax for declaring a generic `struct`/`component` (no type parameters on
+  `StructDecl`/`ComponentDecl`), so this check only verifies that the outer name resolves to *some*
+  declared type — it does not (and currently cannot) verify that the declared type actually accepts
+  a type argument.
+- **Import/module syntax across files** — resolved (§11). `Program` no longer assumes a single
+  source file; the reference compiler discovers every `.crs` file under a project root, resolves
+  each `use` path relative to the *importing file's own directory*, and rejects import cycles
+  before codegen.
 
 ## 10. Open Items for v0.3 of this grammar
 
-- No semantic rule yet for what happens when a `StructLiteral`'s `typeName` doesn't match any
-  declared `StructDecl` — currently a parser-level non-issue (parses either way) but a real
-  type-checker error once one exists.
+- **Resolved:** `StringLiteral` interpolation (§2.4, §6). Previously "no quoted-brace hybrid form"
+  was legal — a string could only ever be fully static text, and anything computed had to be a
+  separate `{ Expression }` sibling (in `MODE_VIEW`) or a separate `isExpr` attribute. A
+  `StringLiteral` can now contain `{ Expression }` segments directly, in any context a
+  `StringLiteral` appears (an ordinary expression, `MODE_VIEW` text, or an attribute value), with
+  `\{`/`\}` as literal-brace escapes. Implemented by having the lexer split an interpolated string
+  into raw-text/expression-source parts (mirroring the existing `MODE_STYLE` interpolation
+  mechanism) and having the parser turn each expression-source part into a real `Expression` via a
+  nested `Parser` instance, exactly as `parseStyleDeclaration()` already did for style values. The
+  resulting AST reuses `TemplateNode.TextInterpolation` for view text and the existing
+  `isExpr`/`exprValue` attribute shape for attributes — no new `TemplateNode` or `Attribute`
+  variant was needed, only a new `Expr` kind (`TemplateString`) for the expression case itself.
+  `docs/Crescent_Design.md` §"String interpolation" (new) covers the language-level semantics;
+  `compiler/examples/string_interpolation.crs` and
+  `compiler/scripts/test-string-interpolation.js` are the working end-to-end example and its
+  regression test; `compiler/scripts/fixtures/checker/interpolated-string-undefined-identifier.crs`
+  and `interpolated-string-type-mismatch.crs` cover the semantic-checker side (identifiers inside
+  an interpolation are checked exactly like any other identifier reference, and an interpolated
+  string's inferred type is always `string`, so assigning one to a non-`string`-typed declaration
+  is now caught).
+
+- **Resolved:** local-declaration struct destructuring (§2.5, §6). New `StructDestructureStatement`
+  production: `Identifier '{' Identifier { ',' Identifier } '}' '=' Expression ';'`, e.g.
+  `Point { x, y } = current;`. Disambiguated from both `VarDecl` (an `Identifier`-led statement
+  attempting `Type Identifier '=' ...`) and a `StructLiteral` **expression** (same
+  `Identifier '{' ... '}'` opening shape, but requiring `Identifier ':' Expression` fields) purely
+  by parse-attempt-and-restore, exactly the mechanism the reference implementation already uses to
+  disambiguate a `VarDecl` from a plain assignment/expression statement at an `Identifier`-led
+  statement start — no new lookahead machinery, no new token, no lexer changes. New `Stmt` AST
+  variant, `StructDestructure { typeName, fields, init }`; checker resolves `typeName` against
+  declared structs exactly like a `StructLiteral`'s `typeName` (unknown-struct, struct-vs-component
+  diagnostics reused) plus one destructure-specific check (unknown field name, duplicate field
+  name); codegen emits it as native JS object destructuring (`const { x, y } = <init>;`), which
+  works for free because a Crescent struct value already compiles to a plain JS object with
+  matching field-name keys. `docs/Crescent_Design.md`'s "Struct Destructuring" subsection (§2)
+  covers the language-level semantics, including what's deliberately *not* covered yet (parameter-
+  list destructuring, array destructuring — each flagged as needing its own separate design pass
+  rather than inheriting this feature's answers by default). See
+  `compiler/examples/struct_destructuring.crs` /
+  `compiler/scripts/test-struct-destructuring.js` for the working end-to-end example, and
+  `compiler/scripts/fixtures/checker/unknown-struct-destructure-type.crs`,
+  `unknown-struct-destructure-field.crs`, `duplicate-struct-destructure-field.crs`,
+  `component-as-struct-destructure.crs`, and `correct-struct-destructure-ok.crs` for the checker
+  fixtures.
+
+- **Resolved (partially):** a `StructLiteral`'s `typeName` not matching any declared `StructDecl`
+  is now a real diagnostic — the semantic checker (`compiler/src/checker.ts`) flags an unknown
+  struct type, missing/unknown fields, and (for literal-shaped field values) a field-type mismatch.
+  What's still open: the checker does not do general type inference, so a field initialized from a
+  non-literal expression (a function call, a variable, an arithmetic expression) isn't checked
+  against its declared field type — only literal-shaped values are.
+- A local `VarDecl`'s declared type, a non-`void` function `ReturnType`, both statement and
+  template `for`-loop `itemType`s, and now function param types are all checked for existence the
+  same way component params and struct fields are (`compiler/scripts/fixtures/checker/unknown-function-param-type.crs`
+  is the regression fixture). This closes the type-name-existence-checking gap across every
+  declared-type position the checker currently visits.
+- **Function-type parameters (`void()`).** The design doc (§6, `void() action`) and the parser
+  (`parser.ts`'s `parseParam()`) support a callback-typed parameter written as `void()`, but this
+  grammar document has no production for it — `BaseType` (§4) only covers primitives, plain
+  identifiers, and `Identifier<Type>`. The parser represents it as a special-cased
+  `NamedType { name: 'void()' }` rather than a real function-type AST node, and the semantic
+  checker now explicitly recognizes that exact marker as always resolvable (rather than looking it
+  up as a declared component/struct name) so that legitimate callback params like the design doc's
+  own `CustomButton(string label, void() action)` don't get flagged as an unknown type. See
+  `compiler/examples/callback_param.crs` for a working, checked, and code-generated example. This
+  remains a narrow special case, not a general function-type feature: there is no syntax for a
+  callback with parameters or a return value (e.g. no `void(int)` or `string()`), and no dedicated
+  grammar production formalizes it yet.
+- **Built-in DOM event types.** The design doc (§13.3) documents typed browser event-handler
+  params — `MouseEvent`, `KeyboardEvent`, `FormEvent` — as valid parameter types, e.g.
+  `void handle_key(KeyboardEvent e)`, but these names are never declared anywhere as a `struct` or
+  `component`, and this grammar document doesn't list them as recognized type names anywhere
+  (compare `BUILTIN_GLOBALS` in `checker.ts`, which plays the analogous role for *identifiers* in
+  expressions, e.g. `fetch`, `console`, `window`). Extending declared-type existence checking to
+  function params (this session) would otherwise have flagged every one of these documented types
+  as an "Unknown type" error. Fixed by adding the equivalent `BUILTIN_EVENT_TYPES` set
+  (`MouseEvent`, `KeyboardEvent`, `FormEvent` — exactly the three named in §13.3, nothing more
+  invented) to `typeIsResolvable()`. See `compiler/examples/typed_event_handler.crs` for a working
+  example.
 - `on_change(data)` (§5) takes bare identifiers naming watched state — no grammar exists yet for
   watching a derived expression rather than a single named binding.
-- Import/module syntax across files is entirely unspecified; `Program` currently assumes a single
-  source file.
+
+## 11. Modules
+
+### 11.1 Syntax
+
+```
+UseDecl            ::= 'use' PathSegment ('::' PathSegment)* '::' ImportList ';'
+                      | 'use' PathSegment ('::' PathSegment)+ ';'
+PathSegment        ::= IDENTIFIER | 'super'
+ImportList         ::= '{' ImportItem (',' ImportItem)* '}'
+ImportItem         ::= IDENTIFIER ('as' IDENTIFIER)?
+```
+
+A `UseDecl` is a kind of `TopLevelDecl`, alongside `ComponentDecl` and `StructDecl` (§3). It may
+appear anywhere at the top level of a file; order relative to the declarations is not significant,
+so a `use` may follow the components that rely on it. The bare form needs at least two segments, a
+module path and the item, so `use lib;` is a parse error. A braced list names at least one item.
+
+### 11.2 Modules and the project
+
+A module is one `.crs` file. A project is the directory the compiler is pointed at, and a module is
+identified by its path relative to that root, written with `/`. The project consists of every
+`.crs` file under the root, at any depth, except anything inside a directory named `node_modules`
+and any file or directory whose name begins with `.`; symbolic links to directories are not
+followed. There is no entry point and no reachability analysis: every file is parsed, checked and
+built whether or not anything imports it. A parse error in any file is therefore an error for the
+whole project, even in a file nothing imports.
+
+### 11.3 Declarations, visibility and scope
+
+Every top-level `component` and `struct` of a file is importable by any other file. There is no
+`pub` or `export` keyword.
+
+Each file has one flat namespace, shared by its components, its structs and the names its `use`
+declarations bind. Two declarations with the same name in one file, even a component and a struct,
+are an error (`Duplicate top-level declaration 'Main' in 'dup.crs'`, reported on the second one).
+Different files may declare the same name freely: there is no global namespace, and a clash exists
+only inside a single file that binds both.
+
+Imports are local to the file that writes them. They are not re-exported: an importer can only name
+a `component` or `struct` that the target file itself declares, never a name the target merely
+imported, which is rejected as `'X' is not defined at the top level of 'target.crs'`.
+
+### 11.4 Path resolution
+
+In the bare (non-brace) form, every `PathSegment` except the last names a directory or file
+component; the *last* segment is the single imported item's name. In the brace form, every
+`PathSegment` names a directory or file component, and the braced `ImportList` gives one or more
+items to import from that file (with optional `as` aliasing). Resolution always starts at the
+directory of the importing file; there is no form that starts at the project root, so a file in a
+subdirectory reaches the root, or a sibling tree, by climbing with `super`.
+
+A `super` segment removes one directory from the path built so far, so it walks up one directory
+from the *importing file's own location* (not from the project root) when it comes first, and it
+cancels the segment before it when it comes later: `use sub::super::lib::Lib;` names `lib.crs` in
+the importing file's own directory. A `super` that would climb above the project root is an error.
+After the `super`s are resolved, the segments are joined with `/` and the literal suffix `.crs` is
+appended to name the target file. Lookup is case-sensitive on every platform, so `use Lib::Lib;`
+does not find `lib.crs`. Every segment is an identifier, so a file whose name is not one (such as
+`my-lib.crs`) belongs to the project but cannot be imported. For example, given a file at
+`modules/components/card.crs`:
+
+| `use` statement                                | Resolves to                       |
+|-------------------------------------------------|------------------------------------|
+| `use card::UserCard;`                            | `modules/components/card.crs`, item `UserCard` |
+| `use super::shapes::Point;`                      | `modules/shapes.crs`, item `Point` |
+| `use components::forms::{Button, Input as TextInput};` | `components/forms.crs`, items `Button`, `Input` (aliased locally to `TextInput`) |
+
+### 11.5 Name binding
+
+The name an import binds in a file is the item's own name or, when `as` is given, its alias; an
+alias changes only the name inside the importing file. That name must be unique within the file. It
+is a compile error if it is already bound by another `use` in the same file, even one from the same
+module, or if it equals the name of a top-level `component` or `struct` declared in the file. The
+diagnostic is reported on the `use` line and suggests renaming with `as`, and the first binding is
+the one that stays in effect. An alias resolves any such conflict.
+
+An imported name that the file never refers to produces a warning on its `use` line, `Import
+'Widget' from 'lib.crs' is never used`, or `Import 'Widget' (as 'W') from 'lib.crs' is never used`
+for an aliased one. Every item of a braced `use` is judged separately. A name counts as used when
+it appears as a component tag, in any type position (including nullable, array and generic types),
+as a struct literal or destructure type, or as an identifier. The check is deliberately forgiving:
+it only ever stays silent when in doubt, so a local variable that happens to share an imported name
+hides the warning. An import that is rejected as a name conflict is reported only as the conflict.
+
+### 11.6 Compilation model
+
+Each module is compiled on its own to one CommonJS file at the same relative path with `.js`
+instead of `.crs`, and that file exports the module's components under their declared names.
+Checking a file uses the declarations of the components and structs it imports, such as the props
+of an imported component, and not the contents of the files that declare them.
+
+An imported component becomes a `require` of the target's output that binds the local name,
+`const { Badge: B } = require('./shapes');`, and several `use` lines naming the same module are
+merged into one `require`. A `struct` produces no code: a struct literal compiles to a plain
+object, and a file that imports only structs from a module emits no `require` for it, so it has no
+runtime dependency on that module. The top level of a compiled module holds only the runtime import,
+these requires and the component definitions, so the order in which modules are evaluated cannot
+be observed.
+Import cycles are nonetheless rejected (§11.7), because the language does not define them.
+
+A file is emitted only if it can be: it has no errors, code generation succeeds for it, and every
+module it imports a component from is emitted as well, directly or through other files. Otherwise
+its output would `require` a file that does not exist. A file that imports only structs from a skipped
+file is unaffected, since it emits no `require` for it.
+
+### 11.7 Diagnostics
+
+| Condition | Severity | Reported at | Effect |
+|---|---|---|---|
+| A file fails to parse | error | that file, on the line of the problem | the file is not emitted |
+| `use` names a file that failed to parse | error | the `use` line | the file is not emitted |
+| `use` names a module that does not exist | error | the `use` line | the file is not emitted |
+| `use` names an item the target does not define at its top level, including one it only imports | error | the `use` line | the file is not emitted |
+| A `super` climbs above the project root | error | the `use` line | the file is not emitted |
+| Import cycle | error | the `use` that closes the cycle | that file is not emitted |
+| An import's bound name clashes with another import or a local declaration | error | the `use` line | the file is not emitted |
+| Two top-level declarations of one file share a name | error | the second declaration | the file is not emitted |
+| An import is never used | warning | the `use` line | none |
+
+Every error belongs to a file: it is reported next to that file's other diagnostics, a file with an
+error is not emitted, and the rest of the project is still checked and, where it does not depend on
+a file that was skipped, built (§11.6). A file that fails to parse has no syntax tree, so it is
+reported with every syntax error the parser could recover from (after an error it skips to the next
+`;` or closing `}`, up to 20 errors; §11.8 gives the limits of that) and is left out of the project: a `use` of it is an error on the `use` line, whatever it names, because
+what it defines is unknown, and the follow-on errors for those names are silenced as for any failed
+import. Every file that fails to parse is reported, not only the first one found.
+
+A `use` that fails binds nothing, and every error in it is reported, not only the first, one per
+failing item, in line order with the file's other diagnostics. In a braced list the items that do
+resolve still work. To avoid piling up errors that only repeat the same mistake, the follow-on errors
+that would arise from the missing name, such as an unknown component for a tag, an unknown struct
+type, an unknown type or an undefined identifier, are not reported for a name whose import failed or
+for the name an alias gave it. An unrelated unknown name is still reported.
+
+Cycles are found on the file-level dependency graph of the whole project, and every cycle is
+reported, not only the first. The error names the full chain, e.g. `Circular import: a.crs -> b.crs ->
+a.crs`, and is attributed to the last import in that chain, here the `use` in `b.crs`. A file that
+imports itself is reported as a cycle and nothing else: its own names are not also reported as
+clashing with themselves. A file in a cycle is still checked like any other. The search does not
+depend on the length of the chain.
+
+### 11.8 Known limitations
+
+- There are no re-exports, so a name has to be imported from the file that declares it.
+- Recovery after a syntax error works at statement, member, declaration, view-node and style-declaration
+  level; a lex error ends the list, and a brace that is deleted or left unbalanced can still cause
+  follow-on errors.
+- There is no wildcard import and no import path that starts at the project root.
+- A file whose name is not an identifier cannot be imported.
+- Whether a name is used is judged by its spelling, so an unrelated identifier with the same name
+  hides an unused-import warning.
+- Follow-on errors are recognised by their message, so a new kind of "unknown name" diagnostic has to
+  be added to the list of silenced ones before it stops cascading from a failed import.
+
+## 12. Implementation Limits
+
+The reference compiler rejects input that is nested too deeply, with an ordinary parse error, rather
+than risk exhausting the call stack of its own recursive passes. Two limits apply to every file.
+
+**Nesting depth: 256.** The recursive-descent parser allows at most 256 levels of nested
+expressions (parentheses, array literals, call arguments, ternary branches, unary operators such as
+`- - - x`), types (`Map<Map<...>>`), statements (blocks inside blocks, `else if` chains) and template
+nodes (elements inside elements). Interpolations inside strings and style values count towards the
+depth of the expression that contains them. A larger program is rejected with `Nesting is too deep:
+more than 256 levels of nested expressions, statements, types or template nodes`.
+
+**Tree depth: 1000.** Chains of binary operators, member accesses, calls and index operations are
+read by a loop and do not nest the parser, but they build a syntax tree whose depth grows with the
+length of the chain, and the checker and code generator walk that tree recursively. After a file
+parses, a syntax tree deeper than 1000 levels is rejected with `Expression or statement is too long:
+it nests more than 1000 levels deep`. The few levels taken by the enclosing declaration mean that a chain of up to 996 links is accepted
+when it is the initializer of a member, and that parentheses nested up to 255 deep are.
+
+Neither limit is reached by hand-written programs; both exist so that malformed or adversarial input
+always yields a diagnostic. The compiler is expected to raise nothing but its own `LexError`,
+`ParseError` and `CodegenError` on any input, however malformed, and never to hang or run out of
+memory; `compiler/scripts/fuzz.js` and `compiler/scripts/test-fuzz.js` check this.

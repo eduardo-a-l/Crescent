@@ -32,6 +32,38 @@ bool is_active = true;
 
 ```
 
+### String Interpolation
+
+A `string` literal can embed an expression directly with `{ Expression }`:
+
+```c
+state<string> name = "Ada";
+state<int> count = 0;
+
+string message = "Hello, {name}! Count is {count}.";
+```
+
+The embedded expression is evaluated and converted to its string representation, then spliced into
+the surrounding text — exactly as if the string had been written as ordinary concatenation
+(`"Hello, " + name + "! Count is " + count + "."`), just without the noise. This works anywhere a
+string literal is legal: an ordinary expression, `view {}` text, or an attribute value — writing
+`<p>"Hello, {name}!"</p>` is equivalent to today's `<p>"Hello, " {name} "!"</p>` sibling-node form,
+just as one node instead of three, and `<img title="Photo of {name}"/>` lets an attribute carry a
+mix of literal and computed text without switching it to a full `{ ... }` expression attribute.
+
+To include a literal `{` or `}` in an interpolated string, escape it: `"Use \\{curly braces\\}"`.
+A string with no `{ }` at all is completely unaffected by this feature — it behaves exactly as
+before.
+
+Interpolation is a property of how a string *literal* is written, not a new type — an interpolated
+string is still exactly a `string`, checked and inferred as one everywhere a `string` is expected
+(so, for instance, assigning one to a `state<int>` is a type error, the same as assigning any other
+string value would be).
+
+What this does **not** cover yet, and is intentionally left for later (see `TODO.md` §12): controlling
+*how* an embedded value renders — padding a number to a fixed width, formatting a float's decimal
+places, and so on. Today, an embedded expression always renders via its default string conversion.
+
 ### Mutability & Constants
 
 - Variables are mutable by default (C-style).
@@ -72,6 +104,51 @@ struct User {
 
 Once declared, a struct can be used as a type anywhere (`state<User>`, function params, array
 element types, etc.) and constructed with the struct-literal syntax shown in §13.2.
+
+### Struct Destructuring
+
+A local variable declaration can destructure a struct value's fields directly into new local
+variables, instead of naming a single variable and reading `.field` off it repeatedly:
+
+```c
+struct Point {
+    int x;
+    int y;
+}
+
+void log_position(state<Point> current) {
+    Point { x, y } = current;
+    console.log(x);
+    console.log(y);
+}
+```
+
+`Point { x, y } = current;` declares two new local variables, `x` and `y`, whose types are taken
+from the matching fields (`int` and `int`) on `Point`, and whose values come from reading those
+fields off whatever `current` evaluates to. It reads like — and is checked like — the mirror image
+of a struct literal (`Point { x: 1, y: 2 }`): same `TypeName '{' ... '}'` shape, but a list of bare
+field names instead of `name: value` pairs, and appearing on the left of `=` instead of the right.
+
+Destructuring a **subset** of a struct's fields is allowed and is the common case — you name only
+the fields you actually need:
+
+```c
+Point { x } = current;  // only binds x; current's y field is simply not read
+```
+
+The named type must be a real struct (not a component) and every named field must actually exist
+on it — both are checked exactly like the equivalent errors for a struct literal (`Unknown struct
+type`, `Unknown field`), plus one destructuring-specific check: naming the same field twice
+(`Duplicate field`) is an error, since it would otherwise silently redeclare the same local name.
+
+This is scoped deliberately narrowly for now — a **local variable declaration only**. Two related
+extensions are intentionally not part of this: destructuring directly in a function's parameter
+list (`void log_position(Point { x, y })`), and array destructuring (`[first, second] = items;`).
+Both are real, likely-wanted features, but each needs its own design pass — parameter destructuring
+interacts with how a function's declared parameter *names* are used elsewhere (arg-count/type
+checking, codegen's plain positional-parameter assumption), and array destructuring needs its own
+answer for a length mismatch (error? silently bind `null`/leave unbound? a rest pattern?) rather
+than inheriting whatever answer struct destructuring happens to pick. See `TODO.md` §12 for both.
 
 ---
 
@@ -124,13 +201,19 @@ component Counter {
 
 ---
 
-## 5. Control Flow inside `view {}`
+## 5. Control Flow
 
-Crescent lets you use standard C control flow directly inside UI markup.
+Crescent lets you use standard C control flow directly inside UI markup and logic blocks.
 
 ### Conditionals (`if` / `else`)
 
 ```c
+// Inside logic blocks
+if (count > 10) {
+    // ...
+}
+
+// Inside view {}
 view {
     <div>
         if (count > 10) {
@@ -140,10 +223,55 @@ view {
         }
     </div>
 }
-
 ```
 
-### Loops (`for`)
+### Loops
+
+#### Logic Blocks (`MODE_CODE`)
+
+Crescent supports standard C-style loops for imperative logic:
+
+```c
+// C-style counting for
+for (int i = 0; i < 10; i++) {
+    // ...
+}
+
+// While loop
+while (count < 10) {
+    count++;
+}
+
+// Do-while loop
+do {
+    count++;
+} while (count < 10);
+
+// Loop control
+for (int i = 0; i < 10; i++) {
+    if (i == 5) {
+        break;
+    }
+    if (i % 2 == 0) {
+        continue;
+    }
+    // ...
+}
+```
+
+The for-each form `for (Type item in iterable)` is also available in logic blocks.
+
+**Rules (v0.x):**
+
+- Loop bodies are always blocks, like `if` bodies.
+- A `do`-`while` statement ends with a semicolon.
+- A variable declared in a `for` header is scoped to that loop. The generated JavaScript uses `let`, so each iteration has its own binding. Whether closures capturing a loop variable keep this guarantee is open until first-class function types are designed.
+- `break` and `continue` are unlabeled and apply to the innermost enclosing loop, including a for-each loop. Using either outside a loop is a compile error; a function body never inherits an enclosing loop.
+- The `for` header's initializer and update clauses must each compile to a single JavaScript statement; anything else is reported as unsupported by codegen, not generated incorrectly.
+- The checker narrows nullable values in a `while` or `for` body using the loop's test, the same way it does for `if`. A `do`-`while` body runs before its test, so nothing is narrowed there. Nothing is narrowed after a loop. A null guard whose branch definitely exits, by `return`, `break` or `continue`, narrows the rest of its block: after `if (x == null) { continue; }`, `x` is non-null for the remaining statements of that loop body. Only a direct `break` or `continue` in the guard's block counts, so a `break` inside a nested loop within the guard does not.
+- C-style `for`, `while` and `do`-`while` exist only in logic blocks. `view {}` blocks keep the keyed for-each `for` only.
+
+#### View Blocks (`MODE_VIEW`)
 
 ```c
 component TodoList {
@@ -157,8 +285,8 @@ component TodoList {
         </ul>
     }
 }
-
 ```
+
 
 ---
 
@@ -338,6 +466,54 @@ view {
 }
 
 ```
+
+The checker also applies short-circuit narrowing while it checks a condition itself: after a left
+operand such as `user_name != null` in `&&`, or `user_name == null` in `||`, `user_name` is treated
+as non-null while the right operand is evaluated.
+
+The same branch-specific narrowing applies to a ternary expression: `user_name != null ?
+user_name.length : 0` can access `user_name` in its consequent, while `user_name == null ? 0 :
+user_name.length` can access it in its alternate.
+
+For a statement-level null guard whose consequent definitely returns, the checker also retains the
+false-branch fact afterward. For example, `if (user_name == null) { return; }` permits safe access
+to `user_name` in the remaining statements of that function or lifecycle block.
+
+**Narrowing does not survive anything that may set the value back to `null`.** An assignment
+`x = value` ends the narrowing of `x` unless `value` is a literal, a struct or array literal or a
+template string, which are known to be non-null. A call to one of the component's own functions
+ends the narrowing of every name that function may assign, directly or through the functions it
+calls, with its own parameters and locals not counting. This applies in the rest of the enclosing
+block, in a loop from its second iteration onward and after the loop, and in a guard's own branches
+when the test itself contains such a call, as in `if (x != null && reset())`. A branch that always
+exits by `return`, `break` or `continue` does not carry its assignments or calls to the statements
+after the `if`. An `await` ends the narrowing of all component members (`state`, `derived`,
+`provide` and `inject`, but not `const`), because other code can run while the function is
+suspended; narrowed locals and parameters survive it, since nothing else can reach them.
+
+Inside a single expression the same rules apply in evaluation order, left to right: a call or an
+`await` ends the narrowing of the names it may null for everything that is evaluated after it, but
+not for what was evaluated before. So `x.length + reset()` and `f(x.length, reset())` are fine,
+while `reset() + x.length`, `f(reset(), x.length)`, `[reset(), x.length]`, `Pair { a: reset(), b:
+x.length }`, `x != null && reset() && x.length > 0`, `reset() > 0 ? x.length : 0` and `(await
+slow()) + x.length` all warn after the guard. The operands of an expression and its call
+arguments are taken in the order they are written.
+
+A `derived` value is the one kind of name that can change without being assigned, because it is
+recomputed from what it depends on. Its dependencies are every name its initializer reads, followed
+through other derived values and through the component functions the initializer calls. A narrowed
+derived value stops being narrowed after any **write** to one of those names, whether or not the
+write could produce a `null`: `count = 5` can turn `count > 3 ? null : "x"` into `null`. A write is an
+assignment of any kind, a compound assignment, `++` or `--`, and a call to a component function
+that does any of these, and also a method call on the name itself, such as `items.push(x)`, which may
+mutate it. The same rules about blocks, loops, the order inside an expression and `await` apply.
+
+The analysis is deliberately conservative: it does not follow control flow past this and it treats
+any possibly-null assignment as nulling the name.
+
+Known limits, none of which change the checker's behaviour yet: the calls made from view
+expressions are ordered only within one expression, not across separate nodes of a view, and event
+handlers are not analysed at all.
 
 ---
 
@@ -546,3 +722,13 @@ for (User user in users key user.id) {
 ### 14.6 Safety Clarification
 
 - **Definition:** "Safety" in Crescent refers specifically to **Application Safety** (Strict Compile-Time Type System + Null Safety `T?`), not systems-level memory safety (like Rust's borrow checker). It prevents runtime type errors at compile time.
+
+### 14.7 Project Milestones: v0.x -> v1.0 -> Post-1.0
+
+- **v0.x (current):** The build-up phase. Language features, the compiler, and the runtime are actively designed and can still change shape as they're built out — this is where the v1.0 base gets produced.
+- **v1.0 Goal:** The base is done. Core language syntax and semantics are stable and won't change substantially after this point — v1.0 is meant to be a solid, dependable foundation, not another moving-target release. Two things are required to call it v1.0:
+  - The **semantic/type checker** exists and is trustworthy (scope resolution, type checking, the reactivity rules already specified throughout this document actually enforced at compile time, not just documented).
+  - Crescent **works well in an editor** — a real language server (LSP) experience in VS Code (diagnostics as you type, autocomplete, go-to-definition, hover types), not just syntax highlighting. This depends on the semantic checker above, since most of what an LSP reports is that checker's output delivered per-keystroke instead of per-build.
+- **Post-1.0:** Only corrections (bug fixes), new things (additive features that don't break the stable v1.0 base), and QoL improvements. No fundamental redesigns of what's already stable.
+
+Version numbers follow `docs/Crescent_Versioning.md`: `0.MINOR.PATCH` until v1.0, where `MINOR` is a feature or an important change and `PATCH` is a fix or an adjustment.

@@ -1,0 +1,1107 @@
+# Crescent — Development Roadmap
+
+> This is the working roadmap for Crescent.
+>
+> It is intentionally organized by dependency and maturity rather than by
+> "cool features first".
+>
+> `[ ]` planned
+> `[~]` partially implemented / needs work
+> `[x]` sufficiently implemented for the current milestone
+>
+> This is a roadmap, not a promise that every item will be implemented exactly
+> as written. Language-design decisions may change during v0.x.
+
+---
+
+# 0. Project Foundation
+
+## Repository / Development
+
+- [x] Repository structure established
+- [x] Language design document
+- [x] Formal grammar document
+- [x] Compiler project
+- [x] Example programs
+- [x] Automated tests
+- [ ] Establish consistent compiler error output
+- [x] Establish a clear distinction between parser, semantic, and codegen errors — every stage now
+  reports a file and a line, and none of them stops the others. `LexError`/`ParseError` carry `line`
+  (and `file`) and become an ordinary error diagnostic on their file, so a syntax error in one file no
+  longer hides the rest: the other files are checked and built, every unparsed file is reported, and a
+  `use` of one is an error on the `use` line (`fatal`/`FatalDiagnostic` are gone; `ok` means "every
+  file parsed"). `CodegenError` carries the line of the component, member, statement or template
+  node being generated, kept as `FileBuildResult.line` and printed as `file:line: codegen skipped: …`.
+  Errors inside string and style interpolations report the line in the file, not 1, and an
+  unterminated string is reported where it began. The README's "Pipeline and errors" table documents
+  the result
+- [x] Recover from a syntax error inside a file so that more than the first one is reported —
+  `parseCrescentRecovering()` skips the damaged statement, component member or top-level declaration
+  and goes on (up to 20 errors; the first is always the one `parseCrescent()` throws; a second error on
+  the same line is not reported); the project loader uses it, so each syntax error is its own
+  diagnostic. A stray `;` or `)` gives exactly one error in about 98% of cases. `test-parser-recovery.js`
+  and a recovery stage in the fuzzer cover it
+- [x] Recover inside a `view` block — a bad template node is now one error per node: node lists skip
+  to the next node at the same brace depth, a damaged element is skipped to its own closing tag
+  (counting nested tags), and a few repairs keep one mistake from becoming several errors (a garbled
+  or missing-`<` closing tag, an open tag without its `>`, a mismatch after an earlier error). In views:
+  a stray `;`/`)` or a deleted `<`/`>` gives exactly one error 98 to 100% of the time, and two separate
+  mistakes in one view are both found 91 to 97% of the time (about 0% before). An unbalanced `{`
+  in an attribute still cascades
+- [x] Recover after an error in a `style` block — a damaged declaration is skipped by characters to its
+  `;` or the `}` of its rule (counting `{ }` so an interpolation is not cut), a selector read as a
+  declaration ends the unclosed rule before it, and an unterminated rule or block at the end of the
+  file or any error at the end of the file after an earlier one is not reported again. Inside a style
+  block: a deleted colon, a deleted closing brace and a stray `;` give exactly one error 99.6 to 100% of
+  the time, a deleted value 95%, a stray `{` 89%, and two separate mistakes are both found 97 to 99.7%
+  (before, the list ended at the first style error, so a second mistake was never found)
+- [x] Make the benchmark scaling guard less noisy — it compared one 4x pair of sizes with a limit of 8
+  (the ratio for `members` ranged from 3.2 to 8.8 on unchanged code); it now fits the growth exponent over
+  four sizes (limit 1.5, the shapes measure 0.9 to 1.2) with up to three attempts, and checks itself on
+  workloads that are linear and quadratic by construction, in CPU time. 12 idle runs and 4 runs on a
+  single core shared with three busy loops all passed (the first version of the self-check failed 3 of 4
+  under that load, which is how the CPU-time measurement was found necessary)
+- [x] Improve compiler README so its description matches the current implementation — rewritten
+  where it had drifted: a new "Pipeline and errors" overview (which stage owns which error class and
+  what happens to it), a Structure section covering `narrowing.ts`, `references.ts`, `cli.ts`,
+  `project.ts`, `bench/` and every test script, Modules (cycles and import errors are per-file, only
+  parse errors are fatal), Codegen (loops, multi-root views), the Semantic Checker (the flow-sensitive
+  null analysis it described as a single `if` pattern, loop-control and import diagnostics), a new
+  Robustness section (fuzzer and limits) and the closing "not here yet" list.
+  `compiler/scripts/test-readme.js` now keeps it honest in `npm test`: every file in `src/` and every
+  test script must be mentioned, every path and `npm run` command it names must exist, and every test
+  script must be run by `npm test`
+- [x] Establish a documented release/versioning strategy — `docs/Crescent_Versioning.md`: semantic
+  versioning, `0.MINOR.PATCH` until v1.0 (`MINOR` a feature or important change, `PATCH` a fix or
+  adjustment; a breaking change in `0.x` is a `MINOR` and is listed under "Changed (breaking)"), one
+  Crescent version for the language, compiler, runtime and CLI (`compiler/package.json`), separate
+  versions for the VS Code extension and the web apps, a `CHANGELOG.md`, and the release steps.
+  `test-versioning.js` guards the three-part versions and the changelog. Nothing is tagged yet
+- [~] Cut the first release under it (`0.2.0`) — the bump (`compiler/package.json` and the lockfiles that
+  embed it) and the changelog are committed on `develop`; still to do, by the maintainer: merge `develop`
+  into `main`, tag `v0.2.0`, publish the GitHub release notes, and (optional) make `main` the Vercel
+  production branch
+- [x] Basic tokenization
+- [x] Keywords
+- [x] Identifiers
+- [x] Literals
+- [x] Operators
+- [x] Delimiters
+- [x] Comments
+- [x] Lexer modes
+
+## View / Style
+
+- [x] `view` mode
+- [x] `style` mode
+- [x] Code interpolation from view/style
+- [ ] Expand lexer edge-case coverage
+- [~] Improve lexer diagnostics — lex errors carry their line; an unterminated string or interpolation is reported where it began
+- [ ] Test malformed interpolation/mode transitions
+
+---
+
+# 2. Parser
+
+## Core Language
+
+- [x] Component declarations
+- [x] Struct declarations
+- [x] State declarations
+- [x] Derived declarations
+- [x] Provide/inject declarations
+- [x] Constants
+- [x] Functions
+- [x] Expressions
+- [x] Statements
+- [x] Control flow
+
+## Types
+
+- [x] Basic types
+- [x] Generic type syntax
+- [x] Arrays
+- [x] Nullable modifiers
+- [x] Modifier chaining
+- [x] Function types
+- [ ] Broader generic-type coverage
+- [ ] More type-syntax edge cases
+
+## Templates
+
+- [x] HTML/native elements
+- [x] Component elements
+- [x] Expressions/interpolation
+- [x] `if` / `else`
+- [x] `for`
+- [x] Event handlers
+- [x] Slots
+- [ ] More complex template structures
+- [ ] Stronger malformed-template diagnostics
+
+---
+
+# 3. AST
+
+- [x] Core AST representation
+- [x] Components
+- [x] Structs
+- [x] Expressions
+- [x] Statements
+- [x] Template nodes
+- [x] Style nodes
+- [ ] Review AST consistency as language grows
+- [ ] Remove redundant representations
+- [ ] Document invariants expected by later compiler stages
+
+---
+
+# 4. Module System
+
+- [x] Multi-file discovery
+- [x] `use` resolution
+- [x] Relative module paths
+- [x] Import-cycle detection
+- [x] Module errors carry a file and line — a missing module, a `use` of an item the target does
+  not define, `super` above the project root, and an import cycle (reported on the `use` that
+  closes it) now set `ModuleError.file`/`.line`, which `FatalDiagnostic` exposes as `file` and
+  `line`; `crescent check` prints `file:line: message` and the VS Code extension underlines that
+  line instead of showing a popup (`compiler/scripts/test-module-diagnostics.js`,
+  `compiler/scripts/fixtures/module-errors/`)
+- [x] Unused-import warning — an imported name (or alias) the file never refers to is reported on
+  its `use` line, per item of a braced import (`compiler/src/references.ts`,
+  `compiler/scripts/test-unused-imports.js`, `compiler/scripts/fixtures/unused-imports/`)
+- [x] Module errors are no longer fatal — a missing module, a missing item, `super` above the root and
+  an import cycle are ordinary per-file errors on their `use` line, every one is reported (all bad
+  `use` lines in a file, every independent cycle), follow-on "unknown name" errors for a name whose
+  import failed are suppressed, a file in a cycle is still checked, and only a parse error stays
+  fatal (`compiler/scripts/test-module-recovery.js`). Making this sound also fixed a hole that
+  already existed for semantic errors: a file importing a skipped file was emitted with a `require`
+  of a file that was never written, so `buildProject()` now also skips every file that imports a
+  skipped file, through any number of levels, whether it was skipped for an error or for a code
+  generation failure (struct-only imports do not count, they emit no `require`)
+- [x] Clearly define module semantics in the language specification — `docs/Crescent_Grammar.md`
+  §11 is now organised as 11.1 Syntax, 11.2 Modules and the project, 11.3 Declarations,
+  visibility and scope, 11.4 Path resolution, 11.5 Name binding, 11.6 Compilation model, 11.7
+  Diagnostics (one table of every module diagnostic with its severity, location and effect) and
+  11.8 Known limitations. Each rule it states that was not already covered is pinned by
+  `compiler/scripts/test-module-semantics.js`. Writing it corrected the grammar, which allowed a
+  one-segment `use` that the parser rejects, and exposed a real bug, fixed in the same change:
+  project discovery walked `node_modules` and hidden directories and files
+  (`compiler/scripts/test-module-discovery.js`)
+- [x] Test larger module graphs — `compiler/scripts/test-module-graphs.js` generates projects in a
+  temp directory, builds them with `buildProject()` and renders the output in JSDOM: a 200-file
+  import chain, a hub importing 150 modules, a diamond whose shared base is imported once directly
+  and once through an alias, nested directories reached with several `super::` hops, a 500-file
+  cycle (full chain, reported on the closing `use`), and 12000-file chain and cycle checks. The
+  last two found a real bug: `detectCycles()` was recursive and threw a raw `RangeError` on a
+  long enough chain; it is now iterative with identical output
+- [x] Test duplicate/conflicting declarations across modules — an import whose bound name (item name
+  or `as` alias) is already taken by an earlier `use` or by a local top-level declaration is now a
+  compile error on the `use` line; the same name in two modules that no file imports together stays
+  fine, and an alias resolves a conflict (`compiler/scripts/test-import-conflicts.js`,
+  `compiler/scripts/fixtures/import-conflicts/`)
+
+---
+
+# 5. Semantic Checker
+
+> This is one of the most important areas of the project.
+>
+> v1.0 requires a semantic checker that is trustworthy enough to enforce
+> Crescent's language rules.
+
+## Architecture
+
+- [ ] Evaluate introducing an explicit typed-AST/IR pass between semantic
+  analysis and codegen: resolve names → resolve modules → infer/check types →
+  validate reactivity → typed AST → codegen. Today codegen and diagnostics
+  each re-derive type information from the plain AST; a typed AST would let
+  codegen, a future LSP (hover/autocomplete), and future optimizations
+  (constant folding, dead-code elimination) all consume the same
+  already-resolved information instead of duplicating the work.
+- [ ] If a typed-AST layer is introduced, document its invariants next to the
+  AST invariants already tracked in §3, since the two are closely related.
+
+## Scope / Names
+
+- [x] Basic scope resolution
+- [ ] Comprehensive symbol resolution
+- [x] Duplicate declaration diagnostics
+- [x] Undefined-name diagnostics — `checkExpr`'s `Identifier` case flags any read of a name not in
+  scope, in global scope, or in `BUILTIN_GLOBALS`, so it fires uniformly across reads, assignment
+  targets, and view interpolations (`undefined-identifier-read.crs`, `undefined-identifier.crs`);
+  `on_change`'s watched names are checked separately for existence
+  (`checker.ts`'s `OnChangeDecl` case). What's *not* covered here is cross-module resolution — see
+  the next item — a name imported via `use` from another file that itself doesn't exist there is a
+  module-resolution error, not something this checker function sees.
+- [ ] Cross-module symbol resolution
+
+## Types
+
+- [x] Basic type checking
+- [x] Struct/property checks
+- [x] Generic-aware type positions
+- [~] Nullable checking
+- [ ] Complete assignment compatibility
+- [x] Function argument checking
+- [x] Function return-type checking — `checkReturnStmt` in `checker.ts` validates each `return`
+  statement against its enclosing function's declared return type: a `void` function returning a
+  value, a non-`void` function's bare `return;`, a mismatched literal-shaped value, and a `null`
+  return against a non-nullable type are all flagged (`wrong-return-type.crs`,
+  `missing-return-value.crs`, `void-return-with-value.crs`, `null-return-not-nullable.crs`;
+  `correct-return-ok.crs` covers a matching nullable return and an early bare `return;` inside a
+  `void` function). Non-literal return expressions (e.g. `return someVar;`) are left unchecked,
+  matching the checker's existing literal-shaped-only limitation elsewhere (see the "More precise
+  diagnostic messages" note above). `on_mount`/`on_change` bodies are not given a return context
+  and so are unaffected by this check.
+- [x] Array element type checking — `checkArrayElements` in `checker.ts` walks every element of an
+  array literal (recursively, for nested array literals) once the declared/expected type has been
+  confirmed to be (or unwrap to) an `ArrayType`, and flags a mismatched element, a `null` element
+  against a non-nullable element type, at any position — not just the first, which is all
+  `inferLiteralType`'s existing array-type inference sees (`ArrayLiteral` infers its type from
+  `elements[0]` only, so `int[] x = [1, 2, "three"]` previously passed the top-level
+  `literalTypeMatches` check undetected). Wired into all four existing literal-type-match call
+  sites: `checkLiteralTypeMatch` (`state`/`derived`/`provide`/`const` initializers and struct-field
+  values), `checkCallArgs` (call arguments), `checkAttributeTypeMatch` (component props), and
+  `checkReturnStmt` (return values) — each only after its own existing top-level check has passed,
+  so a wrong array *type* still reports the original single top-level diagnostic rather than a
+  flood of confusing element-level noise. See `wrong-array-element-type.crs`,
+  `null-array-element-not-nullable.crs`, and `wrong-array-element-type-arg.crs` for the negative
+  cases and `correct-array-elements-ok.crs` (including a nullable-element array and a nested
+  `int[][]`) for the positive one.
+- [x] Component prop type checking
+- [ ] Function-type compatibility
+- [x] More precise diagnostic messages — `checkLiteralTypeMatch` now calls `typeIsResolvable` on
+  the declared type before comparing it against the initializer's inferred type, matching the
+  `VarDecl`/function-param/function-return/struct-field/component-param/`inject` type checks that
+  already did this. `state<BogusType> x = "hello";` now reports `Unknown type 'BogusType'` instead
+  of the previous, more confusing `Type mismatch: declared as 'BogusType' but initialized with a
+  'string' value` — the `Unknown type` diagnostic is reported and the (now redundant) `Type
+  mismatch`/array-element checks are skipped for that declaration, so an unresolvable declared type
+  produces exactly one diagnostic rather than a pile-on (`unknown-state-type.crs`; asserted via an
+  exact `diagnostics.length === 1` check in `test-checker.js`, not just presence of the message, to
+  pin down the suppression behavior specifically). Applies to `state`/`derived`/`provide`/`const`
+  initializers and struct-field values, the two call sites `checkLiteralTypeMatch` serves.
+
+## Null Safety
+
+- [~] Basic nullable checks
+- [~] Flow-sensitive null narrowing — was only implemented for the "truthy" direction (bare `if
+  (x)`, `if (x != null)`/`if (null != x)` narrow `x` inside the `if` branch). This session added
+  the symmetric "falsy" direction: `if (x == null) { ... } else { <x narrowed here> }` now narrows
+  `x` inside the `else` branch too (previously always used the un-narrowed outer state, producing a
+  false-positive "accessed without a null check" warning on exactly the pattern
+  `docs/Crescent_Design.md` §11's own example shows as the intended, safe usage — see
+  `guarded-nullable-else-branch-ok.crs`). This session added narrowing through `&&`/`||`-joined
+  conditions on top of that: `if (x != null && y != null) { ... }` now narrows both `x` and `y` in
+  the `then` branch, and `if (x == null || y == null) { ... } else { ... }` now narrows both in the
+  `else` branch (De Morgan's-symmetric to the `&&`/`then` case), each combinator recursing to any
+  depth (`a != null && b != null && c != null` narrows all three). A sibling condition that isn't
+  itself a narrowable null-check (e.g. `second.length > 0` inside `first != null && second.length >
+  0`) is left alone in the branch body, as before — only the operands that are themselves recognizable
+  null-checks are narrowed (`guarded-nullable-and-partial-warns.crs`). The right operand itself now
+  receives the short-circuit guarantee: `x != null && x.length > 0` and `x == null || x.length == 0`
+  can safely access `x` on their right side, in statement and view conditions
+  (`guarded-nullable-short-circuit-ok.crs`). Ternary expressions now narrow each branch according
+  to its test too: `x != null ? x.foo : default` and `x == null ? default : x.foo` are safe
+  (`guarded-nullable-ternary-ok.crs`). A null-branch guard that definitely returns now narrows the
+  following statements too: after `if (x == null) { return; }`, `x` is non-null on the fallthrough
+  path (`guarded-nullable-early-return-ok.crs`). A non-terminal branch deliberately does not narrow
+  following statements (`unguarded-nullable-after-nonterminal-if.crs`). `break` and `continue` count as exits too, so
+  `if (x == null) { continue; }` narrows the rest of that loop body (`guarded-nullable-break-continue-ok.crs`);
+  the narrowing does not outlive the loop (`unguarded-nullable-after-loop-guard.crs`), and a `break`
+  that only exits a nested loop does not make the outer guard terminal
+  (`unguarded-nullable-nested-loop-break.crs`). This session closed the
+  last explicitly-tracked gap: nullable locals, function parameters, and `for`-loop item variables
+  are now included in flow tracking too — a `VarDecl` of nullable type extends the narrowing map
+  for the rest of its enclosing block (`guarded-nullable-local-ok.crs`/
+  `unguarded-nullable-local.crs`), a `FunctionDecl`'s own nullable params get a per-function
+  narrowing map layered on top of the component's (`guarded-nullable-param-ok.crs`/
+  `unguarded-nullable-param.crs`), and a nullable `for`/`TemplateFor` item variable is narrowable
+  the same way, in both a function body and a view block
+  (`guarded-nullable-for-item-ok.crs`/`unguarded-nullable-for-item.crs`). Each extension builds a
+  *new* `Map` rather than mutating the shared component-level one in place — the component-level
+  `nullable` map is reused by reference across every sibling function body, so mutating it directly
+  would have leaked one function's locals into another's. `[x]` now — every named nullable binding
+  the language has (state/derived/provide/const/inject/component-params, locals, function params,
+  loop items) participates in flow-sensitive narrowing.
+- [x] Correct narrowing through `if` — see the note above; the single-condition case (both
+  branches, both directions: bare identifier/`!=`/`==` against `null`) and the `&&`/`||`-joined
+  multi-condition case are now both correct in statement-level `if` (`checkStmts`'s `If` case) and
+  view-block `if` (`checkTemplateNode`'s `TemplateIf` case) — both were fixed identically each time,
+  since they share the same narrowing logic (`narrowingTargets()`). A statement-level `if` with no
+  `else` also preserves the false-branch narrowing for following statements when its consequent
+  definitely returns; `blockDefinitelyExits()` handles direct `return`, `break` and `continue` statements and
+  nested `if`s whose branches both exit. Nullable locals/params/loop-items are now in the flow-tracking map (see
+  above). What's still out of scope, deliberately: path-sensitive analysis beyond those terminal
+  branches (e.g. two nested `if`s on unrelated conditions where the combination happens to imply
+  non-null) — real flow analysis, not something worth chasing without a demonstrated need.
+- [x] Prevent invalid nullable access — already implemented: `checkExpr`'s `Member`/`Index` cases
+  both check `narrow.nullable`/`narrow.narrowed` and emit the "is nullable (...) and is accessed
+  here without a null check" warning (`unguarded-nullable.crs`). Corrected the checkbox this
+  session — same "already done, never marked off" situation found in `Structs` two sessions ago.
+- [x] Test nested/control-flow cases — nested `if`s (narrowing composes correctly: a nullable value
+  narrowed by an outer `if` stays narrowed inside a nested `if` on a different variable) and
+  narrowing propagating into a `for` loop body are covered and working
+  (`guarded-nullable-nested-and-loop-ok.crs`). The call-boundary unsoundness this item used to be
+  held open for is fixed, together with a wider gap found while fixing it: assignment never
+  invalidated narrowing at all, not even within one function. Now an assignment of a possibly-null
+  value ends the narrowing, a call ends the narrowing of every name the callee may assign
+  (per-function summaries in `compiler/src/narrowing.ts`, computed to a fixpoint over the call
+  graph so recursion is handled), loops drop whatever their body or test may null before the first
+  iteration and after the loop, and a guard whose own test calls a nulling function does not
+  narrow. Fixtures: `unguarded-nullable-across-call-boundary.crs`,
+  `unguarded-nullable-after-assignment.crs`, `unguarded-nullable-loop-backedge.crs`,
+  `unguarded-nullable-transitive-call.crs`, `unguarded-nullable-guard-test-call.crs`, and
+  `guarded-nullable-call-ok.crs` for the cases that must stay clean. `await` also
+  invalidates narrowing of component members (`unguarded-nullable-after-await.crs`,
+  `guarded-nullable-await-ok.crs`). Evaluation order inside one expression is
+  tracked as well: a call or `await` invalidates narrowing for the operands, arguments, literal
+  elements and ternary branches evaluated after it (`unguarded-nullable-expression-order.crs`,
+  `guarded-nullable-expression-order-ok.crs`). A narrowed `derived` value is invalidated
+  by any write to what it depends on, followed through other derived values and through the
+  functions its initializer calls (`unguarded-nullable-derived-after-write.crs`,
+  `guarded-nullable-derived-ok.crs`). Still not covered, and documented in the design doc: calls
+  across separate nodes of a view, and event handlers.
+
+## Structs
+
+- [x] Struct declarations
+- [x] Property lookup
+- [x] Struct literals
+- [x] Complete field validation — already implemented: `checkExpr`'s `StructLiteral` case calls
+  `checkLiteralTypeMatch` per field (`unknown-struct-field.crs`/`missing-struct-field.crs` and the
+  `wrong-prop-type*.crs` fixtures already exercise it). Corrected the checkbox this session after
+  noticing, while implementing "Assignment compatibility" below, that this box and the next two
+  were stale — the work was already done and tested, just never marked off.
+- [x] Missing-field diagnostics — already implemented (`Missing field '<name>' in struct literal
+  '<type>'`, `missing-struct-field.crs`). See note above.
+- [x] Extra-field diagnostics — already implemented (`Unknown field '<name>' on struct '<type>'`,
+  `unknown-struct-field.crs`). See note above.
+- [x] Assignment compatibility — `checkAssignmentTypeMatch` (built on the same `checkValueTypeMatch`
+  core `checkLiteralTypeMatch` now also uses) validates a plain `=` reassignment's value against the
+  target's declared type. **Scoped to component-level named members only** (`state`/`derived`/
+  `provide`/`const`/`inject` members and component params) via a new `memberTypes` map built
+  alongside the existing `scope`/`nullable` maps in `checkComponentDecl` and threaded through
+  `checkStmts` — a plain `Identifier` assignment target whose name is in `memberTypes` gets checked;
+  anything else (a local `VarDecl` variable, a function parameter, a `Member`/`Index` write) does
+  not, since `localScope` only tracks names, not types, for those, and extending it to do so is a
+  larger refactor than this box needs. Skips derived targets (already an error via
+  `checkAssignmentTarget`) and skips every compound-assignment operator (`+=`/`-=`/`*=`/`/=`) — only
+  plain `=` is checked, since a compound op's actual required type relationship (e.g. can you `+=`
+  a `string` onto a `string`, but not an `int`?) isn't the same question and deserves its own
+  pass. Same literal-shaped-only limitation as everywhere else: `total = total + 1;` (a non-literal
+  expression) isn't type-checked, only `total = "wrong";` (a literal). See `wrong-assignment-
+  type.crs`, `wrong-assignment-array-element-type.crs`, `null-assignment-not-nullable.crs`
+  (negative) and `correct-assignment-ok.crs` (positive — correct literal, non-literal, compound
+  `+=`, nullable, and even a `const` reassignment, since nothing currently forbids reassigning a
+  `const` at all — a separate, unrelated gap noted under "Reactivity" below, not fixed here).
+
+## Reactivity
+
+- [x] Basic state validation
+- [x] Restrictions on reactive object property mutation — `checkAssignmentTarget` rejects a direct
+  property write on a `state<T>` holding a struct (`direct-property-write-forbidden.crs`) and a
+  direct reassignment of a `derived<T>` value (`derived-assignment-forbidden.crs`). Both were
+  previously only exercised indirectly, through `codegen.ts`'s own separate `CodegenError` checks
+  (`test-forbidden-derived-assignment.js`/`test-forbidden-property-write.js`) — the checker's own
+  diagnostic path had no direct regression test until this session. Note codegen still duplicates
+  both rules independently rather than relying on the checker to have already caught them; see
+  "Comprehensive state mutation analysis" below and `AGENTS.md` §9/§10 on keeping semantic checks
+  out of codegen where avoidable — collapsing the duplication is future cleanup, not done here.
+- [ ] Comprehensive state mutation analysis
+- [ ] Reactive collection mutation validation
+- [ ] Derived-state dependency validation
+- [ ] Lifecycle/reactivity validation
+- [ ] Reactive CSS expression validation
+- [ ] Component context validation for `provide` / `inject`
+- [x] `const` reassignment is now forbidden — fixed exactly as spec'd in this note (which a previous
+  session left after noticing the gap while implementing "Assignment compatibility" under
+  `Structs` above). Added a `constNames: Set<string>` built alongside the existing `derivedNames` in
+  `checkComponentDecl`, threaded through `checkStmts` the same way, and checked in
+  `checkAssignmentTarget` for both an `Assignment` target and a `PostfixStmt` target (`max_items++;`
+  on a `const int` is caught too, not just plain `= `). Message: `Cannot assign to const '<name>';
+  it can only be set at declaration`. `correct-assignment-ok.crs`'s previous const-reassignment case
+  (documented at the time as testing today's, arguably-wrong, permissive behavior) was replaced with
+  a const *read* instead, since reassignment is no longer a passing case; a new
+  `const-reassignment-forbidden.crs` fixture covers both the `Assignment` and `PostfixStmt` paths.
+
+## Components
+
+- [x] Component declaration checking — a component's params + `state`/`derived`/`provide`/
+  `const`/`inject`/function members are checked for duplicate names as one combined set
+  (`duplicate-component-member.crs`), and a component with zero or more than one `view` block is
+  rejected (`missing-view-block.crs`, `duplicate-view-block.crs`)
+- [x] Component prop checking — a required prop that isn't passed (`missing-prop.crs`), a prop
+  passed that isn't declared as a param (`unknown-prop.crs`), and a prop passed with a
+  type-mismatched value (`wrong-prop-type.crs`, `wrong-prop-type-string-attr.crs`) are all flagged;
+  attributes starting with `on` are exempted from the unknown-prop check since they're event
+  handlers, not props
+- [x] Component existence checking — a template element referencing a component name that doesn't
+  exist (`unknown-component.crs`), or that resolves to a struct instead of a component
+  (`struct-as-component.crs`), is flagged
+- [ ] Event handler signature checking — `on*` attributes are currently exempt from prop
+  validation entirely (see "Component prop checking" above); nothing yet verifies the handler
+  expression actually resolves to a function, or that its signature is call-compatible with how
+  the runtime invokes it
+- [ ] Slot usage validation
+- [ ] Lifecycle block validation — `on_mount`/`on_change` bodies are type-checked like any other
+  statement block, and `on_change`'s watched names are checked for existence
+  (`checker.ts`'s `OnChangeDecl` case), but nothing yet validates lifecycle-specific rules (e.g.
+  restrictions on what's valid inside `on_mount` vs. elsewhere, once such rules are decided)
+
+## Diagnostics
+
+- [ ] Consistent diagnostic structure
+- [ ] Source locations
+- [ ] Helpful expected/actual type messages
+- [ ] Error codes
+- [ ] Warnings vs errors
+- [ ] Multiple diagnostics per compilation
+- [ ] Avoid cascading nonsense errors
+
+---
+
+# 6. Code Generation
+
+## JavaScript
+
+- [x] Basic JavaScript generation
+- [x] CommonJS output
+- [x] State generation
+- [x] Derived values
+- [x] Expressions
+- [x] Basic templates
+- [x] Conditional rendering
+- [x] Loops
+- [x] Event handlers
+- [x] Component composition
+- [x] Slots
+- [x] Lifecycle hooks
+
+## Styling
+
+- [x] Scoped CSS
+- [x] Reactive CSS variables
+- [ ] More CSS edge cases
+- [ ] Better source mapping between Crescent and generated CSS
+
+## Lists
+
+- [x] Keyed list reconciliation
+- [ ] More exhaustive keyed-reconciliation tests
+- [ ] Verify behavior under insertion/removal/reordering
+- [ ] Verify state preservation semantics
+
+## Unsupported Features
+
+- [x] Avoid generating incorrect output for unsupported features
+- [ ] Improve unsupported-feature diagnostics
+- [ ] Track codegen coverage explicitly
+- [ ] Expand supported subset incrementally
+
+---
+
+# 7. Runtime
+
+## Reactive Core
+
+- [x] `state`
+- [x] `derived`
+- [x] `effect`
+- [x] `watch`
+- [ ] Thorough dependency-tracking tests
+- [ ] Better cleanup/disposal semantics
+- [ ] Verify nested effects
+- [ ] Evaluate additional reactive primitives once async semantics (§12) are
+  settled — e.g. a `resource`-style primitive for async reactive data with
+  explicit loading/success/error states, comparable to:
+  `state<User[]?> users = null;` + `on_mount { users = await loadUsers(); }`
+  today, but as a first-class reactive shape instead of a plain nullable
+  `state`. Any new primitive name/semantics need a design discussion first —
+  do not add `computed`/`memo`/`resource` merely because other frameworks
+  have them; justify each against what `state`/`derived`/`effect`/`watch`
+  cannot already express.
+
+## Lifecycle
+
+- [x] `on_mount`
+- [x] `on_change`
+- [ ] Evaluate whether `on_destroy` is worth adding; keep the lifecycle hook
+  set as small as the language can get away with — more hooks make a
+  reactive system harder to reason about, not easier
+- [ ] Only evaluate `before_update`/`after_update` if `on_mount`, `on_change`,
+  and (if added) `on_destroy` prove insufficient for a real use case
+
+## DOM
+
+- [x] Element creation
+- [x] Text nodes
+- [x] Conditional blocks
+- [x] List rendering
+- [x] Slots
+- [x] Event binding
+- [ ] More DOM edge cases
+- [ ] Cleanup when components/blocks are removed
+- [ ] Verify memory/resource cleanup
+
+## Reactive Collections
+
+- [~] Reactive list behavior
+- [ ] Complete mutation API
+- [ ] `push`
+- [ ] `remove`
+- [ ] `pop`
+- [ ] `clear`
+- [ ] Index assignment
+- [ ] Correct targeted updates
+- [ ] Tests for every mutation operation
+
+---
+
+# 8. End-to-End Compiler
+
+- [x] Discover `.crs` files
+- [x] Parse files
+- [x] Resolve modules
+- [x] Semantic-check files
+- [x] Skip codegen for files with semantic errors
+- [x] Generate JavaScript
+- [x] Mirror source tree in generated output
+- [x] Improve CLI
+- [x] Add compiler arguments
+- [x] Add explicit input/output paths
+- [x] Add build mode
+- [x] Add check-only mode
+- [x] Add clear exit codes
+- [ ] Add production/development modes
+
+---
+
+# 9. Testing
+
+## Parser
+
+- [ ] Lexer unit-test suite
+- [ ] Parser unit-test suite
+- [ ] Grammar edge-case tests
+- [ ] Invalid syntax tests
+
+## Semantic Checker
+
+- [ ] Valid-program tests
+- [ ] Invalid-program tests
+- [ ] Type mismatch tests
+- [ ] Nullability tests
+- [ ] Reactivity-rule tests
+- [ ] Component tests
+- [ ] Module tests
+
+## Codegen
+
+- [x] Existing DOM smoke tests
+- [ ] Expand generated-output tests
+- [ ] Snapshot/reference tests where useful
+- [ ] Unsupported-feature tests
+
+## Runtime
+
+- [ ] State update tests
+- [ ] Derived-state tests
+- [ ] Conditional rendering tests
+- [ ] List reconciliation tests
+- [ ] Component lifecycle tests
+- [ ] Event tests
+- [ ] Style reactivity tests
+- [ ] Slot tests
+
+## Regression
+
+Every important compiler bug should ideally become a regression test.
+
+## Compiler Robustness
+
+- [x] Fuzz the lexer/parser with malformed/random input (e.g. `component {{`,
+  `state<><><>`, unterminated `view {`). The requirement is that the
+  compiler never crashes with an unhandled exception on malformed input —
+  it should always produce a controlled diagnostic instead. —
+  `compiler/scripts/fuzz-harness.js` mutates every example and fixture program (truncation,
+  deletion, duplication, swapped lines, keyword and punctuation insertion, random characters), builds
+  token soup and a set of pathological inputs, and runs each through parse, check and codegen, grouping
+  any uncontrolled exception by stage, type and throwing location; `fuzz.js` is the command-line
+  runner (`node scripts/fuzz.js <seed> <iterations> [deep]`, non-zero exit on a finding) and
+  `test-fuzz.js` runs it in `npm test` in child processes with a timeout and a heap cap, so a hang or
+  an out-of-memory abort fails the test and does not take the suite down. It found two bugs: an
+  unterminated `style {` block looped forever and ate memory until Node aborted (the style parser read
+  characters in `while (true)` loops with no end-of-input check; it now throws a `ParseError`, using a
+  new `Lexer.atEnd()` because `peekChar()`'s `'\0'` sentinel cannot tell the end from a NUL character in
+  the source), and nesting of about 1000 parentheses, brackets, blocks or elements, or a chain of a few
+  thousand binary operators, member accesses or calls, overflowed the stack of the parser or of the
+  checker. The parser now enforces a nesting depth of 256 and a syntax tree depth of 1000 (spec §12)
+  and converts a stack overflow it cannot predict into a `ParseError`. 200,000 further mutations over
+  40 seeds found nothing else
+- [x] A small compiler benchmark suite (lexer/parser/checker/codegen/full
+  build, at a few representative project sizes), tracked over time. —
+  `compiler/bench/run.js` (`npm run bench`, `npm run bench:compare`) with generators in
+  `bench/shapes.js` and a committed `bench/baseline.json`; times are also stored relative to a
+  calibration workload so a baseline from another machine is comparable, and `--compare` fails on a
+  stage more than twice as slow. `scripts/test-bench.js` guards scaling in `npm test`. First
+  results: the five linear shapes grow about 2x per doubling, parsing dominated (about 1.3 MB/s,
+  roughly 20 times slower than lexing alone; profiling showed 43 percent of it was building the
+  `ParseError` objects the parser threw and caught when it tried each statement form in turn, so
+  statements are now classified by lookahead and parse 3 to 7 times faster, see
+  `scripts/test-parser-backtracking.js`; profiling also exposed a line-counter drift after backtracks
+  across a newline, which is fixed), a
+  500-file project checks in about 45 ms and builds in about 120 ms, and the checker is quadratic
+  in members times functions of a single component (`functions` shape: 80 ms at 2000 functions,
+  830 ms at 4000), which is not reachable by realistic input
+
+## Conformance
+
+- [ ] A structured `tests/valid/` / `tests/invalid/` fixture suite (with
+  further grouping by area — types, nullability, reactivity, modules,
+  components, codegen — mirroring the semantic-checker categories above),
+  where each fixture declares its expected outcome (compiles cleanly /
+  produces a specific error code once error codes exist, per §5's
+  Diagnostics list). This moves the test suite closer to being an
+  executable language specification rather than a fixed set of assertions.
+
+---
+
+# 10. Developer Experience
+
+## CLI
+
+- [x] Friendly `crescent` command
+- [x] `crescent check`
+- [x] `crescent build`
+- [ ] `crescent run` / development mode
+- [~] Clear compiler diagnostics
+- [ ] Config file
+
+## Project Scaffolding & Dev Server (Later)
+
+- [ ] `crescent new <name>` project scaffolding (a conventional
+  `src/App.crs`, `src/components/`, `public/` layout)
+- [ ] `crescent.toml` project configuration (package name/version, build
+  entry point and output dir, dev server port), so the compiler and CLI stop
+  needing everything inferred from command-line arguments or hard-coded
+  paths. This is also the natural place for a future `[dependencies]` table
+  if/when a package ecosystem (§12) is ever pursued.
+- [ ] `crescent dev` — a development server that rebuilds automatically on
+  save, as a natural extension of today's `Crescent: Preview` command
+- [ ] Hot-module-reload for the dev server/preview that preserves component
+  state across edits, instead of a full reload. Today's `Crescent: Preview`
+  (see `editors/vscode/README.md`'s "Preview" section) reloads the whole
+  webview and resets state on every save; a real HMR loop — recompile only
+  the changed component, send it to the running page, patch the DOM, keep
+  state — would make Crescent feel much closer to a modern frontend
+  framework in day-to-day use.
+- [ ] Incremental compilation (file → AST → symbols → dependency graph →
+  invalidate/recompile only what changed) as the shared foundation both the
+  dev server's rebuild step and a future LSP (below) need for reasonable
+  performance on larger projects.
+
+## Near-Term VS Code Enablement (v0.x)
+
+- [x] Extract reusable project APIs from `src/index.ts`:
+  `checkProject(root)` and `buildProject(root, outDir)` (see `src/project.ts`). `inMemoryFiles?`
+  was not added — `loadAllPrograms()` is disk-based only; an in-memory-files variant is still
+  open if a future LSP needs to check unsaved editor buffers.
+- [x] Make `crescent check <path>` and `crescent build <path> --out-dir <path>` work on arbitrary
+  projects rather than the hard-coded `examples/` directory.
+- [~] Define machine-readable diagnostics with file, line, column (line-only temporarily if
+  necessary), severity, message, and a stable error code when available. Diagnostics now carry
+  file + line (no column yet) + severity + message; no stable error codes yet. Fatal parse/lex
+  errors now also carry the offending file (`FatalDiagnostic.file`, via `modules.ts`'s
+  `loadAllPrograms()` attaching it before rethrowing) — module errors (import cycles, missing
+  exports) still don't, since they inherently involve more than one file and their message text
+  already names them.
+- [x] Create a minimal VS Code extension: `.crs` file association, TextMate syntax highlighting,
+  comment/bracket/indent configuration, and `Crescent: Check` / `Crescent: Build` commands. See
+  `editors/vscode/` (`editors/vscode/README.md` documents what the grammar does and does not
+  attempt, and the remaining limitations below).
+- [x] Publish parser, module, and semantic-checker diagnostics in VS Code on save and on open (via
+  `checkProject()`, called in-process — see `editors/vscode/src/extension.js` and its README's
+  "Diagnostics" section for exactly what is and isn't covered, including the multi-root-workspace
+  limitation).
+- [ ] Publish diagnostics on document changes too (continuous/incremental checking), not just on
+  save/open.
+- [x] Add a `Crescent: Preview` command that builds the project and opens/reloads the browser
+  output. See `compiler/src/webPreview.ts` (`buildPreviewHtml()`) and `editors/vscode/src/
+  extension.js`'s `crescent.preview` command — `editors/vscode/README.md`'s "Preview" section
+  documents exactly what gets mounted (top-level, zero-parameter components only), how mount
+  failures are isolated, and the known trade-off that a reload replaces the whole webview rather
+  than doing a real hot-module-reload (so previewed component state resets on every save). A
+  second command, `crescent.previewInBrowser` ("Crescent: Open Preview in Browser"), builds the
+  identical HTML but writes it to disk and opens it in the system's real default browser via
+  `vscode.env.openExternal` instead of a VS Code webview panel — see "Opening it in a real
+  browser" in the same README section for its own trade-off (no save-triggered auto-reload, since
+  there's no live connection to an already-open external tab).
+- [ ] Replace process-based checking with a small LSP server once the shared project API and
+  diagnostic model are stable.
+
+## Formatting
+
+- [ ] Decide whether Crescent needs an official formatter
+- [ ] Define formatting conventions
+- [ ] Implement formatter
+
+## Language Server
+
+- [ ] LSP architecture
+- [ ] Diagnostics
+- [ ] Syntax awareness
+- [ ] Autocomplete
+- [ ] Go to definition
+- [ ] Hover/type information
+- [ ] Symbol search
+- [ ] Document symbols
+- [ ] VS Code integration
+- [ ] Incremental checking
+
+---
+
+# 11. Frontend Output
+
+## JavaScript / Browser
+
+- [x] Runnable generated JavaScript
+- [x] Self-contained web bundle
+- [ ] Better browser integration
+- [ ] Source maps
+- [ ] Production optimization
+- [ ] Tree shaking strategy
+- [ ] Asset handling
+
+## Future
+
+- [ ] Evaluate WebAssembly/direct-DOM target
+- [ ] Determine whether/when Wasm should become a supported target
+- [ ] Do not implement a second backend until the language semantics are stable enough to justify it
+- [ ] Server-side rendering (SSR), with a hydration step that attaches
+  Crescent's reactive runtime on top of server-rendered HTML. Far future:
+  this depends on codegen/runtime being stable enough to target a
+  non-browser environment first, and on the same "don't add a second target
+  before semantics stabilize" reasoning as Wasm above.
+
+---
+
+# 11a. Web Playground
+
+A browser playground lives at `playground/` — a sibling project to `compiler/` and
+`editors/vscode/` in this same repo, deployable to Vercel (Root Directory `playground`; see
+`playground/README.md` for the exact setup). It reuses `compiler/src/webPreview.ts`'s
+`buildPreviewHtml()` unchanged (the same function the VS Code extension's "Open Preview in
+Browser" command calls) via a `file:../compiler` local dependency, so nothing about the compiler
+itself was touched to add this.
+
+- [x] Compile a single pasted component server-side (a Node serverless function writes it to a
+  temp `.crs` file, runs the real checker + codegen + esbuild bundling pipeline, returns the
+  resulting preview HTML and diagnostics as JSON) and render it in a sandboxed `<iframe>`.
+- [x] Shareable links via URL-hash-encoded source (`#code=...`, base64) — no database, no
+  accounts; the same technique the TypeScript Playground and Svelte REPL use.
+- [x] A real test (`playground/scripts/test-compile.js`, jsdom-based, mirrors
+  `compiler/scripts/test-web.js's` approach) that compiles a genuine component through the whole
+  pipeline and dispatches a real click event against the mounted result, plus coverage for a
+  warning-only diagnostic, a fatal parse error, and input-size rejection.
+- [ ] **Multi-file / `import` support** — deliberately out of scope for the first version; the
+  playground only ever writes what you typed to a single `main.crs`. Supporting Crescent's module
+  system would mean the playground UI needs some notion of multiple files/tabs, which is a real
+  UI design question on its own, not just a backend change.
+- [x] **Syntax highlighting for the editor** — `public/highlight.js` is a small, dependency-free,
+  hand-written Crescent tokenizer (keywords/types lifted directly from `compiler/src/tokens.ts`'s
+  `KEYWORDS`, so it can't silently drift out of sync in an obvious way) rendered underneath a
+  transparent `<textarea>` (the standard "shadow `<pre>`" trick — see `public/style.css`'s
+  `.editor-wrap`), plus Tab-to-indent. Deliberately *not* CodeMirror/Monaco: no CDN dependency, and
+  it understands Crescent's actual string-interpolation syntax (`"text {expr} text"`, including
+  nested braces inside the interpolation) correctly, which a generic "close enough" language mode
+  wouldn't. Real tests in `scripts/test-highlight.js` (a lossless round-trip check — strip the
+  generated markup and get back the exact original source — run against every file in
+  `compiler/examples/`, plus explicit interpolation/comment/nesting cases) and
+  `scripts/test-app.js` (jsdom, drives the actual `public/app.js` + `public/highlight.js`: initial
+  load, live re-highlighting on input, the Tab handler, and the share-link encode round trip).
+  Autocomplete is still not attempted — a real "no code intelligence" gap, not just cosmetics;
+  see the next item below.
+- [ ] **A real code editor** — the current one is a genuine syntax-highlighting textarea (see
+  above), but it does not do autocomplete, bracket-matching, error squiggles inline in the editor,
+  or anything else that needs the checker's own type information rather than just tokenizing text.
+  That would mean piping `checkProject`'s diagnostics (already returned by `/api/compile`) back
+  into editor-decoration positions, which the current plain-`<textarea>`-plus-overlay approach
+  cannot do — inline squiggles need a real editor component (CodeMirror 6 is the natural fit: it
+  can consume an external tokenizer/linter without necessarily needing its own language grammar).
+  Worth doing once diagnostics-in-the-editor feels like the actual missing piece, not before.
+- [ ] **Persistence beyond the URL** — no "my snippets" list, no accounts. A share link is exactly
+  as durable as the URL itself. Worth a deliberate decision (and a real backend) later if people
+  want saved/named snippets rather than just link-sharing.
+- [ ] **Migrating off the `file:../compiler` local dependency** — the playground currently
+  compiles against whatever's in `compiler/src` at deploy time, via a same-repo relative
+  dependency (matching how `editors/vscode/src/extension.js` already locates `compiler/dist`
+  relative to itself — see the comment there). The more decoupled alternative is publishing
+  `crescent-compiler` as a real versioned package (npm or GitHub Packages) and having the
+  playground (potentially in its own separate repository at that point) depend on a pinned
+  version like any external consumer would. Deliberately not done now: it adds a real publishing
+  process for a compiler that is still changing quickly pre-1.0, and the same-repo approach costs
+  nothing extra today. Revisit once the compiler's public API (`checkProject`, `buildProject`,
+  `buildPreviewHtml`) is stable enough that a playground rebuild breaking on every compiler commit
+  becomes a real cost.
+
+---
+
+# 12. Language Features to Evaluate
+
+These are deliberately NOT commitments. Each should be designed before implementation.
+
+> **This section is important, not urgent — and that's a deliberate distinction, not a way of
+> saying "someday, maybe never."** Recent sessions have mostly hardened what already exists
+> (regression tests for already-implemented checker diagnostics, documentation accuracy). That
+> work is valuable and should continue, but correctness/testing work is never *finished* — there
+> is always one more untested diagnostic, one more edge case. Crescent should not treat that as a
+> reason to indefinitely postpone language evolution. A healthy rhythm alternates between
+> hardening what exists and deliberately spending a session on real design work from this section
+> — sketching grammar, prototyping a small parser change, writing an example program in the
+> proposed syntax — even while the checker is still imperfect. Neither activity should be starved
+> by the other. See `TODO.md` §16's priority order for how this fits with day-to-day task
+> selection; that order is about picking *today's* task, not a permanent verdict that language
+> evolution always waits.
+
+## Core Language Evolution
+
+The following ten areas are grouped and roughly sequenced by dependency — later groups lean on
+earlier ones (pattern matching needs something worth matching on; exhaustiveness checking needs
+pattern matching to exist first; interfaces/traits interact with generics either way). This is a
+design roadmap, not an implementation order forced on any single session — pick one coherent group,
+design it against `docs/Crescent_Design.md`'s existing principles, and write it up there before
+touching the parser.
+
+- [x] **String interpolation** — implemented: a `string` literal can embed `{ Expression }`
+  directly (`"Hello, {name}!"`), in any context a string literal appears (expressions, `view {}`
+  text, attribute values); `\{`/`\}` escape a literal brace. See
+  `docs/Crescent_Design.md`'s "String Interpolation" subsection (§2) for the language-level
+  semantics and `docs/Crescent_Grammar.md` §2.4/§6/§10 for the grammar and implementation notes.
+  Still open, deliberately deferred: formatting expressions (controlling *how* an embedded value
+  renders — padding, decimal places, etc.) — there's no concrete need for it yet, and it's a
+  materially different, larger feature (a mini format-spec mini-language) than "embed an
+  expression," which is why it isn't bundled into this bullet's `[x]`.
+- [~] **Destructuring** — struct destructuring, array destructuring, in both variable declarations
+  and function parameters. (Supersedes the old flat "Destructuring" bullet from earlier revisions
+  of this roadmap — same idea, spelled out.) Worth designing before tuples/enums below, since both
+  of those become much more useful once values can be destructured. **Struct destructuring in local
+  variable declarations is implemented** — `Point { x, y } = current;`, including partial-field
+  selection (`Point { x } = current;`) — see `docs/Crescent_Design.md`'s "Struct Destructuring"
+  subsection and `docs/Crescent_Grammar.md` §2.5/§6/§10 for the language semantics and grammar.
+  Still open, deliberately deferred as separate design work rather than assumed to inherit this
+  feature's answers: destructuring in a function's parameter list, and array destructuring (which
+  needs its own answer for a length mismatch that struct destructuring's field-based shape doesn't
+  have an equivalent question for).
+- [x] **Additional loop forms & loop control** — implemented in logic blocks: C-style `for (init;
+  test; update)`, `while`, `do`-`while`, and unlabeled `break`/`continue` (applying to the
+  innermost loop, including the for-each `for`). The rules chosen are written up in
+  `docs/Crescent_Design.md`'s "Loops" subsection; the grammar is in `docs/Crescent_Grammar.md` §6.
+  The checker rejects `break`/`continue` outside a loop, scopes a `for` header's variable to the
+  loop, and narrows nullable values in `while`/`for` bodies from the loop test. Still open,
+  deliberately not decided here:
+  - labeled `break`/`continue`;
+  - C-style `for` / `while` in `view {}` blocks (currently logic blocks only);
+  - whether per-iteration loop-variable binding (what the JS `let` output gives today) is a
+    permanent language guarantee, once closures exist;
+  - `for` clauses that expand to several JS statements (e.g. a state-array mutator call) are
+    reported as unsupported by codegen.
+  Examples and tests: `compiler/examples/loops.crs`, `compiler/scripts/test-loops.js`, and the
+  `loops-ok`, `break-outside-loop`, `continue-outside-loop`, `loop-variable-scoped-to-for`,
+  `loop-body-local-not-visible-to-update`, `guarded-nullable-while-ok` and
+  `unguarded-nullable-do-while` checker fixtures.
+- [ ] **Tuples** — tuple types, tuple literals, tuple indexing, and tuple destructuring (building
+  on the destructuring item above). Consider whether Crescent actually needs tuples as a distinct
+  concept or whether structs already cover the same need less anonymously — decide deliberately,
+  don't add both without a reason.
+- [ ] **Enums / algebraic data types** — basic enums, variants that carry values, type checking for
+  both, and how they interact with `match` below. This is also the natural home for a future
+  `Result<T, E>` (see "Better error/result conventions" below) — a `Result` is just an enum with an
+  `Ok`/`Err` shape, so enums should probably land before or alongside `Result` rather than after it.
+- [ ] **Pattern matching** — `match` itself; literal patterns; wildcards; variable bindings; struct
+  patterns; enum patterns; guards. (Supersedes the old flat "Pattern matching" bullet.) Most
+  compelling once enums and destructuring exist, since matching on a bare primitive alone is a much
+  smaller feature than matching on structured data. Justify this against Crescent specifically —
+  e.g. it integrates naturally with reactive state that has an explicit
+  loading/success/error shape — not merely "other typed languages have `match`."
+- [ ] **Exhaustiveness & pattern diagnostics** — non-exhaustive `match` detection, unreachable-
+  pattern detection, missing-case diagnostics, and generally better pattern-related error messages.
+  Only meaningful once `match` and enums exist; this is the checker-side follow-up to the pattern
+  matching item above, not a separate feature to design in isolation.
+- [ ] **First-class function types** — function types such as `(int, int) -> int`; functions passed
+  as parameters; functions returned as values; function-type compatibility/checking (this
+  supersedes the old flat "Better function types" bullet, and overlaps with the existing "Function-
+  type compatibility" item under §5's Types subsection — resolve that overlap when this is actually
+  designed, don't track it in two places once it's real work); and closures, which is the part of
+  this group most likely to need real design discussion given Crescent's current reactivity model
+  (what does a closure capture from `state<T>`? a snapshot or a live reference?).
+- [ ] **Generics** — generic structs, generic functions, generic components, generic collections,
+  and — only if Crescent actually needs them in practice — type constraints. (Supersedes the old
+  flat "More complete generics" bullet.) Crescent already has generic *type syntax* in the parser;
+  this item is about generic *declarations* (writing a struct/function/component once and
+  parameterizing it), a materially bigger step.
+- [ ] **Interfaces / traits** — interface or trait declarations, implementations, type checking, and
+  how they interact with generic constraints above. Explicitly undecided: whether this should be
+  one concept or two (an "interface" a component/struct implements vs. a "trait" used purely for
+  generic bounds) is itself part of the design work, not a foregone conclusion — don't build both
+  without first deciding whether the distinction earns its complexity in Crescent specifically.
+- [ ] **More powerful type-system features** — type aliases; better nullable/type narrowing (this
+  overlaps with the existing, already-tracked "Flow-sensitive null narrowing" work under §5's Null
+  Safety subsection — that's compiler-hardening work on the *current* nullable model and can
+  proceed independently of anything else in this list); possibly union types; possibly type-
+  inference improvements; and whatever else real Crescent usage surfaces once the above features
+  exist and people are actually writing more Crescent code. This is deliberately the least defined
+  item — treat it as "revisit once the rest of this list has taught us more about what Crescent
+  actually needs," not a queue of specific sub-features to pick off.
+
+## Ecosystem, Runtime & Peripheral Ideas
+
+- [ ] Better error/result conventions, specifically a `Result<T, E>` type as an
+  explicit alternative to exceptions (e.g. `Result<User, Error> getUser(int id)`
+  paired with `match` above) — fits the "safe, explicitly typed" design
+  goal in `docs/Crescent_Design.md` and could become a distinguishing feature
+  rather than an incidental one. See "Enums / algebraic data types" above for why this
+  probably wants to be built on top of enums rather than as its own special-cased type.
+- [ ] Async semantics refinement, including how `await` composes with reactive
+  state in lifecycle blocks (see the Runtime "Reactive Core" note above about a
+  possible future `resource` primitive)
+- [ ] Module/package ecosystem (a `crescent add <package>` style flow) — do not
+  build this until module/language semantics are stable; an ecosystem built on
+  a moving foundation has to be redone
+- [ ] Compile-time/meta-programming possibilities (e.g. `derive(...)`-style
+  annotations or decorator-like syntax the compiler understands) — explicitly
+  post-v1.0; metaprogramming makes a young language significantly harder to
+  learn and reason about, so it should not be attempted before the core
+  semantics are settled
+- [ ] More expressive collection operations
+- [ ] Spread syntax
+- [ ] Additional primitive types if justified
+- [ ] A Dart-style `num` numeric type — a common supertype of `int` and `float` for contexts that
+  should accept either without the caller picking one (e.g. a function parameter that just adds two
+  numeric values). Not designed yet; open questions before this should be implemented: does `num`
+  participate in the existing literal-shaped type-matching checks (`checkValueTypeMatch` and
+  friends) as its own type, or purely as an assignability rule ("an `int` or `float` value is
+  assignable to a `num`-typed target")? What does codegen emit for arithmetic on a `num`-typed
+  value — does JS's single `number` type make this a no-op at runtime, with all the work living in
+  the checker? Does an `int` narrow back out of a `num` automatically, or does that need an explicit
+  cast? Resolve these against `docs/Crescent_Design.md` §2 "Primitives" before touching the
+  lexer/parser/checker — see `AGENTS.md` §4's "Do not invent language semantics" rule.
+- [ ] A `float` / `double` / `decimal` distinction — today Crescent has a single `float` primitive
+  (see `docs/Crescent_Design.md` §2 "Primitives"); it does not distinguish single- vs
+  double-precision floating point, nor offer an exact/decimal type for money-like values that
+  shouldn't be subject to binary floating-point rounding. Not designed yet; open questions: is
+  `float` kept as an alias for one of the new, more precise names (and if so, which — `double`
+  seems the more common everyday default in other C-style languages) or deprecated in favor of
+  explicit `double`/`decimal`? What does `decimal` compile to in JS codegen, given JS has no native
+  arbitrary-precision decimal type — a library dependency (e.g. `decimal.js`) in the generated
+  runtime, or is `decimal` deferred until arithmetic on it can be implemented correctly rather than
+  silently lowered to a plain `number` and losing the exactness that was the point of adding it?
+  Resolve deliberately — see `AGENTS.md` §4 and §6 (this is exactly the kind of change that needs a
+  design-document decision before implementation, not an implementation that quietly redefines what
+  `float` means).
+- [ ] A standard router (`route "/users/:id" { <User/> }`-style) once module
+  semantics are stable — this is closer to "does Crescent feel like a complete
+  frontend platform" than a core language feature, so treat it as ecosystem
+  work, not compiler work
+- [ ] A small official component library (button, modal, tabs, form, table,
+  tooltip, ...) once the language is mature enough — valuable less as UI work
+  and more as a real-world stress test: if common components are awkward to
+  express in Crescent itself, that awkwardness is a signal about the language,
+  not the components
+- [ ] Compiler-assisted accessibility warnings (e.g. flagging an `<img>`
+  without an accessible-name attribute) as part of the language/framework's
+  philosophy — framed as "the compiler helps developers avoid common frontend
+  accessibility mistakes," not "Crescent automatically solves accessibility"
+
+Every proposal in this section should be able to answer "why is this
+especially good *in Crescent*", not just "language X already has this." For
+example, pattern matching is worth having because it integrates naturally
+with reactive state that has an explicit loading/success/error shape — not
+merely because other typed languages have `match`. This keeps Crescent's
+feature set an intentional identity rather than an accumulation of other
+languages'/frameworks' features.
+
+---
+
+# 13. Features NOT to Add Casually
+
+- [ ] Classes
+- [ ] Classical inheritance
+- [ ] Arbitrary object-oriented encapsulation
+- [ ] Operator overloading
+- [ ] Complex punctuation-heavy syntax
+- [ ] Features that undermine explicit typing
+- [ ] Features that require a major runtime abstraction without a demonstrated benefit
+
+Any proposal in this category requires an explicit language-design discussion first.
+
+---
+
+# 14. Milestones
+
+## v0.x — Build the Foundation
+
+## v0.x Compiler Maturity
+
+## v1.0
+
+## Post-v1.0
+
+## Someday / Maybe
+
+- [ ] Self-hosting: rewrite meaningful parts of the compiler (lexer, parser,
+  checker) in Crescent itself, once the language is mature and expressive
+  enough to comfortably write a compiler in. This would be a strong signal
+  that the language is genuinely capable, not merely a frontend-templating
+  DSL — but it is a large, multi-year-scale idea and should not influence
+  near-term priorities.
+- [ ] Revisit the WebAssembly/direct-DOM question (§11) once/if the above
+  is ever seriously pursued, since a self-hosted compiler and an alternate
+  backend are somewhat related long-term bets.
+
+---
+
+# 15. AI Task Selection Rules
+
+When an AI starts a session:
+
+1. Read `AGENTS.md`.
+2. Read `HANDOFF.md`.
+3. Look at `TODO.md`.
+4. Pick ONE coherent task.
+5. Check the design and grammar.
+6. Implement it.
+7. Test it.
+8. Update `HANDOFF.md`.
+9. Stop.
+
+Do not automatically continue into the next unchecked checkbox.
+
+A single checked item is better than five half-finished items.
+
+---
+
+# 16. Current Priority Order
+
+When there is no explicit task from the maintainer, prefer work in approximately this order:
+
+1. Fix contradictions between specification and implementation.
+2. Strengthen the semantic checker.
+3. Strengthen compiler diagnostics.
+4. Add regression tests for existing behavior.
+5. Complete core codegen/runtime behavior.
+6. Improve module handling.
+7. Improve CLI/developer experience.
+8. Expand language features.
+9. Explore additional compilation targets.
+
+Do not prioritize new syntax over correctness of already-defined syntax unless there is a deliberate design reason.
+
+This ordering is for picking *today's* task when nothing else is specified — it is not a claim
+that item 8 (language features, see §12) is low-value or should wait indefinitely. Hardening work
+(items 1-7) has no natural end point; there is always another edge case or another untested
+diagnostic. If several sessions in a row have all been hardening work, that is itself a signal to
+deliberately pick a §12 item next, not a reason to keep finding one more thing to harden. Both
+kinds of work move the project forward; neither should permanently starve the other.

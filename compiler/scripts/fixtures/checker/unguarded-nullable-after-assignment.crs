@@ -1,0 +1,41 @@
+component Assigned {
+    state<string?> name = "Ada";
+    state<string[]> names = ["a"];
+
+    void after_guard() {
+        if (name != null) {
+            name = null;
+            console.log(name.length);
+        }
+    }
+
+    void after_early_return() {
+        if (name == null) {
+            return;
+        }
+        name = null;
+        console.log(name.length);
+    }
+
+    void after_local() {
+        string? local = "x";
+        if (local != null) {
+            local = null;
+            console.log(local.length);
+        }
+    }
+
+    void after_branch() {
+        if (name == null) {
+            return;
+        }
+        if (names.length > 0) {
+            name = null;
+        }
+        console.log(name.length);
+    }
+
+    view {
+        <p>"assigned"</p>
+    }
+}

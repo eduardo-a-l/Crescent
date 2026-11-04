@@ -1,0 +1,19 @@
+component Broken {
+    state<string?> message = null;
+    state<string[]> names = ["a", "b"];
+
+    void run() {
+        for (int i = 0; i < 3; i++) {
+            if (message == null) {
+                for (string name in names) {
+                    break;
+                }
+            }
+            console.log(message.length);
+        }
+    }
+
+    view {
+        <p>"broken"</p>
+    }
+}

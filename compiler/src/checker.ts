@@ -1,0 +1,1117 @@
+import * as AST from './ast';
+import { FileImports, LoadedFile } from './modules';
+import { collectReferencedNames } from './references';
+import {
+  DerivedDeps,
+  FunctionEffects,
+  NullifyMode,
+  blockDefinitelyExits,
+  computeDerivedDeps,
+  computeFunctionEffects,
+  nullifiedByExpr,
+  nullifiedByStmts,
+} from './narrowing';
+
+export interface Diagnostic {
+  severity: 'error' | 'warning';
+  message: string;
+  where: string;
+  line: number;
+}
+
+interface SymbolInfo {
+  kind: 'component' | 'struct';
+  decl: AST.ComponentDecl | AST.StructDecl;
+}
+
+const BUILTIN_GLOBALS = new Set([
+  'fetch',
+  'console',
+  'Math',
+  'Date',
+  'JSON',
+  'Promise',
+  'setTimeout',
+  'clearTimeout',
+  'setInterval',
+  'clearInterval',
+  'window',
+  'document',
+  'localStorage',
+  'sessionStorage',
+]);
+
+const BUILTIN_EVENT_TYPES = new Set(['MouseEvent', 'KeyboardEvent', 'FormEvent']);
+
+function err(message: string, where: string, line: number): Diagnostic {
+  return { severity: 'error', message, where, line };
+}
+
+function warn(message: string, where: string, line: number): Diagnostic {
+  return { severity: 'warning', message, where, line };
+}
+
+function typeIsResolvable(type: AST.CrescentType, scope: Map<string, SymbolInfo>): boolean {
+  switch (type.kind) {
+    case 'PrimitiveType':
+      return true;
+    case 'NamedType':
+      if (type.name === 'void()') return true;
+      if (BUILTIN_EVENT_TYPES.has(type.name)) return true;
+      return scope.has(type.name);
+    case 'GenericType':
+      return scope.has(type.name) && typeIsResolvable(type.typeArg, scope);
+    case 'NullableType':
+      return typeIsResolvable(type.inner, scope);
+    case 'ArrayType':
+      return typeIsResolvable(type.inner, scope);
+    default:
+      return true;
+  }
+}
+
+export function typeToString(type: AST.CrescentType): string {
+  switch (type.kind) {
+    case 'PrimitiveType':
+      return type.name;
+    case 'NamedType':
+      return type.name;
+    case 'GenericType':
+      return `${type.name}<${typeToString(type.typeArg)}>`;
+    case 'NullableType':
+      return `${typeToString(type.inner)}?`;
+    case 'ArrayType':
+      return `${typeToString(type.inner)}[]`;
+    default:
+      return '?';
+  }
+}
+
+function inferLiteralType(expr: AST.Expr): AST.CrescentType | null {
+  switch (expr.kind) {
+    case 'IntLiteral':
+      return { kind: 'PrimitiveType', name: 'int' };
+    case 'FloatLiteral':
+      return { kind: 'PrimitiveType', name: 'float' };
+    case 'StringLiteral':
+      return { kind: 'PrimitiveType', name: 'string' };
+    case 'TemplateString':
+      return { kind: 'PrimitiveType', name: 'string' };
+    case 'BoolLiteral':
+      return { kind: 'PrimitiveType', name: 'bool' };
+    case 'StructLiteral':
+      return { kind: 'NamedType', name: expr.typeName };
+    case 'ArrayLiteral': {
+      if (expr.elements.length === 0) return null;
+      const inner = inferLiteralType(expr.elements[0]);
+      if (!inner) return null;
+      return { kind: 'ArrayType', inner };
+    }
+    default:
+      return null;
+  }
+}
+
+function literalTypeMatches(declared: AST.CrescentType, actual: AST.CrescentType): boolean {
+  if (declared.kind === 'NullableType') return literalTypeMatches(declared.inner, actual);
+  if (declared.kind === 'PrimitiveType' && actual.kind === 'PrimitiveType') {
+    if (declared.name === actual.name) return true;
+    return declared.name === 'float' && actual.name === 'int';
+  }
+  if (declared.kind === 'NamedType' && actual.kind === 'NamedType') return declared.name === actual.name;
+  if (declared.kind === 'ArrayType' && actual.kind === 'ArrayType') return literalTypeMatches(declared.inner, actual.inner);
+  return false;
+}
+
+function checkArrayElements(
+  declared: AST.CrescentType,
+  expr: AST.Expr,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[],
+  messagePrefix: string
+): void {
+  const arrType = declared.kind === 'NullableType' ? declared.inner : declared;
+  if (arrType.kind !== 'ArrayType' || expr.kind !== 'ArrayLiteral') return;
+  const elementType = arrType.inner;
+  expr.elements.forEach((el, i) => {
+    if (el.kind === 'NullLiteral') {
+      if (elementType.kind !== 'NullableType') {
+        diagnostics.push(
+          err(`${messagePrefix}: 'null' at index ${i} is not allowed because the element type '${typeToString(elementType)}' is not nullable`, where, line)
+        );
+      }
+      return;
+    }
+    if (el.kind === 'ArrayLiteral') {
+      checkArrayElements(elementType, el, where, line, diagnostics, messagePrefix);
+      return;
+    }
+    const actual = inferLiteralType(el);
+    if (!actual) return;
+    if (!literalTypeMatches(elementType, actual)) {
+      diagnostics.push(
+        err(`${messagePrefix} at index ${i} expects '${typeToString(elementType)}' but received a '${typeToString(actual)}' value`, where, line)
+      );
+    }
+  });
+}
+
+function checkValueTypeMatch(
+  declared: AST.CrescentType,
+  value: AST.Expr,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[],
+  globalScope: Map<string, SymbolInfo>,
+  verb: string
+): void {
+  if (!typeIsResolvable(declared, globalScope)) {
+    diagnostics.push(err(`Unknown type '${typeToString(declared)}'`, where, line));
+    return;
+  }
+  if (value.kind === 'NullLiteral') {
+    if (declared.kind !== 'NullableType') {
+      diagnostics.push(err(`'null' assigned to non-nullable type '${typeToString(declared)}'`, where, line));
+    }
+    return;
+  }
+  const actual = inferLiteralType(value);
+  if (!actual) return;
+  if (!literalTypeMatches(declared, actual)) {
+    diagnostics.push(
+      err(`Type mismatch: declared as '${typeToString(declared)}' but ${verb} a '${typeToString(actual)}' value`, where, line)
+    );
+    return;
+  }
+  checkArrayElements(declared, value, where, line, diagnostics, 'Type mismatch: array element');
+}
+
+function checkLiteralTypeMatch(declared: AST.CrescentType, init: AST.Expr, where: string, line: number, diagnostics: Diagnostic[], globalScope: Map<string, SymbolInfo>): void {
+  checkValueTypeMatch(declared, init, where, line, diagnostics, globalScope, 'initialized with');
+}
+
+function checkAssignmentTypeMatch(declared: AST.CrescentType, value: AST.Expr, where: string, line: number, diagnostics: Diagnostic[], globalScope: Map<string, SymbolInfo>): void {
+  checkValueTypeMatch(declared, value, where, line, diagnostics, globalScope, 'assigned');
+}
+
+function checkCallArgs(
+  fnDecl: AST.FunctionDecl,
+  args: AST.Expr[],
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[]
+): void {
+  if (args.length !== fnDecl.params.length) {
+    diagnostics.push(
+      err(
+        `Function '${fnDecl.name}' expects ${fnDecl.params.length} argument(s) but received ${args.length}`,
+        where,
+        line
+      )
+    );
+    return;
+  }
+  for (let i = 0; i < args.length; i++) {
+    const param = fnDecl.params[i];
+    const arg = args[i];
+    if (arg.kind === 'NullLiteral') {
+      if (param.type.kind !== 'NullableType') {
+        diagnostics.push(
+          err(`'null' passed as argument '${param.name}' of function '${fnDecl.name}', which is not nullable`, where, line)
+        );
+      }
+      continue;
+    }
+    const actual = inferLiteralType(arg);
+    if (!actual) continue;
+    if (!literalTypeMatches(param.type, actual)) {
+      diagnostics.push(
+        err(
+          `Type mismatch: argument '${param.name}' of function '${fnDecl.name}' expects '${typeToString(param.type)}' but received a '${typeToString(actual)}' value`,
+          where,
+          line
+        )
+      );
+      continue;
+    }
+    checkArrayElements(param.type, arg, where, line, diagnostics, `Type mismatch: element of argument '${param.name}' of function '${fnDecl.name}'`);
+  }
+}
+
+function checkAttributeTypeMatch(
+  declared: AST.CrescentType,
+  attr: AST.Attribute,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[]
+): void {
+  if (!attr.isExpr) {
+    const actual: AST.CrescentType = { kind: 'PrimitiveType', name: 'string' };
+    if (!literalTypeMatches(declared, actual)) {
+      diagnostics.push(
+        err(`Type mismatch: prop '${attr.name}' expects '${typeToString(declared)}' but received a 'string' value`, where, line)
+      );
+    }
+    return;
+  }
+  const exprValue = attr.exprValue!;
+  if (exprValue.kind === 'NullLiteral') {
+    if (declared.kind !== 'NullableType') {
+      diagnostics.push(err(`'null' passed to prop '${attr.name}', which is not nullable`, where, line));
+    }
+    return;
+  }
+  const actual = inferLiteralType(exprValue);
+  if (!actual) return;
+  if (!literalTypeMatches(declared, actual)) {
+    diagnostics.push(
+      err(`Type mismatch: prop '${attr.name}' expects '${typeToString(declared)}' but received a '${typeToString(actual)}' value`, where, line)
+    );
+    return;
+  }
+  checkArrayElements(declared, exprValue, where, line, diagnostics, `Type mismatch: element of prop '${attr.name}'`);
+}
+
+interface NarrowState {
+  nullable: Map<string, AST.CrescentType>;
+  narrowed: Set<string>;
+}
+
+function narrowingTargets(test: AST.Expr, nullable: Map<string, AST.CrescentType>, branch: 'then' | 'else' = 'then'): string[] {
+  const op = branch === 'then' ? '!=' : '==';
+  if (branch === 'then' && test.kind === 'Identifier' && nullable.has(test.name)) return [test.name];
+  if (test.kind === 'Binary' && test.op === op) {
+    if (test.left.kind === 'Identifier' && nullable.has(test.left.name) && test.right.kind === 'NullLiteral') return [test.left.name];
+    if (test.right.kind === 'Identifier' && nullable.has(test.right.name) && test.left.kind === 'NullLiteral') return [test.right.name];
+  }
+  const combinator = branch === 'then' ? '&&' : '||';
+  if (test.kind === 'Binary' && test.op === combinator) {
+    return [
+      ...narrowingTargets(test.left, nullable, branch),
+      ...narrowingTargets(test.right, nullable, branch),
+    ];
+  }
+  return [];
+}
+
+function checkExpr(
+  expr: AST.Expr,
+  scope: Set<string>,
+  globalScope: Map<string, SymbolInfo>,
+  functions: Map<string, AST.FunctionDecl>,
+  narrow: NarrowState,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[]
+): void {
+  const effects = effectsFor(functions);
+  const suspendNames = suspendNamesOf(functions);
+  const derivedDeps = derivedDepsOf(functions);
+  const nullifiedBy = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames, derivedDeps);
+  switch (expr.kind) {
+    case 'IntLiteral':
+    case 'FloatLiteral':
+    case 'StringLiteral':
+    case 'BoolLiteral':
+    case 'NullLiteral':
+      return;
+    case 'Identifier':
+      if (!scope.has(expr.name) && !globalScope.has(expr.name) && !BUILTIN_GLOBALS.has(expr.name)) {
+        diagnostics.push(err(`Undefined identifier '${expr.name}'`, where, line));
+      }
+      return;
+    case 'StructLiteral': {
+      const structInfo = globalScope.get(expr.typeName);
+      if (!structInfo) {
+        diagnostics.push(err(`Unknown struct type '${expr.typeName}'`, where, line));
+      } else if (structInfo.kind !== 'struct') {
+        diagnostics.push(err(`'${expr.typeName}' is a component, not a struct — it cannot be used as a struct literal`, where, line));
+      } else {
+        const structDecl = structInfo.decl as AST.StructDecl;
+        const declaredFields = new Map(structDecl.fields.map((f) => [f.name, f.type]));
+        const providedNames = new Set(expr.fields.map((f) => f.name));
+        for (const f of structDecl.fields) {
+          if (!providedNames.has(f.name)) {
+            diagnostics.push(err(`Missing field '${f.name}' in struct literal '${expr.typeName}'`, where, line));
+          }
+        }
+        for (const f of expr.fields) {
+          if (!declaredFields.has(f.name)) {
+            diagnostics.push(err(`Unknown field '${f.name}' on struct '${expr.typeName}'`, where, line));
+          } else {
+            checkLiteralTypeMatch(declaredFields.get(f.name)!, f.value, `${where}, field '${f.name}'`, line, diagnostics, globalScope);
+          }
+        }
+      }
+      let fieldNarrow = narrow;
+      for (const f of expr.fields) {
+        checkExpr(f.value, scope, globalScope, functions, fieldNarrow, where, line, diagnostics);
+        fieldNarrow = dropNarrowed(fieldNarrow, nullifiedBy(f.value));
+      }
+      return;
+    }
+    case 'ArrayLiteral': {
+      let elementNarrow = narrow;
+      for (const el of expr.elements) {
+        checkExpr(el, scope, globalScope, functions, elementNarrow, where, line, diagnostics);
+        elementNarrow = dropNarrowed(elementNarrow, nullifiedBy(el));
+      }
+      return;
+    }
+    case 'Unary':
+      checkExpr(expr.operand, scope, globalScope, functions, narrow, where, line, diagnostics);
+      return;
+    case 'Binary': {
+      checkExpr(expr.left, scope, globalScope, functions, narrow, where, line, diagnostics);
+      const leftNullified = nullifiedBy(expr.left);
+      const afterLeft = dropNarrowed(narrow, leftNullified);
+      if (expr.op === '&&' || expr.op === '||') {
+        const branch = expr.op === '&&' ? 'then' : 'else';
+        const targets = withoutNames(narrowingTargets(expr.left, narrow.nullable, branch), leftNullified);
+        const rightNarrow: NarrowState = {
+          nullable: afterLeft.nullable,
+          narrowed: targets.length ? new Set([...afterLeft.narrowed, ...targets]) : afterLeft.narrowed,
+        };
+        checkExpr(expr.right, scope, globalScope, functions, rightNarrow, where, line, diagnostics);
+      } else {
+        checkExpr(expr.right, scope, globalScope, functions, afterLeft, where, line, diagnostics);
+      }
+      return;
+    }
+    case 'Ternary': {
+      checkExpr(expr.test, scope, globalScope, functions, narrow, where, line, diagnostics);
+      const testNullified = nullifiedBy(expr.test);
+      const afterTest = dropNarrowed(narrow, testNullified);
+      const consequentTargets = withoutNames(narrowingTargets(expr.test, narrow.nullable, 'then'), testNullified);
+      const consequentNarrow: NarrowState = {
+        nullable: afterTest.nullable,
+        narrowed: consequentTargets.length ? new Set([...afterTest.narrowed, ...consequentTargets]) : afterTest.narrowed,
+      };
+      checkExpr(expr.consequent, scope, globalScope, functions, consequentNarrow, where, line, diagnostics);
+      const alternateTargets = withoutNames(narrowingTargets(expr.test, narrow.nullable, 'else'), testNullified);
+      const alternateNarrow: NarrowState = {
+        nullable: afterTest.nullable,
+        narrowed: alternateTargets.length ? new Set([...afterTest.narrowed, ...alternateTargets]) : afterTest.narrowed,
+      };
+      checkExpr(expr.alternate, scope, globalScope, functions, alternateNarrow, where, line, diagnostics);
+      return;
+    }
+    case 'Call': {
+      checkExpr(expr.callee, scope, globalScope, functions, narrow, where, line, diagnostics);
+      let argNarrow = dropNarrowed(narrow, nullifiedBy(expr.callee));
+      for (const a of expr.args) {
+        checkExpr(a, scope, globalScope, functions, argNarrow, where, line, diagnostics);
+        argNarrow = dropNarrowed(argNarrow, nullifiedBy(a));
+      }
+      if (expr.callee.kind === 'Identifier') {
+        const calleeFn = functions.get(expr.callee.name);
+        if (calleeFn) checkCallArgs(calleeFn, expr.args, where, line, diagnostics);
+      }
+      return;
+    }
+    case 'Member':
+      if (expr.object.kind === 'Identifier' && narrow.nullable.has(expr.object.name) && !narrow.narrowed.has(expr.object.name)) {
+        diagnostics.push(
+          warn(`'${expr.object.name}' is nullable (${typeToString(narrow.nullable.get(expr.object.name)!)}) and is accessed here without a null check`, where, line)
+        );
+      }
+      checkExpr(expr.object, scope, globalScope, functions, narrow, where, line, diagnostics);
+      return;
+    case 'Index':
+      if (expr.object.kind === 'Identifier' && narrow.nullable.has(expr.object.name) && !narrow.narrowed.has(expr.object.name)) {
+        diagnostics.push(
+          warn(`'${expr.object.name}' is nullable (${typeToString(narrow.nullable.get(expr.object.name)!)}) and is accessed here without a null check`, where, line)
+        );
+      }
+      checkExpr(expr.object, scope, globalScope, functions, narrow, where, line, diagnostics);
+      checkExpr(expr.index, scope, globalScope, functions, dropNarrowed(narrow, nullifiedBy(expr.object)), where, line, diagnostics);
+      return;
+    case 'Postfix':
+      checkExpr(expr.operand, scope, globalScope, functions, narrow, where, line, diagnostics);
+      return;
+    case 'TemplateString': {
+      let partNarrow = narrow;
+      for (const p of expr.parts) {
+        if (p.kind !== 'expr') continue;
+        checkExpr(p.expr, scope, globalScope, functions, partNarrow, where, line, diagnostics);
+        partNarrow = dropNarrowed(partNarrow, nullifiedBy(p.expr));
+      }
+      return;
+    }
+  }
+}
+
+function checkAssignmentTarget(
+  target: AST.Expr,
+  scope: Set<string>,
+  globalScope: Map<string, SymbolInfo>,
+  derivedNames: Set<string>,
+  constNames: Set<string>,
+  where: string,
+  line: number,
+  diagnostics: Diagnostic[]
+): void {
+  if (target.kind === 'Identifier') {
+    if (derivedNames.has(target.name)) {
+      diagnostics.push(err(`Cannot assign to derived '${target.name}'; reassign one of its dependencies instead`, where, line));
+    } else if (constNames.has(target.name)) {
+      diagnostics.push(err(`Cannot assign to const '${target.name}'; it can only be set at declaration`, where, line));
+    }
+    return;
+  }
+  let root: AST.Expr = target;
+  while (root.kind === 'Member' || root.kind === 'Index') root = root.object;
+  if (root.kind === 'Identifier' && target.kind === 'Member' && target.object.kind === 'Identifier' && target.object.name === root.name) {
+    diagnostics.push(
+      err(`Direct property write on state '${root.name}' is forbidden; reassign the whole state instead (see design doc §13.2)`, where, line)
+    );
+  }
+}
+
+interface ReturnContext {
+  functionName: string;
+  returnType: 'void' | AST.CrescentType;
+}
+
+function checkReturnStmt(
+  stmt: Extract<AST.Stmt, { kind: 'Return' }>,
+  returnCtx: ReturnContext | null,
+  where: string,
+  diagnostics: Diagnostic[]
+): void {
+  if (!returnCtx) return;
+  const { functionName, returnType } = returnCtx;
+  if (returnType === 'void') {
+    if (stmt.value) {
+      diagnostics.push(
+        err(`Function '${functionName}' has a 'void' return type but returns a value`, where, stmt.line)
+      );
+    }
+    return;
+  }
+  if (!stmt.value) {
+    diagnostics.push(
+      err(`Function '${functionName}' must return a value of type '${typeToString(returnType)}'`, where, stmt.line)
+    );
+    return;
+  }
+  if (stmt.value.kind === 'NullLiteral') {
+    if (returnType.kind !== 'NullableType') {
+      diagnostics.push(
+        err(`'null' returned from function '${functionName}', which is not nullable ('${typeToString(returnType)}')`, where, stmt.line)
+      );
+    }
+    return;
+  }
+  const actual = inferLiteralType(stmt.value);
+  if (!actual) return;
+  if (!literalTypeMatches(returnType, actual)) {
+    diagnostics.push(
+      err(
+        `Type mismatch: function '${functionName}' declares return type '${typeToString(returnType)}' but returns a '${typeToString(actual)}' value`,
+        where,
+        stmt.line
+      )
+    );
+    return;
+  }
+  checkArrayElements(returnType, stmt.value, where, stmt.line, diagnostics, `Type mismatch: element of function '${functionName}' return value`);
+}
+
+const functionEffectsCache = new WeakMap<Map<string, AST.FunctionDecl>, FunctionEffects>();
+
+function effectsFor(functions: Map<string, AST.FunctionDecl>): FunctionEffects {
+  let effects = functionEffectsCache.get(functions);
+  if (!effects) {
+    effects = computeFunctionEffects(functions);
+    functionEffectsCache.set(functions, effects);
+  }
+  return effects;
+}
+
+const suspendNamesByFunctions = new WeakMap<Map<string, AST.FunctionDecl>, ReadonlySet<string>>();
+const NO_SUSPEND_NAMES: ReadonlySet<string> = new Set();
+
+function suspendNamesFor(memberTypes: Map<string, AST.CrescentType>, constNames: Set<string>): Set<string> {
+  return new Set([...memberTypes.keys()].filter((n) => !constNames.has(n)));
+}
+
+function suspendNamesOf(functions: Map<string, AST.FunctionDecl>): ReadonlySet<string> {
+  return suspendNamesByFunctions.get(functions) ?? NO_SUSPEND_NAMES;
+}
+
+const derivedDepsByFunctions = new WeakMap<Map<string, AST.FunctionDecl>, DerivedDeps>();
+const NO_DERIVED_DEPS: DerivedDeps = new Map();
+
+function derivedDepsOf(functions: Map<string, AST.FunctionDecl>): DerivedDeps {
+  return derivedDepsByFunctions.get(functions) ?? NO_DERIVED_DEPS;
+}
+
+function dropNarrowed(narrow: NarrowState, names: Set<string>): NarrowState {
+  if (names.size === 0) return narrow;
+  let hit = false;
+  for (const n of narrow.narrowed) {
+    if (names.has(n)) {
+      hit = true;
+      break;
+    }
+  }
+  if (!hit) return narrow;
+  return { nullable: narrow.nullable, narrowed: new Set([...narrow.narrowed].filter((n) => !names.has(n))) };
+}
+
+function withoutNames(targets: string[], names: Set<string>): string[] {
+  return targets.filter((t) => !names.has(t));
+}
+
+function checkStmts(
+  stmts: AST.Stmt[],
+  scope: Set<string>,
+  globalScope: Map<string, SymbolInfo>,
+  functions: Map<string, AST.FunctionDecl>,
+  narrow: NarrowState,
+  derivedNames: Set<string>,
+  where: string,
+  diagnostics: Diagnostic[],
+  returnCtx: ReturnContext | null = null,
+  memberTypes: Map<string, AST.CrescentType> = new Map(),
+  constNames: Set<string> = new Set(),
+  inLoop: boolean = false
+): { scope: Set<string>; narrow: NarrowState } {
+  const localScope = new Set(scope);
+  let currentNarrow = narrow;
+  const effects = effectsFor(functions);
+  const suspendNames = suspendNamesOf(functions);
+  const derivedDeps = derivedDepsOf(functions);
+  const nullifiedStmts = (list: AST.Stmt[], mode: NullifyMode) => nullifiedByStmts(list, effects, mode, suspendNames, derivedDeps);
+  const nullifiedExpr = (e: AST.Expr) => nullifiedByExpr(e, effects, suspendNames, derivedDeps);
+  for (const stmt of stmts) {
+    switch (stmt.kind) {
+      case 'VarDecl':
+        checkExpr(stmt.init, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        if (!typeIsResolvable(stmt.type, globalScope)) {
+          diagnostics.push(err(`Unknown type '${typeToString(stmt.type)}' referenced by variable '${stmt.name}'`, where, stmt.line));
+        }
+        localScope.add(stmt.name);
+        if (stmt.type.kind === 'NullableType') {
+          const nullable = new Map(currentNarrow.nullable);
+          nullable.set(stmt.name, stmt.type);
+          currentNarrow = { nullable, narrowed: currentNarrow.narrowed };
+        }
+        break;
+      case 'StructDestructure': {
+        checkExpr(stmt.init, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        const structInfo = globalScope.get(stmt.typeName);
+        if (!structInfo) {
+          diagnostics.push(err(`Unknown struct type '${stmt.typeName}'`, where, stmt.line));
+        } else if (structInfo.kind !== 'struct') {
+          diagnostics.push(err(`'${stmt.typeName}' is a component, not a struct — it cannot be used in a struct destructure`, where, stmt.line));
+        } else {
+          const structDecl = structInfo.decl as AST.StructDecl;
+          const declaredFieldNames = new Set(structDecl.fields.map((f) => f.name));
+          const seen = new Set<string>();
+          for (const f of stmt.fields) {
+            if (seen.has(f)) {
+              diagnostics.push(err(`Duplicate field '${f}' in struct destructure of '${stmt.typeName}'`, where, stmt.line));
+              continue;
+            }
+            seen.add(f);
+            if (!declaredFieldNames.has(f)) {
+              diagnostics.push(err(`Unknown field '${f}' on struct '${stmt.typeName}'`, where, stmt.line));
+            }
+          }
+        }
+        for (const f of stmt.fields) localScope.add(f);
+        break;
+      }
+      case 'Assignment':
+        checkExpr(stmt.value, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        checkExpr(stmt.target, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, constNames, where, stmt.line, diagnostics);
+        if (stmt.op === '=' && stmt.target.kind === 'Identifier' && !derivedNames.has(stmt.target.name) && !constNames.has(stmt.target.name)) {
+          const declaredType = memberTypes.get(stmt.target.name);
+          if (declaredType) {
+            checkAssignmentTypeMatch(declaredType, stmt.value, where, stmt.line, diagnostics, globalScope);
+          }
+        }
+        break;
+      case 'PostfixStmt':
+        checkExpr(stmt.target, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        checkAssignmentTarget(stmt.target, localScope, globalScope, derivedNames, constNames, where, stmt.line, diagnostics);
+        break;
+      case 'ExprStatement':
+        checkExpr(stmt.expr, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        break;
+      case 'If': {
+        checkExpr(stmt.test, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        const testNullified = nullifiedExpr(stmt.test);
+        const afterTest = dropNarrowed(currentNarrow, testNullified);
+        const thenTargets = withoutNames(narrowingTargets(stmt.test, afterTest.nullable, 'then'), testNullified);
+        const consequentNarrow: NarrowState = {
+          nullable: afterTest.nullable,
+          narrowed: thenTargets.length ? new Set([...afterTest.narrowed, ...thenTargets]) : afterTest.narrowed,
+        };
+        checkStmts(stmt.consequent, localScope, globalScope, functions, consequentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
+        if (stmt.alternate) {
+          const elseTargets = withoutNames(narrowingTargets(stmt.test, afterTest.nullable, 'else'), testNullified);
+          const alternateNarrow: NarrowState = {
+            nullable: afterTest.nullable,
+            narrowed: elseTargets.length ? new Set([...afterTest.narrowed, ...elseTargets]) : afterTest.narrowed,
+          };
+          checkStmts(stmt.alternate, localScope, globalScope, functions, alternateNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
+        } else if (blockDefinitelyExits(stmt.consequent)) {
+          const fallthroughTargets = narrowingTargets(stmt.test, currentNarrow.nullable, 'else');
+          if (fallthroughTargets.length) {
+            currentNarrow = {
+              nullable: currentNarrow.nullable,
+              narrowed: new Set([...currentNarrow.narrowed, ...fallthroughTargets]),
+            };
+          }
+        }
+        break;
+      }
+      case 'For': {
+        checkExpr(stmt.iterable, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        if (!typeIsResolvable(stmt.itemType, globalScope)) {
+          diagnostics.push(err(`Unknown type '${typeToString(stmt.itemType)}' referenced by for-loop item '${stmt.itemName}'`, where, stmt.line));
+        }
+        const bodyScope = new Set(localScope);
+        bodyScope.add(stmt.itemName);
+        const loopEntry = dropNarrowed(currentNarrow, nullifiedStmts(stmt.body, 'full'));
+        let bodyNarrow = loopEntry;
+        if (stmt.itemType.kind === 'NullableType') {
+          const nullable = new Map(loopEntry.nullable);
+          nullable.set(stmt.itemName, stmt.itemType);
+          bodyNarrow = { nullable, narrowed: loopEntry.narrowed };
+        }
+        checkStmts(stmt.body, bodyScope, globalScope, functions, bodyNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
+        break;
+      }
+      case 'ForC': {
+        const initState = checkStmts([stmt.init], localScope, globalScope, functions, currentNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
+        const loopNarrow = dropNarrowed(initState.narrow, nullifiedStmts([stmt], 'full'));
+        checkExpr(stmt.test, initState.scope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
+        const testTargets = withoutNames(
+          narrowingTargets(stmt.test, loopNarrow.nullable, 'then'),
+          nullifiedExpr(stmt.test)
+        );
+        const bodyNarrow: NarrowState = {
+          nullable: loopNarrow.nullable,
+          narrowed: testTargets.length ? new Set([...loopNarrow.narrowed, ...testTargets]) : loopNarrow.narrowed,
+        };
+        checkStmts(stmt.body, initState.scope, globalScope, functions, bodyNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
+        if (stmt.update) {
+          checkStmts([stmt.update], initState.scope, globalScope, functions, loopNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, inLoop);
+        }
+        break;
+      }
+      case 'While': {
+        const loopNarrow = dropNarrowed(currentNarrow, nullifiedStmts([stmt], 'full'));
+        checkExpr(stmt.test, localScope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
+        const testTargets = withoutNames(
+          narrowingTargets(stmt.test, loopNarrow.nullable, 'then'),
+          nullifiedExpr(stmt.test)
+        );
+        const bodyNarrow: NarrowState = {
+          nullable: loopNarrow.nullable,
+          narrowed: testTargets.length ? new Set([...loopNarrow.narrowed, ...testTargets]) : loopNarrow.narrowed,
+        };
+        checkStmts(stmt.body, localScope, globalScope, functions, bodyNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
+        break;
+      }
+      case 'DoWhile': {
+        const loopNarrow = dropNarrowed(currentNarrow, nullifiedStmts([stmt], 'full'));
+        checkStmts(stmt.body, localScope, globalScope, functions, loopNarrow, derivedNames, where, diagnostics, returnCtx, memberTypes, constNames, true);
+        checkExpr(stmt.test, localScope, globalScope, functions, loopNarrow, where, stmt.line, diagnostics);
+        break;
+      }
+      case 'Break':
+      case 'Continue':
+        if (!inLoop) {
+          diagnostics.push(err(`'${stmt.kind === 'Break' ? 'break' : 'continue'}' can only be used inside a loop`, where, stmt.line));
+        }
+        break;
+      case 'Return':
+        if (stmt.value) checkExpr(stmt.value, localScope, globalScope, functions, currentNarrow, where, stmt.line, diagnostics);
+        checkReturnStmt(stmt, returnCtx, where, diagnostics);
+        break;
+    }
+    currentNarrow = dropNarrowed(currentNarrow, nullifiedStmts([stmt], 'fallthrough'));
+  }
+  return { scope: localScope, narrow: currentNarrow };
+}
+
+function checkTemplateNode(
+  node: AST.TemplateNode,
+  scope: Set<string>,
+  globalScope: Map<string, SymbolInfo>,
+  functions: Map<string, AST.FunctionDecl>,
+  narrow: NarrowState,
+  where: string,
+  diagnostics: Diagnostic[]
+): void {
+  const line = node.line;
+  switch (node.kind) {
+    case 'Element': {
+      if (node.isComponent) {
+        const info = globalScope.get(node.tag);
+        if (!info) {
+          diagnostics.push(err(`Unknown component '<${node.tag}>'`, where, line));
+        } else if (info.kind !== 'component') {
+          diagnostics.push(err(`'${node.tag}' is a struct, not a component — it cannot be used as an element`, where, line));
+        } else {
+          const compDecl = info.decl as AST.ComponentDecl;
+          const declaredParams = new Map(compDecl.params.map((p) => [p.name, p.type]));
+          const providedNames = new Set(node.attributes.map((a) => a.name));
+          for (const p of compDecl.params) {
+            if (!providedNames.has(p.name)) {
+              diagnostics.push(err(`Missing prop '${p.name}' passed to <${node.tag}>`, where, line));
+            }
+          }
+          for (const a of node.attributes) {
+            if (!declaredParams.has(a.name)) {
+              if (!a.name.startsWith('on')) {
+                diagnostics.push(err(`Unknown prop '${a.name}' passed to <${node.tag}> (not declared as a param)`, where, line));
+              }
+            } else {
+              checkAttributeTypeMatch(declaredParams.get(a.name)!, a, where, line, diagnostics);
+            }
+          }
+        }
+      }
+      for (const a of node.attributes) {
+        if (a.isExpr && a.exprValue) checkExpr(a.exprValue, scope, globalScope, functions, narrow, where, line, diagnostics);
+      }
+      for (const c of node.children) checkTemplateNode(c, scope, globalScope, functions, narrow, where, diagnostics);
+      return;
+    }
+    case 'TemplateIf': {
+      checkExpr(node.test, scope, globalScope, functions, narrow, where, line, diagnostics);
+      const thenTargets = narrowingTargets(node.test, narrow.nullable, 'then');
+      const consequentNarrow: NarrowState = {
+        nullable: narrow.nullable,
+        narrowed: thenTargets.length ? new Set([...narrow.narrowed, ...thenTargets]) : narrow.narrowed,
+      };
+      for (const c of node.consequent) checkTemplateNode(c, scope, globalScope, functions, consequentNarrow, where, diagnostics);
+      if (node.alternate) {
+        const elseTargets = narrowingTargets(node.test, narrow.nullable, 'else');
+        const alternateNarrow: NarrowState = {
+          nullable: narrow.nullable,
+          narrowed: elseTargets.length ? new Set([...narrow.narrowed, ...elseTargets]) : narrow.narrowed,
+        };
+        for (const c of node.alternate) checkTemplateNode(c, scope, globalScope, functions, alternateNarrow, where, diagnostics);
+      }
+      return;
+    }
+    case 'TemplateFor': {
+      checkExpr(node.iterable, scope, globalScope, functions, narrow, where, line, diagnostics);
+      if (!typeIsResolvable(node.itemType, globalScope)) {
+        diagnostics.push(err(`Unknown type '${typeToString(node.itemType)}' referenced by template for-loop item '${node.itemName}'`, where, line));
+      }
+      const bodyScope = new Set(scope);
+      bodyScope.add(node.itemName);
+      let bodyNarrow = narrow;
+      if (node.itemType.kind === 'NullableType') {
+        const nullable = new Map(narrow.nullable);
+        nullable.set(node.itemName, node.itemType);
+        bodyNarrow = { nullable, narrowed: narrow.narrowed };
+      }
+      if (node.key) checkExpr(node.key, bodyScope, globalScope, functions, bodyNarrow, where, line, diagnostics);
+      for (const c of node.body) checkTemplateNode(c, bodyScope, globalScope, functions, bodyNarrow, where, diagnostics);
+      return;
+    }
+    case 'TextInterpolation':
+      checkExpr(node.expr, scope, globalScope, functions, narrow, where, line, diagnostics);
+      return;
+    case 'TextLiteral':
+      return;
+  }
+}
+
+function checkDuplicateNames<T>(
+  items: T[],
+  getName: (item: T) => string,
+  getLine: (item: T) => number,
+  message: (name: string) => string,
+  where: string,
+  diagnostics: Diagnostic[]
+): void {
+  const seen = new Set<string>();
+  for (const item of items) {
+    const name = getName(item);
+    if (seen.has(name)) {
+      diagnostics.push(err(message(name), where, getLine(item)));
+    } else {
+      seen.add(name);
+    }
+  }
+}
+
+function checkStructDecl(decl: AST.StructDecl, globalScope: Map<string, SymbolInfo>, diagnostics: Diagnostic[]): void {
+  const where = `struct '${decl.name}'`;
+  checkDuplicateNames(
+    decl.fields,
+    (f) => f.name,
+    () => decl.line,
+    (name) => `Duplicate field '${name}' in struct '${decl.name}'`,
+    where,
+    diagnostics
+  );
+  for (const f of decl.fields) {
+    if (!typeIsResolvable(f.type, globalScope)) {
+      diagnostics.push(err(`Unknown type '${typeToString(f.type)}' referenced by field '${f.name}'`, where, decl.line));
+    }
+  }
+}
+
+function checkComponentDecl(decl: AST.ComponentDecl, globalScope: Map<string, SymbolInfo>, diagnostics: Diagnostic[]): void {
+  const where = `component '${decl.name}'`;
+  const scope = new Set<string>();
+  const nullable = new Map<string, AST.CrescentType>();
+  const memberTypes = new Map<string, AST.CrescentType>();
+
+  for (const p of decl.params) {
+    scope.add(p.name);
+    memberTypes.set(p.name, p.type);
+    if (p.type.kind === 'NullableType') nullable.set(p.name, p.type);
+    if (!typeIsResolvable(p.type, globalScope)) {
+      diagnostics.push(err(`Unknown type '${typeToString(p.type)}' referenced by param '${p.name}'`, where, decl.line));
+    }
+  }
+
+  let viewCount = 0;
+  for (const m of decl.members) {
+    switch (m.kind) {
+      case 'StateDecl':
+      case 'DerivedDecl':
+      case 'ProvideDecl':
+      case 'ConstDecl':
+      case 'InjectDecl':
+        scope.add(m.name);
+        memberTypes.set(m.name, m.type);
+        if (m.type.kind === 'NullableType') nullable.set(m.name, m.type);
+        break;
+      case 'FunctionDecl':
+        scope.add(m.name);
+        break;
+      case 'ViewBlockDecl':
+        viewCount += 1;
+        break;
+    }
+  }
+
+  if (viewCount === 0) diagnostics.push(err(`Component has no 'view' block`, where, decl.line));
+  if (viewCount > 1) diagnostics.push(err(`Component has more than one 'view' block`, where, decl.line));
+
+  const namedMembers = decl.members.filter(
+    (m): m is AST.StateDecl | AST.DerivedDecl | AST.ProvideDecl | AST.ConstDecl | AST.InjectDecl | AST.FunctionDecl =>
+      m.kind === 'StateDecl' ||
+      m.kind === 'DerivedDecl' ||
+      m.kind === 'ProvideDecl' ||
+      m.kind === 'ConstDecl' ||
+      m.kind === 'InjectDecl' ||
+      m.kind === 'FunctionDecl'
+  );
+  const namedItems: { name: string; line: number }[] = [
+    ...decl.params.map((p) => ({ name: p.name, line: decl.line })),
+    ...namedMembers.map((m) => ({ name: m.name, line: m.line })),
+  ];
+  checkDuplicateNames(
+    namedItems,
+    (item) => item.name,
+    (item) => item.line,
+    (name) => `'${name}' is declared more than once in component '${decl.name}'`,
+    where,
+    diagnostics
+  );
+
+  const functions = new Map(
+    decl.members.filter((m): m is AST.FunctionDecl => m.kind === 'FunctionDecl').map((m) => [m.name, m])
+  );
+
+  const derivedNames = new Set(
+    decl.members.filter((m): m is AST.DerivedDecl => m.kind === 'DerivedDecl').map((m) => m.name)
+  );
+  const constNames = new Set(decl.members.filter((m): m is AST.ConstDecl => m.kind === 'ConstDecl').map((m) => m.name));
+  suspendNamesByFunctions.set(functions, suspendNamesFor(memberTypes, constNames));
+  derivedDepsByFunctions.set(
+    functions,
+    computeDerivedDeps(
+      decl.members.filter((m): m is AST.DerivedDecl => m.kind === 'DerivedDecl').map((m) => ({ name: m.name, init: m.init })),
+      effectsFor(functions)
+    )
+  );
+  const narrow: NarrowState = { nullable, narrowed: new Set() };
+
+  for (const m of decl.members) {
+    switch (m.kind) {
+      case 'StateDecl':
+      case 'DerivedDecl':
+      case 'ProvideDecl':
+      case 'ConstDecl':
+        checkExpr(m.init, scope, globalScope, functions, narrow, `${where}, '${m.name}'`, m.line, diagnostics);
+        checkLiteralTypeMatch(m.type, m.init, `${where}, '${m.name}'`, m.line, diagnostics, globalScope);
+        break;
+      case 'InjectDecl':
+        if (!typeIsResolvable(m.type, globalScope)) {
+          diagnostics.push(err(`Unknown type '${typeToString(m.type)}' referenced by inject '${m.name}'`, where, m.line));
+        }
+        break;
+      case 'FunctionDecl': {
+        const fnScope = new Set(scope);
+        for (const p of m.params) fnScope.add(p.name);
+        const fnWhere = `${where}, function '${m.name}'`;
+        checkDuplicateNames(
+          m.params,
+          (p) => p.name,
+          () => m.line,
+          (name) => `Duplicate param '${name}' in function '${m.name}'`,
+          fnWhere,
+          diagnostics
+        );
+        for (const p of m.params) {
+          if (!typeIsResolvable(p.type, globalScope)) {
+            diagnostics.push(err(`Unknown type '${typeToString(p.type)}' referenced by param '${p.name}'`, fnWhere, m.line));
+          }
+        }
+        if (m.returnType !== 'void' && !typeIsResolvable(m.returnType, globalScope)) {
+          diagnostics.push(err(`Unknown type '${typeToString(m.returnType)}' referenced by return type of function '${m.name}'`, fnWhere, m.line));
+        }
+        const fnNullable = new Map(narrow.nullable);
+        for (const p of m.params) {
+          if (p.type.kind === 'NullableType') fnNullable.set(p.name, p.type);
+        }
+        const fnNarrow: NarrowState = { nullable: fnNullable, narrowed: narrow.narrowed };
+        checkStmts(m.body, fnScope, globalScope, functions, fnNarrow, derivedNames, fnWhere, diagnostics, {
+          functionName: m.name,
+          returnType: m.returnType,
+        }, memberTypes, constNames);
+        break;
+      }
+      case 'OnMountDecl':
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_mount`, diagnostics, null, memberTypes, constNames);
+        break;
+      case 'OnChangeDecl':
+        for (const w of m.watched) {
+          if (!scope.has(w)) diagnostics.push(err(`Undefined identifier '${w}' watched by on_change`, where, m.line));
+        }
+        checkStmts(m.body, scope, globalScope, functions, narrow, derivedNames, `${where}, on_change(${m.watched.join(', ')})`, diagnostics, null, memberTypes, constNames);
+        break;
+      case 'ViewBlockDecl':
+        for (const node of m.nodes) checkTemplateNode(node, scope, globalScope, functions, narrow, `${where}, view`, diagnostics);
+        break;
+      case 'StyleBlockDecl':
+        for (const rule of m.rules) {
+          for (const d of rule.declarations) {
+            for (const part of d.parts) {
+              if (part.kind === 'expr') checkExpr(part.expr, scope, globalScope, functions, narrow, `${where}, style`, m.line, diagnostics);
+            }
+          }
+        }
+        break;
+    }
+  }
+}
+
+function isUnresolvedCascade(message: string, unresolved: ReadonlySet<string>): boolean {
+  for (const name of unresolved) {
+    if (
+      message.startsWith(`Undefined identifier '${name}'`) ||
+      message === `Unknown struct type '${name}'` ||
+      message === `Unknown component '<${name}>'` ||
+      new RegExp(`^Unknown type '[^']*\\b${name}\\b[^']*'`).test(message)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function checkFile(
+  file: LoadedFile,
+  files: Map<string, LoadedFile>,
+  imports: FileImports[],
+  unresolved: ReadonlySet<string> = new Set()
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  const globalScope = new Map<string, SymbolInfo>();
+
+  const topLevelDecls = file.program.declarations.filter(
+    (d): d is AST.ComponentDecl | AST.StructDecl => d.kind === 'ComponentDecl' || d.kind === 'StructDecl'
+  );
+  checkDuplicateNames(
+    topLevelDecls,
+    (d) => d.name,
+    (d) => d.line,
+    (name) => `Duplicate top-level declaration '${name}' in '${file.relPath}'`,
+    `file '${file.relPath}'`,
+    diagnostics
+  );
+
+  for (const decl of file.program.declarations) {
+    if (decl.kind === 'ComponentDecl') globalScope.set(decl.name, { kind: 'component', decl });
+    if (decl.kind === 'StructDecl') globalScope.set(decl.name, { kind: 'struct', decl });
+  }
+
+  const localDeclNames = new Set(topLevelDecls.map((d) => d.name));
+  const importedFrom = new Map<string, string>();
+  const boundImports: { local: string; imported: string; from: string; line: number }[] = [];
+  const selfImported = new Set<string>();
+  for (const imp of imports) {
+    const targetFile = files.get(imp.targetRelPath);
+    if (!targetFile) continue;
+    if (imp.targetRelPath === file.relPath) {
+      for (const n of imp.names) selfImported.add(n.local);
+      continue;
+    }
+    for (const n of imp.names) {
+      const found = targetFile.program.declarations.find(
+        (d): d is AST.ComponentDecl | AST.StructDecl =>
+          (d.kind === 'ComponentDecl' || d.kind === 'StructDecl') && d.name === n.imported
+      );
+      if (!found) continue;
+      const priorSource = importedFrom.get(n.local);
+      if (priorSource !== undefined) {
+        diagnostics.push(
+          err(
+            `Import '${n.local}' from '${imp.targetRelPath}' conflicts with '${n.local}' already imported from '${priorSource}'; rename one of them with 'as'`,
+            `file '${file.relPath}'`,
+            imp.line
+          )
+        );
+        continue;
+      }
+      if (localDeclNames.has(n.local)) {
+        diagnostics.push(
+          err(
+            `Import '${n.local}' from '${imp.targetRelPath}' conflicts with the top-level declaration '${n.local}' in '${file.relPath}'; rename the import with 'as'`,
+            `file '${file.relPath}'`,
+            imp.line
+          )
+        );
+        continue;
+      }
+      importedFrom.set(n.local, imp.targetRelPath);
+      boundImports.push({ local: n.local, imported: n.imported, from: imp.targetRelPath, line: imp.line });
+      globalScope.set(n.local, { kind: n.kind, decl: found });
+    }
+  }
+
+  if (boundImports.length > 0) {
+    const referenced = collectReferencedNames(file.program.declarations);
+    for (const b of boundImports) {
+      if (referenced.has(b.local)) continue;
+      const shown = b.local === b.imported ? `'${b.local}'` : `'${b.imported}' (as '${b.local}')`;
+      diagnostics.push(warn(`Import ${shown} from '${b.from}' is never used`, `file '${file.relPath}'`, b.line));
+    }
+  }
+
+  for (const decl of file.program.declarations) {
+    if (decl.kind === 'StructDecl') checkStructDecl(decl, globalScope, diagnostics);
+    if (decl.kind === 'ComponentDecl') checkComponentDecl(decl, globalScope, diagnostics);
+  }
+
+  const silenced = new Set([...unresolved, ...selfImported]);
+  return silenced.size > 0 ? diagnostics.filter((d) => !isUnresolvedCascade(d.message, silenced)) : diagnostics;
+}

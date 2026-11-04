@@ -1,35 +1,54 @@
-import * as fs from 'fs';
 import * as path from 'path';
-import { parseCrescent } from './parser';
-import { generateProgram, CodegenError } from './codegen';
+import { Diagnostic } from './checker';
+import { buildProject } from './project';
 
 const examplesDir = path.join(__dirname, '..', 'examples');
-const outDir = path.join(__dirname, '..', 'dist', 'gen');
-fs.mkdirSync(outDir, { recursive: true });
+const distDir = path.join(__dirname, '..', 'dist');
 
-const files = fs.readdirSync(examplesDir).filter((f) => f.endsWith('.crs'));
+function printDiagnostics(diagnostics: Diagnostic[]): void {
+  for (const d of diagnostics) {
+    const location = d.line > 0 ? `${d.where}, line ${d.line}` : d.where;
+    const label = d.severity === 'error' ? 'error' : 'warning';
+    console.log(`  [${label}] ${location}: ${d.message}`);
+  }
+}
 
-for (const file of files) {
-  const source = fs.readFileSync(path.join(examplesDir, file), 'utf-8');
-  console.log(`\n=== ${file} ===`);
-  try {
-    const ast = parseCrescent(source);
-    console.log(`Parsed OK — ${ast.declarations.length} top-level declaration(s)`);
+const result = buildProject(examplesDir, distDir);
 
-    try {
-      const js = generateProgram(ast);
-      const outFile = path.join(outDir, file.replace(/\.crs$/, '.js'));
-      fs.writeFileSync(outFile, js, 'utf-8');
-      console.log(`Codegen OK — wrote ${path.relative(process.cwd(), outFile)}`);
-    } catch (e) {
-      if (e instanceof CodegenError) {
-        console.log(`Codegen skipped: ${e.message}`);
-      } else {
-        throw e;
-      }
-    }
-  } catch (e) {
-    console.error(`FAILED: ${(e as Error).message}`);
+for (const relPath of result.check.unparsed) {
+  console.log(`\n=== ${relPath} ===`);
+  console.log('Parse FAILED:');
+  printDiagnostics(result.check.diagnosticsByFile.get(relPath) ?? []);
+  process.exitCode = 1;
+}
+
+for (const [relPath, file] of result.check.files) {
+  console.log(`\n=== ${relPath} ===`);
+  console.log(`Parsed OK — ${file.program.declarations.length} top-level declaration(s)`);
+
+  const diagnostics = result.check.diagnosticsByFile.get(relPath) ?? [];
+  const errors = diagnostics.filter((d) => d.severity === 'error');
+  const warnings = diagnostics.filter((d) => d.severity === 'warning');
+
+  if (diagnostics.length > 0) {
+    console.log(`Semantic check found ${errors.length} error(s), ${warnings.length} warning(s):`);
+    printDiagnostics(diagnostics);
+  } else {
+    console.log('Semantic check OK');
+  }
+
+  if (errors.length > 0) {
+    console.log('Codegen skipped: semantic errors above must be fixed first');
+    continue;
+  }
+
+  const build = result.builds.find((b) => b.relPath === relPath);
+  if (build?.outFile) {
+    console.log(`Codegen OK — wrote ${path.relative(process.cwd(), build.outFile)}`);
+  } else if (build?.unexpectedError) {
+    console.error(`FAILED: ${build.unexpectedError}`);
     process.exitCode = 1;
+  } else if (build?.skippedReason) {
+    console.log(`Codegen skipped${build.line ? ` (line ${build.line})` : ''}: ${build.skippedReason}`);
   }
 }

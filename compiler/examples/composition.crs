@@ -1,0 +1,22 @@
+component Greeting(string name) {
+    view {
+        <p class="greeting">"Hello, " {name} "!"</p>
+    }
+}
+
+component Card {
+    view {
+        <div class="card">
+            <slot />
+        </div>
+    }
+}
+
+component App {
+    view {
+        <Card>
+            <h1>"Card Title"</h1>
+            <Greeting name="World"/>
+        </Card>
+    }
+}

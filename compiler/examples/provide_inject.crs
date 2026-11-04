@@ -1,0 +1,27 @@
+struct ThemeState {
+    string class_name;
+}
+
+component DeepNestedWidget {
+    inject<ThemeState> theme;
+
+    view {
+        <div class={theme.class_name}>
+            <p>"Context Resolved!"</p>
+        </div>
+    }
+}
+
+component Dashboard {
+    view {
+        <DeepNestedWidget/>
+    }
+}
+
+component App {
+    provide<ThemeState> current_theme = ThemeState { class_name: "dark-theme" };
+
+    view {
+        <Dashboard/>
+    }
+}

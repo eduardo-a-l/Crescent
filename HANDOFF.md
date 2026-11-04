@@ -1,0 +1,3474 @@
+# Crescent — AI Handoff
+
+> This file is the shared short-term memory between AI coding sessions.
+>
+> It describes the current state, not the entire history of Crescent.
+> Replace/update it when the active task changes.
+
+## Current State
+
+**Branch:** `feature/release-0.2.0` (off `develop` at `1476918`)
+
+**Current phase:** v0.x compiler development
+
+**Active area:** Release
+
+**Current task:**
+Prepared the first release, `0.2.0`, following `docs/Crescent_Versioning.md` section 5 steps 1 to 5. The
+owner agreed to it ("ok we can do that"). Steps 6 and 7 (merge `develop` into `main`, tag, release
+notes) are the maintainer's and were NOT done: no tag exists and `main` is untouched at `eaec895`.
+
+Steps taken: (1) version chosen from `[Unreleased]`: it contains breaking API changes (`fatal` removed,
+`ok` redefined, `BuildPreviewResult.ok` removed...), which before 1.0 is a MINOR, so 0.1.0 to 0.2.0;
+(2) `develop` checked first: `tsc --noEmit` clean, `npm test` 534 pass; (3) `npm version 0.2.0
+--no-git-tag-version` in `compiler/` (exactly three lines: `package.json` and two in
+`package-lock.json`); the compiler's version is also embedded in the `../compiler` entry of
+`crescent-web/package-lock.json` and `playground/package-lock.json`, so those were updated too. For
+`crescent-web` I did NOT let npm regenerate the lock (`--package-lock-only` added 66 lines of
+unrelated optional Tailwind WASM entries from a different npm version) and changed that one line by
+hand; the playground lock came out as a clean one-line change; (4) `CHANGELOG.md`: `[Unreleased]` is now
+`[0.2.0] - 2026-11-04` with a fresh empty `[Unreleased]` above it (the date is a guess for the day the
+maintainer will cut it, change it if the tag is made on another day, the guard only needs a valid date);
+(5) commit `chore: Release 0.2.0`. `docs/Crescent_Versioning.md` section 6 and the `TODO.md` item
+(`[~]`) say what is left. The other packages were not touched (`crescent-web` and `playground` are
+`0.1.0`, the VS Code extension `0.2.0`).
+
+Verified after the bump: `test-versioning.js` passes (the changelog's newest release equals the
+compiler version), `npm test` 534 pass.
+
+Left for the maintainer, in order: `git checkout main && git merge --no-ff develop`, `git tag -a v0.2.0
+-m "<the [0.2.0] section of CHANGELOG.md>"`, push both, create the GitHub release from that tag. Then
+optionally change the Vercel production branch to `main` (Project Settings, Git), so the domain
+changes only on a release; until then Vercel keeps deploying every push to `develop`.
+
+Before that:
+
+Syntax-error recovery inside `style` blocks, the last place an error ended the list (`TODO.md` item `[x]`).
+
+Why it needed its own design: a style block is read as raw characters through the lexer, not as tokens,
+so the token-level `synchronize()` does not apply (the earlier version aborted recovery there, via
+`inRaw`). Only three errors are recoverable and all are inside a declaration (no `:`, no value, a bad
+`{expr}`); an unterminated rule or block can only happen at the end of the file.
+
+What changed (`parser.ts`, `lexer.ts`): `parseStyleRule()` wraps each declaration; on an error
+`recordSyntaxError(e, true)` records it (the `true` lets it through the `inRaw` abort) and
+`skipStyleDeclaration()` skips by characters to the next `;` (consumed) or the `}` of the rule (not
+consumed), counting `{ }` so an interpolation is not cut in half; a progress guard advances one
+character if nothing was consumed. The missing-value check now runs before the `;` is consumed (else
+the skip would eat the next declaration). Three further rules, each found by looking at the actual
+cascades: (1) if the failed "declaration" is followed by `{` and a body starting with `name:` or `}`
+(`peekRaw(200)`), the rule before it was never closed, so the rule ends there, the lexer is rewound to
+the selector, and it is read as a new rule (a deleted `}` went from 0% to 40% single-error with this);
+(2) `failUnterminatedStyle()` does not report an unterminated rule/block at the end of the file when an
+error was already found in the same block (`styleErrorBase`); (3) in `recordSyntaxError()` any error
+found at the end of the file after an earlier error is dropped (a general rule, it is almost always a
+consequence of an unclosed brace or tag), which took a deleted `}` to 100% single-error.
+
+A real bug fixed on the way, which changes parseCrescent() output for bad input only: a property name was
+read up to whitespace or `:`, so `padding;` swallowed its `;` and the newline, was reported a line late,
+and named `padding;`. It now stops at `:`, `;`, `}` and whitespace (`padding` on its own line).
+
+Measured on 60 generated style-heavy programs (the examples have only one style block): one error for a
+deleted `:` 100%, a deleted `}` 100%, a stray `;` 99.6%, a deleted value 95%, a stray `{` 89% (it opens an
+interpolation that swallows the structure; accepted); two separate mistakes both found 97% to 99.7% (0%
+before, because the list ended at the first one).
+
+Tests: `test-parser-recovery.js` is 69 checks (was 49): 12 exact style/EOF scenarios (the old case that
+asserted "a style error ends the list" now expects all three errors), 5 precision and 2 recall guards on
+generated programs. `npm test` passes (534, was 514); the fuzzer (seeds 51-53 at 4000 iterations, 54
+`deep`) found nothing; `crescent-web` and `playground` still pass (59 each, run because an error
+message and line changed). Known limit: `skipStyleDeclaration()` does not understand CSS strings or
+comments, so a `;` or `}` inside a quoted value ends the skip early (a rare input that is already an
+error). README's recovery section, grammar spec §11.8, `TODO.md` and `CHANGELOG.md` are updated.
+
+Before that:
+
+Made the benchmark scaling guard in `scripts/test-bench.js` stable (it had failed at random on unchanged
+code: the 4x ratio for `members` ranged from 3.2 to 8.8 against a limit of 8).
+
+Measured first: over 12 rounds per shape the old statistic (a 4x ratio of two single measurements)
+spread from 2.75 to 5.79, while the exponent of a log-log fit over four sizes (2000, 4000, 8000, 16000,
+best of 5 each) stayed between 0.88 and 1.18 (linear is 1, quadratic is 2). The guard now asserts the
+exponent is under 1.5, with up to three attempts (noise only makes a linear stage look worse by chance,
+a quadratic one stays over the limit on every attempt).
+
+The guard also checks itself: a workload linear by construction must measure under 1.5 and a quadratic
+one over it (1.00 and 2.01 idle), plus exact-data checks of the fit (exponent 1 and 2). That self-check
+was itself flaky at first, and the cause was worth finding: under heavy CPU contention wall-clock time
+is biased, not just noisy (a workload shorter than the scheduler's time slice runs undisturbed while a
+longer one is stretched by the competing processes, which bends the slope), so retrying could not help
+(2.4 on every retry). Timing the synthetic workloads in CPU time (`process.cpuUsage()`) fixed it. The
+real shapes never failed under that load because all their sizes are longer than a time slice, so the
+stretch cancels in the slope.
+
+Verified: 12 idle runs and 6 more on the final file, no failures; 4 runs on one core shared with three
+busy loops, no failures (the version before the CPU-time change failed 3 of 4 under that load). `npm
+test` passes with 514 checks (was 510): the four new ones are the guard's own self-checks. README's
+benchmark section describes the new rule.
+
+Not done: `bench:compare` can still flag a stage on a noisy machine (it flagged `members parseMs` and
+other stages on three consecutive runs earlier, and an A/B against the previous build showed no real
+difference); its threshold and calibration were not changed here.
+
+Before that:
+
+The owner asked whether the Vercel site (`crescent-lang.vercel.app`, deployed from `develop`) could
+break from my recent work. I checked instead of assuming, and found a real gap on my side.
+
+Deployment: it is not broken. Verified here: the documented build (compiler `npm install && npm run
+build`, then `crescent-web` `npm run build` = `tsc` + `vite build`) passes, also from a clean clone with
+no `node_modules` or `dist`; no dependency or build step changed; the site responds. The only API change
+the web code could see is the removed `fatal` field, and the front end (`src/` and `public/app/app.js`)
+reads `result.error`, `result.diagnostics` and `result.html`, not `fatal`. Behavior for a user is the
+same in substance: the playground has a Run button; a syntax error used to show the message and the
+preview "Nothing to preview", and now shows `[error] line N: message` and the "Skipped files" notice.
+What I could not see: the Vercel project settings, or the API of the live site (no network access to it
+from here beyond fetching the page).
+
+The gap: `crescent-web` and `playground` have their own tests (`npm test` in each), which I had never
+run, and CI only ran `compiler/`'s. Both `scripts/test-compile.js` copies still asserted the old
+`fatal` string, so one check failed in each (44 passed, 1 failed). Fixed: the assertion now expects an
+error diagnostic with its line, no `fatal`, and the "Skipped files" notice; a new check sends a source
+with two syntax errors and expects both back (lines 3 and 4), which exercises recovery through the
+web API. Both suites pass (59 each, was 44 + 1 failure). New CI job `web` (matrix `crescent-web`,
+`playground`; `PUPPETEER_SKIP_DOWNLOAD=1`): build the compiler, install, `npm test`, and for
+`crescent-web` `npm run build`. I could not run GitHub Actions; I validated the YAML and ran the same
+steps from a fresh clone (all pass). `AGENTS.md` §12 now says to run those tests when a change touches
+what the web projects and editors consume.
+
+Not done / for the owner: the VS Code extension has no automated tests here (I changed two branches in
+`extension.js` earlier and only syntax-checked it). Suggested, not done: let `main` be the Vercel
+production branch once the first release exists, with `develop` as a preview deployment, so the domain
+only changes on a release; the current setup redeploys on every push to `develop`, including
+documentation-only commits.
+
+Before that:
+
+Documented release and versioning strategy (`TODO.md` item now `[x]`). The owner had no preference and
+described two ideas: the usual `1.21.3` and a two-part `21.3` (feature, then fix). I chose and
+documented the scheme; nothing is tagged, so it is cheap to change.
+
+Decision (`docs/Crescent_Versioning.md`): semantic versioning, `0.MINOR.PATCH` until v1.0. `MINOR` is a
+feature or an important change, `PATCH` a fix or adjustment, so "21.3" reads as `0.21.3`. Reasons found
+by checking, not assumed: npm's semver rejects `21.3` (`valid=null`, `npm version` fails with "Invalid
+version") and the VS Code Marketplace needs three parts too; and the design doc's §14.7 already says
+post-1.0 is "corrections, new things, QoL, no redesigns", which is MINOR/PATCH. One Crescent version for
+language, compiler, runtime and CLI (`compiler/package.json`, because generated code needs its
+runtime); the VS Code extension, `crescent-web` and the playground keep their own. In `0.x` a breaking
+change is a `MINOR` and is listed under "Changed (breaking)"; a `PATCH` never breaks. The version is
+chosen by a person from the changelog, not computed from commit prefixes: the history has many
+mislabeled prefixes ("feat: fix docs", "feat: update file"). Releases: `develop` integrates, `main`
+holds the latest release, tags are `vX.Y.Z` (`vscode-vX.Y.Z` etc. for the others), and only the
+maintainer merges into `main` and tags.
+
+Also: `CHANGELOG.md` (Keep a Changelog format) reconstructed from the 90 commits: `[Unreleased]` holds
+everything since the prototype and is proposed as `0.2.0`; `[0.1.0] - 2026-08-07` is the initial
+prototype, which was never tagged. `AGENTS.md` §14 has a new "Changelog and versions" subsection: a
+user-visible change adds one line under `[Unreleased]` in the same commit; assistants do not bump
+versions, tag or touch `main`. The design doc's §14.7 points to the new document.
+
+Test: `test-versioning.js` (15 checks, in `npm test` after `test-parser-recovery.js`, named in the
+README): every package has a three-part version, `CHANGELOG.md` is well formed (an `[Unreleased]`
+section first, valid dated releases, newest first, no duplicates, known section headings) and its newest
+release is the compiler version. The checking is a function that is also run on deliberately broken
+changelogs (8 cases), so the guard is known to detect problems and not only to pass. One of my own
+test cases was wrong at first (`0.1.5` before `0.1.0` is correctly ordered); the guard was right.
+`npm test` passes (510, was 495).
+
+Not done: no version was bumped and nothing was tagged or merged into `main`. The first release
+(`0.2.0`) is a new open item in `TODO.md` for the maintainer. The other packages are `0.1.0`
+(`crescent-web`, `playground`) and `0.2.0` (the VS Code extension) and were not touched.
+
+Before that:
+
+Syntax-error recovery inside `view` blocks (the first follow-up of the previous task; `[x]` in
+`TODO.md`). Before, the whole view was one recovery unit: one error per view, however many were in it.
+
+Measured first, with two metrics, because precision alone is misleading when a whole view is one
+unit (it is trivially "one error"): precision (one mutation gives one error) and recall (two
+mutations at least 3 lines apart in the same view give two errors). Baseline: recall about 0%.
+
+Design (`parser.ts`): `parseTemplateList('braces' | 'tag')` is the single loop for the view body,
+the `if`/`else`/`for` bodies and element children; on an error it records it (`recordSyntaxError()`,
+split out of `recoverFrom()`) and `synchronizeTemplate()` skips to the next node start at the same
+`braceDepth` (a string, `if`, `for`, an opening tag), or to the end of the list. Elements nest by
+tags, so `parseElement()` catches its own errors with a `phase` (open/children/close) and
+`skipDamagedElement()` skips to the element's closing tag counting nested tags; it returns a
+placeholder `Element` so the parent goes on. Repairs found by looking at the actual cascades in the
+probe (each one measured): a mismatched closing tag is not consumed when it names an enclosing
+element (kept in `openTags`) and is consumed when it matches none (a typo in the name); `/p>` with
+its `<` missing closes the current element (`closeWithoutOpeningBracket()`/`closedInline`); an open
+tag without its `>` is dropped, without consuming the next opening tag; a mismatch or a stray
+closing tag after an earlier error in the same element or view (`viewErrorBase`) is not reported
+again. Outside recovery mode `recordSyntaxError()` rethrows at once, so `parseCrescent()` behaves
+exactly as before (the differential test covers it).
+
+Results: stray `;`/`)`/`]` in a view 97.7% single-error (was 100% only because of the one-error limit),
+deleted `<` 100%, deleted `>` 99.7%, deleted word 96%; recall of two separate mistakes 91% (stray `;`)
+and 96% (deleted `>`). An unbalanced `{` in an attribute (a deleted `{`) still cascades, which is the
+known deleted-brace class. A deleted quote gives a parse error and a real "unterminated string" lex
+error (quote parity flips), which is inherent.
+
+Tests: `test-parser-recovery.js` is now 49 checks (was 30): 13 exact view scenarios, 4 precision
+guards (at least 94% single-error inside views) and 2 recall guards (at least 75% for two mistakes);
+the differential over 8000 mutated programs still has 0 mismatches. `npm test` passes (495, was 476);
+the fuzzer (seeds 41-43 at 4000 iterations, seed 44 `deep`) found nothing. `bench:compare` flagged
+`members parseMs` (2.1 to 2.4x) on three runs along with other stages that changed from run to run,
+so I did an A/B against the previous `develop` build on the same machine (best of 40, interleaved,
+three rounds, four shapes): no difference (`members` 3.15-3.63 ms in both), so it was noise.
+
+Not done, in `TODO.md`: recovery after an error in a `style` block (it is raw text, so it still ends
+the list); the flaky scaling guard in `test-bench.js`. README, the grammar spec's §11.8 and the
+"Syntax error recovery" section were updated.
+
+Before that:
+
+Parser error recovery: a file now reports every syntax error the parser can recover from, not only the
+first (the open item the previous task left; `[x]` in `TODO.md`, with three follow-ups added).
+
+Design: `parseCrescent()` is unchanged (throws the first error; no recovery cost). New
+`parseCrescentRecovering(source)` returns `{ program, errors }` (`program` is `null` whenever there are
+errors). Recovery points, all in `parser.ts`: statements (`parseBlock`), component members, top-level
+declarations. After an error `recoverFrom()` records it and `synchronize()` skips to the next `;`, or
+past the `}` that closes the damaged item, using absolute brace depth (`braceDepth`) and
+paren-and-bracket depth (`parenDepth`) kept in `advance()` and saved and restored by `snapshot()`/
+`restore()` (so backtracking stays correct). The paren depth is compared against its value at the start
+of the failed item, which is what keeps a `for (a; b; c)` header from being cut at its first `;`.
+Guards: at most `MAX_SYNTAX_ERRORS` (20); recovery aborts (`RecoveryAbort`, internal) at the end of
+the file, when skipping made no progress, in a `style` block (raw text, no tokens: `inRaw`), and a
+`LexError` ends the list; an error on the same line as the previous one is skipped (the first is
+never skipped, so the first error always equals what `parseCrescent()` throws). The style block
+decrements `braceDepth` itself because it reads its closing `}` as raw text.
+
+Project: `loadAllProgramsLenient()` uses it; `failures` is now `Map<string, SyntaxFailure[]>` and
+`checkProject()` makes one error diagnostic per syntax error (`loadAllPrograms()` still throws the first).
+
+Measured before settling on the same-line rule: for a single inserted `;` or `)` anywhere in an
+example, 72% and 93% of inputs gave one error; with the rule and bracket counting, 98.5% and 98.3%.
+Deleting a `{` or `}` still gives follow-on errors (the structure really changes); that is accepted.
+
+Tests: `test-parser-recovery.js` (30 checks, in `npm test` after `test-codegen-error-lines.js`, named
+in the README): exact error lists for 17 situations, valid input unchanged, the cap, a differential
+over 8000 mutated example programs (the first recovered error equals the thrown one; valid inputs give
+the same tree; 0 mismatches), a quality guard (at least 90% single-error for a stray `;` or `)`), token
+soup, and `checkProject()`/`crescent check` end to end. The fuzzer harness has a `recovery` stage
+(seeds 21-23 at 3000 iterations and seed 24 `deep` found nothing). `bench:compare`: no stage more than
+2x slower than the baseline. `npm test` is green apart from one random failure of the existing scaling
+guard in `test-bench.js` (`members` ratio 8.8); I ran it 6 times on this code and 6 on the previous
+`develop` code and both give ratios between 3.4 and 7.6, so it is noise that was already there (new
+`TODO.md` item).
+
+Not done, in `TODO.md`: recovery inside a `view` block (one error per view today) and after an error
+in a `style` block (ends the list). README has a new "Syntax error recovery" section; the grammar
+spec's §11 and §11.8 were updated.
+
+Before that:
+
+Gave `CodegenError` a line, which closes "Establish a clear distinction between parser, semantic, and
+codegen errors" in `TODO.md` (now `[x]`; the leftover, recovering inside a file so more than the first
+syntax error is reported, is a new open item).
+
+Probe first: the AST already had correct lines on components, members, statements and template nodes
+(the `line: 0` in the parser are placeholders overwritten centrally), so nothing was missing there;
+`CodegenError` simply never recorded one. Also found that the `'multiple view blocks'` guard in
+`generateComponent` could never fire (it tested `viewExpr`, which is always `null` inside the loop, and
+a second view was silently ignored by codegen; only the checker's "more than one 'view' block" error
+kept it from happening), so it now uses a `viewSeen` flag.
+
+What changed: `CodegenError(message, line)`; `codegen.ts` keeps a module-level `currentLine` that
+`generateProgram` resets and that the component, each member, `stmtToJs`, `generateViewBlock` and
+`templateNodeToJs` set on entry, and `unsupported()`/`compileError()` read. A parent resets it after
+generating children before it reports its own error (the ForC clauses, the else-block check), and
+`DoWhile`, `TemplateIf` and `TemplateFor` compute their own expressions before their children, so the
+line is the parent's. The granularity is the node, not the expression: an error inside a multi-line
+expression reports the line of its statement or element. `FileBuildResult` has `line: number | null`
+(null for unparsed files and for importers skipped because something they import was not built);
+`crescent build` prints `file:line: codegen skipped: reason`, `npm start` adds `(line N)`, and the
+web preview's skipped list prefixes `line N: `.
+
+Tests: 446 pass (was 430). New `test-codegen-error-lines.js` (16 checks, wired into `npm test` after
+`test-error-locations.js` and named in the README): every codegen error site with its exact line
+(including a derived assignment on the second of two statements, one nested in an `if`, one in
+`on_change`, an empty `if` nested two elements deep, an `else` block reached after its sibling's
+children were generated), no state left over after a failure, the failing component's line when an
+earlier one succeeded, and `buildProject()` plus `crescent build` end to end with a for-loop update
+that expands to several statements. 15 of the 16 fail against the old `src/` (the 16th is the
+no-leftover-state control).
+
+Not done: a file still reports only its first syntax error. The README says where `CodegenError` gets
+its line and what its granularity is.
+
+Before that:
+
+Made a parse error per-file instead of fatal for the whole project (the "Still open" half of the previous
+task, under "Establish a clear distinction between parser, semantic, and codegen errors" in `TODO.md`,
+still `[~]`). Before, one `LexError`/`ParseError` aborted `checkProject()`: nothing else was reported or
+built, and only the first broken file was named.
+
+What changed: `modules.ts` has `loadAllProgramsLenient()` (returns `{ files, failures }`, the failures
+keyed by file with `.file` set); `loadAllPrograms()` is now a wrapper that throws the first failure, so
+its old contract holds. `checkProject()` no longer has `fatal` or `FatalDiagnostic`: each unparsed file
+gets one error diagnostic (`where: file 'x'`, the error's `line`, 0 if none), is left out of `files`,
+and is listed in the new `unparsed: string[]`. `ok` now means "every file parsed" (it was "no fatal").
+`resolveFileImportsLenient(file, files, unparsed)` reports a `use` of an unparsed file as an error on
+the `use` line (`'x.crs' has a syntax error, so what it defines is unknown`) and marks the names
+unresolved so the checker's cascade suppression silences the follow-on errors; that error also keeps
+the importer from being emitted without a dangling `require`. `buildProject()` no longer returns early:
+it lists each unparsed file in `builds` as skipped (`it has a syntax error`) and builds the rest.
+Consumers: `cli.ts` and `index.ts` lost their fatal branches (the file count includes unparsed files;
+`npm start` still exits 1 for one), `webPreview.ts` lost its early return (so `BuildPreviewResult.ok`
+is gone and `html` is a plain `string`), the VS Code extension lost both fatal branches (a parse error
+is now just a diagnostic on its file, and the preview still opens), and the two `compileToPreview.js`
+copies and both `app.js` files lost `fatal` (the error arrives in `diagnostics` with its line; the
+API's `ok` is `check.ok`). I rewrote the spec text in `docs/Crescent_Grammar.md` §11.7/11.8, the
+compiler README's pipeline table, and the VS Code README.
+
+Tests: 430 pass (was 424). `test-module-recovery.js` replaced "a parse error is still fatal" with five
+checks (the other files' errors still reported, several broken files all reported, a `use` of an
+unparsed file is one error per `use` line with no follow-on unknown-name errors, the build skips the
+unparsed file and its importers and still writes the rest); `test-error-locations.js` now also runs
+`crescent check` and `crescent build` on a project with a parse error plus an error elsewhere; the
+assertions in the module tests that read `.fatal` were rewritten. `tsc --noEmit` is clean and
+`node --check` passes on the extension, which I cannot run here, so the VS Code changes (two deleted
+branches) are untested beyond syntax.
+
+Not done: `CodegenError` still has no line; a file still reports only its first syntax error (the
+parser does not recover inside a file). Known behavior to keep in mind: a file that fails to parse
+cannot take part in import-cycle detection, since it has no imports.
+
+Before that:
+
+Gave `LexError` and `ParseError` a structured `line` and made `checkProject()`'s `fatal.line` real
+(part of "Establish a clear distinction between parser, semantic, and codegen errors" in `TODO.md`,
+which I marked `[~]`, not done).
+
+What was wrong, confirmed by probes before changing anything: both classes had only an optional `file`;
+the line existed only as text inside the message (`... at line 4`), so `FatalDiagnostic.line` was always
+`null` and the CLI, the VS Code extension (which already reads `fatal.line`) and the web preview could
+not use it. Worse, three of the line numbers were wrong or missing: an error inside a string
+interpolation (`"a {n +} b"`) or a style-value interpolation reported `line 1` because the sub-parser
+counted lines from the snippet, not the file; an unterminated string reported the line where the file
+ended, not where the string began; and the style-block, nesting and `use` errors had no line at all.
+
+What I changed: `LexError(message, line)` and `ParseError(message, line)` hold `line` (`null` only for the
+two cases with no single line, a syntax tree that is too deep and the `RangeError` backstop); messages
+dropped the ` at line N` suffix, so a consumer that prints `file:line: message` does not say it twice.
+`Lexer` and `Parser` take a start line, and string parts now record the line their interpolation began
+on (`tokens.ts`), so sub-parsers report file lines. An unterminated string and an unterminated
+interpolation report where they started. The `use` error reports the `use` line, not the line after the
+`;`. `checkProject()` copies `e.line` into `fatal.line`. The two `compileToPreview.js` copies
+(`crescent-web/lib`, `playground/lib`) put `line N: ` in front of the `fatal` text, since the preview
+shows only that string and would otherwise have lost the line.
+
+Test: `compiler/scripts/test-error-locations.js` (25 checks, wired into `npm test` before `test-fuzz.js`
+and named in the README): 17 error sites with their exact line and a message that does not contain a
+line, the nesting limit, `checkProject()`'s `fatal` for a parse and a lex error in a subdirectory, the
+exact stderr of `crescent check`, and the `fatal` text of both preview libs (loaded with
+`crescent-compiler/dist/...` mapped to the local `dist/`, since the libs are separate packages). I
+confirmed that 24 of the 25 fail against the old `src/` (`git stash`) and that the 25th is the control.
+`npm test` passes (424, up from 399); `tsc --noEmit` is clean; the fuzzer found nothing (seeds 11 and
+12 at 3000 iterations, seed 13 `deep`).
+
+Not done: `CodegenError` still has no line (the AST nodes it fails on mostly have `line: 0`), and a
+parse error is still fatal for the whole project. The README's "Pipeline and errors" section describes
+the new behavior.
+
+Before that:
+
+Brought `compiler/README.md` in line with the code ("Improve compiler README so its description
+matches the current implementation" in `TODO.md`) and added a test so it stays that way. This was a
+documentation task, but I treated every claim as something to verify against the source, because the
+README had drifted a lot over the last sessions.
+
+What was wrong, found by reading all 437 lines against the code: the Structure list omitted
+`narrowing.ts`, `references.ts`, `cli.ts`, `bench/` and most of the test scripts, and described
+`index.ts` as doing its own resolving and checking (it just calls `buildProject()` now); the Modules
+section said "one cycle anywhere aborts the whole build" (cycles and every other import problem are
+per-file diagnostics now, only a parse error is fatal) and described discovery as covering `examples/`
+only; the Semantic Checker section said null safety was "non-flow-sensitively", recognized one direct
+`if` pattern and had "no tracking across early returns, loops, or compound boolean conditions" (it is
+a full flow-sensitive analysis with call, `await`, `derived` and in-expression-order handling), and its
+out-of-scope list repeated that; the Codegen list said views have a single root (later text says
+several are wrapped in `fragment`) and had no loops; the closing list said `ModuleError` is fail-fast
+and that flow-sensitive narrowing does not exist; `crescent build` was described as writing every file
+without semantic errors (it also skips importers of skipped files).
+
+What I changed: a new "Pipeline and errors" section with a table of the stages and which error class
+(`LexError`/`ParseError` fatal, import diagnostics and checker diagnostics per file, `CodegenError`
+per file) belongs to each, which is the closest thing the repo has to the open TODO item "Establish a
+clear distinction between parser, semantic, and codegen errors" (I did not tick that item, since it is
+about making the code uniform, not describing it); a rewritten Structure section grouped by role; the
+Modules, Codegen, CLI and Semantic Checker passages above; new bullets for loop-control and import
+diagnostics; a new "Robustness" section (fuzzer usage, the two limits, `parseCrescent()`'s
+`RangeError` backstop); and a corrected "not here yet" list. I verified the specifics before writing
+them: the narrowing rules by reading `narrowingTargets()`, the loop-control message by grepping the
+checker, loop codegen by compiling `examples/loops.crs` and reading the output, the CLI line format by
+running it, the existence of every function and file named, and the spec sections cited (grammar
+section 11.2, 11.7 and 12, design section 11).
+
+The guard: `compiler/scripts/test-readme.js`, wired into `npm test` after `test-fuzz.js`, checks that
+every file in `src/` appears in the README, every `scripts/test-*.js` is mentioned by name, the
+fuzzer and web bundler are mentioned, every `src/`, `scripts/`, `bench/` and `examples/` path the
+README names exists (25 checked), every test script it names exists, every `npm run` command it
+shows is defined, and every test script is wired into `npm test`. It found two real omissions in my
+own first draft the first time it ran (I had written "the forbidden-write and array-mutator tests"
+instead of naming four scripts, and the new test was not wired in), and I confirmed it fails when a
+source file or test script is added without documentation. It does not check the prose, only
+the inventory, so claims like the narrowing rules still need a human when that code changes.
+
+Not touched: the long Codegen and Effect Disposal sections describe features that have not changed
+in these sessions (keyed lists, scoped styles, slots, provide/inject, array mutators, disposal); I
+spot-checked a few (the unkeyed-list warning is real, loops compile as described) but did not
+re-verify every sentence, so treat those two sections as the least recently audited part.
+
+Before that:
+
+Sped up the parser, following the benchmark suite's finding that parsing was about 90 percent of
+compile time at roughly 1.3 MB/s, and fixed a line-number bug that the verification of that speed-up
+turned up.
+
+Profile first (`node --cpu-prof`, then summing self time per function from the `.cpuprofile`): 43
+percent of parse time was the `ParseError` constructor, plus 6 percent in `fail` and 5 percent in
+`expect` and 11 percent garbage collection. The parser was not re-lexing; it used exceptions for
+backtracking. `parseStatementInner` tried `parseVarDeclStatement()` for every statement starting with
+an identifier, then `parseStructDestructureStatement()`, then fell back to
+`parseAssignmentOrExprStatement()`, so every assignment and expression statement (`n = n + 1;`,
+`console.log(x);`, `f();`) threw and caught two `Error` objects, each of which captures a stack trace.
+
+The fix is one-token lookahead in `compiler/src/parser.ts`, and it is exact, not a heuristic: a type
+that starts with an identifier can only continue with `<`, `?`, `[` followed by `]`, or (as the
+declared name) an identifier, and a destructure needs `{`. `tokenAfterIdentifier()`,
+`bracketsCloseImmediately()` and `identifierMayStartDeclaration()` classify the statement, so `{`
+attempts only the destructure, the declaration tokens attempt only the declaration, and anything else
+goes straight to `parseAssignmentOrExprStatement()`. The same test guards the C-style `for` initializer
+and the `for` header (which now only tries the for-each form when the header starts with a primitive
+type or a declaration-shaped identifier). A new `parseStats.backtracks` counter, incremented by
+`backtrack()` in the catch blocks that used to call `restore()`, makes the property testable
+without timing. What still backtracks: a C-style `for` with a typed initializer (one per loop),
+`Identifier '{'` in an expression that is not a struct literal, and a few lookahead helpers that
+snapshot and restore without throwing.
+
+Measured with the benchmark (8000 units, best of 4): parse time 135 to 20 ms for `statements` (6.7x),
+156 to 29 ms for `functions` (5.4x), 187 to 58 ms for `guards` (3.2x), unchanged for `members` and
+`components` (they have no statements), a 500-file project builds in 91 ms instead of 118. The
+committed `bench/baseline.json` was regenerated so later regressions are measured against the faster
+parser; `npm run bench:compare` passes against it.
+
+Verification, because a parser change must not change meaning: I built the previous parser from
+`git archive HEAD` into `/tmp/dist-old` and compared old and new on about 100,000 inputs, AST (with
+`line` fields normalised) or error message (with line numbers normalised), over four corpora:
+mutations of all 146 seed programs (94 percent of which fail to parse, so this is mostly an
+error-message comparison), identifier and literal substitutions (valid-looking programs), and a
+generator of every statement form with random newlines between tokens (declarations of every type
+shape, index, member and compound assignment, destructures, `a < b;`, `a ? b : c;`, `a b;`, `for`
+headers and initializers). Of those, about 22,000 parsed successfully in the old parser. Zero
+differences. That script is not in the repo (it needs the old build), so the equivalence is pinned
+instead by `compiler/scripts/test-parser-backtracking.js`, which asserts the AST kind of each ambiguous
+form and that malformed ones (`x y;`, `values[] z;`, `Point { x ;`) are still controlled errors.
+
+The bug: the first differential run showed 22 of 30,000 inputs differing, only in the line number of an
+error message (for example an unterminated string reported on line 56 by the old parser and line 34 by
+the new). `Lexer.setPos()` restored the position but not the line counter, so every backtrack that
+crossed a newline re-lexed tokens that had already been counted and inflated every later line number.
+A realistic program shows it: a statement `values[` newline `0` newline `] = 5;` followed by an error
+on line 7 was reported on line 8, in both the old and the new parser (this would underline the wrong
+line in the editor). `Lexer.setPos(pos, line?)` and the new `Lexer.lineBefore(tokenStart)` (the line
+counter minus the newlines inside the current token) fix it, `Snapshot` now carries `line`, and the one
+other `setPos` caller (the raw rewind in `parseStyleBlockDecl`) passes it too. The test covers five
+multi-line shapes with expected lines computed from the source; against the old build two of them are
+wrong (the index assignment and a typed `for` initializer split over lines; the latter still
+backtracks in the new parser and is correct only because of the lexer fix). A first draft of that
+test hard-coded the expected lines and I had miscounted two of them; the test now computes them.
+
+Tests: new `compiler/scripts/test-parser-backtracking.js` (34 checks; wired into `npm test` before
+`test-fuzz.js`): zero backtracks for twelve statement forms and for 2000 mixed statements, exactly one
+for a typed C-style `for`, the AST kind of twelve forms, three malformed forms still controlled errors,
+five line-accuracy cases. It cannot run against the old build (no `parseStats`).
+
+Docs: the compiler README paragraph on statement-start ambiguity and the grammar doc paragraph on
+`Identifier '{'` described the old try-everything strategy and were rewritten; the TODO benchmark item
+records the result. Not done: the checker is still quadratic in members times functions of one
+component (documented in the README), and the remaining `snapshot()` lookaheads could be replaced by a
+token buffer if parsing ever matters again.
+
+Before that:
+
+Added the compiler benchmark suite ("A small compiler benchmark suite" in `TODO.md`), built around one
+question the fuzzing task left open: is the compiler linear in input size? (Parsing 200,000
+statements had taken 4.5 s.) Answer: yes for every realistic shape, with one exception that turned out
+to be unreachable in practice, and parsing is the slow stage.
+
+Layout, all under `compiler/bench/`: `shapes.js` holds the generators (`single`: `statements`,
+`members`, `components`, `viewNodes`, `guards`, `functions`; `linearShapes` names the first five;
+`projectFiles(n)` makes n files where each imports the three before it and uses them) and `run.js` is
+the runner and library. `run.js` times lex (tokenising to EOF), parse (includes lexing), check and
+codegen separately, at sizes 500 to 8000 (the `functions` shape at half those), best of 4, and
+`checkProject`/`buildProject` on 20, 100 and 500 file projects written to a temp directory. It first
+measures a fixed calibration workload (sort, arithmetic, string building; about 90 ms here) and
+stores it in `meta.calibrationMs`; `--compare baseline.json` divides every stage by its run's
+calibration before comparing, so a baseline from another machine is usable, reports a stage only if it
+exceeds `--threshold` (default 2) times the baseline and takes over 5 ms, and exits 1 on any. `--quick`,
+`--shapes a,b`, `--json file`, `--help`. `npm run bench` and `npm run bench:compare` build first.
+`bench/baseline.json` is committed (node 22, linux-x64); regenerate with `node bench/run.js --json
+bench/baseline.json` after a deliberate change. A full run takes about 14 s.
+
+Results on this machine (also in the TODO item): the five linear shapes grow about 2.0 times per
+doubling; parsing is 90 percent of the time for the statement and guard shapes, about 1.3 MB/s and
+roughly 20 times slower than lexing alone, most likely because the parser backtracks by re-lexing
+(not investigated; this is the obvious next performance target); a 500-file project checks in about
+45 ms and builds in about 120 ms. The `functions` shape (functions that call the previous one) is
+quadratic, and past 2000 functions worse than that (80 ms to 827 ms from 2000 to 4000), which I
+profiled: the time is self time in `checkStmts` and `checkComponentDecl`, because every function body
+starts from `new Set(scope)`, a copy of every member name of the component, so the cost is members
+times functions plus garbage collection. It is 25 ms at 1000 functions and nobody has thousands in a
+component, so I documented it (compiler README) and did not refactor the scope representation into a
+parent-chained one; that would be the fix if it ever matters.
+
+Tests: `compiler/scripts/test-bench.js` (wired into `npm test` after `test-fuzz.js`, about 12 s): for
+each linear shape a 4 times larger input (4000 to 16000) must take under 8 times as long to parse,
+check and generate (observed 4.0 to 5.8; a quadratic stage gives 16, and I verified once, by hand,
+that the quadratic `functions` shape gives 16.7 at the same factor, so the guard is sensitive);
+unit tests of `compare` (identical, a machine twice as slow at everything including calibration, a real
+regression reported with its location, a stage under 5 ms ignored, sizes absent from the baseline
+skipped); and a quick-mode run that must write complete JSON and pass `--compare` against itself.
+`run.js` exports `measureSingle`, `compare` and `parseArgs` and only runs `main()` when executed
+directly. A shell detail from this session: `${PIPESTATUS[0]}` is not available in this `sh`, which
+aborted a command chain once; use a temp file and `$?` instead.
+
+Docs: new "Benchmarks" section in `compiler/README.md`; `TODO.md` item closed. The separate TODO item
+"Improve compiler README so its description matches the current implementation" is still open and
+now has more to cover (the Structure section does not list `narrowing.ts`, `references.ts`, `bench/`
+or the new test scripts).
+
+Before that:
+
+Fuzzed the lexer, parser, checker and code generator ("Fuzz the lexer/parser with malformed/random
+input" in `TODO.md`, requirement: nothing but a controlled diagnostic on any input) and fixed what it
+found. It found two real bugs.
+
+Bug 1, an endless loop with unbounded memory growth. `component C { style {` (and every unterminated
+style form: no `{` after a selector, no closing `}`, a property name cut off) made `compiler/src/
+parser.ts` loop forever. The style parser reads raw characters in `while (true)` loops that only leave
+on `}`; at end of input `peekChar()` returns the `'\0'` sentinel, which never matches, so the
+property-name loop appended to a string until Node aborted with out-of-memory. `Lexer.atEnd()` is new
+(the sentinel cannot be used: a NUL character in the source looks the same) and every raw loop of
+`parseStyleBlockDecl`, `parseStyleRule` and `parseStyleDeclaration` checks it and throws a
+`ParseError` ("Unterminated style block: expected '}'" and similar).
+
+Bug 2, stack overflow. About 1000 nested parentheses, brackets, blocks or elements overflowed the
+stack of the recursive-descent parser, and a chain of a few thousand binary operators, member
+accesses, calls or index operations (which the parser reads in a loop) built a syntax tree so deep
+that the recursive checker overflowed. The same class of bug as the earlier `detectCycles` one. The
+parser now has `MAX_NESTING = 256` enforced by a `nested()` guard around `parseExpression`,
+`parseType`, `parseStatement`, `parseTemplateNode` and the self-recursion of `parseUnary` (only that
+recursion, not the entry: counting the entry too made parentheses count double, which I caught by
+probing the boundary); sub-parsers for string and style interpolation inherit the depth.
+`MAX_AST_DEPTH = 1000` is checked iteratively after parsing (`assertAstDepth`) and catches the
+iteratively-built chains. `parseCrescent` also converts any `RangeError` it still meets into a
+`ParseError` as a backstop. Measured boundaries: 255 nested parentheses and chains of 996 links are
+accepted end to end through check and codegen; one more is a `ParseError`. Spec section 12 states the
+limits. Not done: a backstop for `RangeError` in the checker or code generator, because the tree depth
+limit bounds what they can see.
+
+Tooling: `compiler/scripts/fuzz-harness.js` (seeded `mulberry32`, 146 seed programs from `examples`
+and `scripts/fixtures`, nine mutation kinds, token soup, and `pathological()` deep and huge inputs;
+`runPipeline` does parse, then check, then codegen only if no check errors, which is what the real
+pipeline does, and treats only `LexError`, `ParseError` and `CodegenError` as controlled) and
+`fuzz.js` (`node scripts/fuzz.js <seed> <iterations> [deep]`; groups crashes by stage, error type and
+throwing source location, keeps the smallest input per signature, writes each input to
+`/tmp/fuzz-last.txt` first so a hang or abort can be traced, exits non-zero on a finding). A first
+attempt at an automatic minimizer timed out on a memory-exhausting input and was deleted; I reduced
+the input by hand with short timeouts instead. After the fixes, 40 further seeds of 5000 mutations
+(200,000 inputs) and the pathological set found nothing.
+
+Tests: `compiler/scripts/test-fuzz.js` (wired into `npm test` after `test-module-graphs.js`, about 7
+seconds): four unterminated-style regressions run in a child process with a timeout and a 200 MB heap
+cap so a regression fails the test instead of wedging the suite; eight shapes nested 5000 deep (parens,
+arrays, ternaries, unary, blocks, elements, string interpolation, generic types) must give the nesting
+error and four chains of 5000 links the "too long" error; eight shapes just inside the limits must go
+through parse, check and codegen without crashing; and two child-process fuzz runs (3000 mutations on
+seed 1, and the pathological set) must report zero crash signatures. Run against the old lexer and
+parser, 17 of these checks fail (all style regressions, every deep input, both fuzz runs) and the 8
+near-limit ones pass, which is the intended split.
+
+Docs: new `docs/Crescent_Grammar.md` section 12 (Implementation Limits); `TODO.md` item closed with the
+findings. The second robustness item there, a compiler benchmark suite, is still open. Parsing 200,000
+statements took about 4.5 seconds in the pathological set, which is slow but linear, and is a sample
+for that benchmark item and not a bug.
+
+Before that:
+
+Module errors are no longer fatal. Before, a missing module, a missing item, `super` above the root
+or an import cycle aborted the whole project with one message, so every other diagnostic only
+appeared after fixing it, one at a time. Now they are ordinary per-file errors on their `use` line
+and only a parse error stays fatal (without a syntax tree for every file there is nothing to
+resolve against).
+
+Design (the note I proposed earlier): import resolution collects issues instead of throwing, and a
+failed import binds nothing; follow-on errors caused by the missing name are suppressed; every
+cycle is reported; the build rule "a file with an error is skipped, the rest still build" is kept
+and made sound.
+
+`compiler/src/modules.ts`: `resolveFileImportsLenient(file, files)` returns `{ imports, issues,
+unresolved }` (`issues` are `{ message, file, line }`, `unresolved` is the set of local names,
+aliases included, whose import failed; items that do resolve in a braced list are kept, and an
+import whose module exists is kept even with zero resolved names so it still counts as a
+dependency). `findCycles` is the old iterative DFS with `issues.push` instead of `throw` and
+`continue` past the back edge, so every cycle is found once. `resolveFileImports` and `detectCycles`
+remain as thin wrappers that throw the first issue, so `test-missing-import.js` and
+`test-circular-import.js` did not change. `compiler/src/project.ts`: `checkProject` resolves every
+file leniently, adds cycle issues to the closing file, turns each issue into an error diagnostic
+(sorted by line, placed before the file's other diagnostics) and passes `unresolved` to `checkFile`.
+`FatalDiagnostic.stage` is now just `'parse'`. `compiler/src/checker.ts`: `checkFile` takes an optional
+fourth argument and filters diagnostics that merely follow from an unresolved name
+(`Undefined identifier`, `Unknown struct type`, `Unknown component`, `Unknown type` containing the
+name) via `isUnresolvedCascade`; it also skips self-imports entirely, because the cycle error already
+explains them and they would otherwise also clash with the file's own declarations.
+
+Build soundness: a hole that already existed for semantic errors showed up here. A file importing a
+skipped file was emitted with `require('./lib')` for a `lib.js` that was never written, so the output
+failed at load time (reproduced before fixing). `buildProject` is now three phases: generate in
+memory, compute the set blocked by a skipped (error, codegen failure or unexpected failure) file
+reached through an import that binds a component, then write only the unblocked files. The skipped
+reason is `'lib.crs', which it imports, was not built`. Struct-only imports do not block, since they
+emit no `require`.
+
+Tests: `compiler/scripts/test-module-diagnostics.js` was rewritten for the new shape (same five
+cases plus the CLI, which now prints `main.crs:3 [error] file 'main.crs': ...` with exit code 1);
+`test-module-graphs.js` (500 and 12000-file cycles) and `test-module-semantics.js` (case-sensitive
+lookup, no re-export) were updated from `fatal` to diagnostics. New `test-module-recovery.js` (15
+checks, wired into `npm test` after `test-module-diagnostics.js`): an unrelated error in another
+file and one in the same file are both reported; three bad `use` lines give three errors on lines
+1, 3, 5; uses of a failed name as a tag, struct literal, state type, array type and nullable type add
+nothing; an unrelated unknown component still errors; an alias of a failed import is silenced; a braced
+import keeps its resolving items; two independent cycles are both reported and a file in a cycle is
+still checked; a parse error is still fatal and reports nothing else; the build rules (transitive
+skipping, struct-only imports, a codegen failure blocking importers, and that every relative require
+in every emitted file points at an emitted file). My first draft of that last group named files
+`codegen-fails.crs` etc. and crashed the test, because a hyphenated name cannot be imported, which is
+exactly the rule I wrote in the spec last task.
+
+Docs: `docs/Crescent_Grammar.md` 11.6 (emit rule), 11.7 (table and the paragraphs on recovery,
+cascades and cycles) and 11.8 rewritten; the VS Code README no longer says module errors replace
+other diagnostics; `TODO.md` updated.
+
+Limits worth knowing: cascades are recognised by message text, so a new "unknown name" diagnostic
+must be added to `isUnresolvedCascade`; the VS Code extension was not run in an editor (it only
+consumes `diagnosticsByFile`, which already carried per-file diagnostics, and `fatal`, which is now
+parse-only).
+
+Before that:
+
+Closed the last substantive null-narrowing limit: a narrowed `derived` value now dies when something
+it depends on is written. A derived value is the only name that changes without being assigned, so
+`if (label != null) { count = 5; label.length; }` with `derived<string?> label = count > 3 ? null :
+"x"` was accepted. The old checker was silent on all ten shapes in the new negative fixture
+(verified by stashing the change).
+
+`compiler/src/narrowing.ts` now tracks three things per function instead of one. `FunctionEffect` is
+`{ nulls, writes, reads }`: `nulls` is the old set (assignments of a possibly-null value), `writes`
+is every write to a root identifier (any assignment, compound assignment, `++`/`--`, an assignment
+through a member or index, and a method call on the name itself such as `items.push(x)`), and
+`reads` is every identifier the body mentions. All three exclude the function's own params and
+locals and are closed over the call graph by the same fixpoint. The visitor interface gained
+`write` and `read` hooks, and `computeDerivedDeps(derived, effects)` builds each derived value's
+dependency set from the names its initializer reads plus the `reads` of the functions it calls,
+then closes it over other derived values (so `alias = label`, `label = f(count)` depends on
+`count`). `nullifiedByStmts` and `nullifiedByExpr` take the dependency map as a last argument and,
+after the walk, add every derived name whose dependencies intersect the collected writes to the
+returned set, so every existing mechanism (post-statement drops, loop entry and back-edge, guard
+tests, the in-expression order from the previous task, branches that exit) covers derived values
+with no further change. `checker.ts` registers the map per component in `derivedDepsByFunctions`
+(same `WeakMap`-on-`functions` pattern as the effects and suspend names) and the two closures that
+wrap the collectors pass it in.
+
+Two details that surprised me. The language already forbids `box.v = 5` on a state struct ("reassign
+the whole state instead"), so the struct case in the fixture reassigns the whole struct, which also
+shows that a non-null write invalidates. And a non-null write is precisely why derived needs its own
+rule: the plain `nulls` set deliberately ignores literal assignments to keep narrowing, but a literal
+write to a dependency can still make a derived value null.
+
+Tests (`test-checker.js`, `assertWarnedLines`): `unguarded-nullable-derived-after-write.crs` (ten
+warnings: literal, compound, postfix, a writing call, derived-of-derived, a dependency reached through a
+function the initializer calls, a reassigned struct, a mutating method call, a loop back-edge, and an
+earlier operand of the same expression) and `guarded-nullable-derived-ok.crs` (unrelated writes in
+every form, an access before the write, a guard after the write, an access before a writing call).
+`compiler/examples` still has zero nullable warnings and the 303 earlier tests are unchanged.
+
+Docs: new paragraph in `docs/Crescent_Design.md` section 11, with the limit removed; `TODO.md` updated.
+Remaining limits, all documented: calls across separate nodes of a view, and event handlers.
+
+Before that:
+
+Closed the "evaluation order inside one expression" limit of the null-narrowing analysis. Before,
+`checkExpr` passed one fixed `narrow` to every sub-expression, so after `if (x == null) { return; }`
+the expression `reset() + x.length` (with `reset()` assigning `x = null`) was accepted: the call that
+nulls `x` comes first but its effect was only applied after the whole statement. The old checker was
+silent on all seven shapes in the new negative fixture (verified by stashing the change).
+
+In `compiler/src/checker.ts`, `checkExpr` now evaluates children left to right and, after each, drops
+from the narrowing the names that child may null (`nullifiedByExpr`, the same effect summaries and
+`await` handling as the statement level), for what comes after it: both operands of a non-short-circuit
+`Binary`, the right side of `&&`/`||` (whose guard targets are also filtered, as `If` tests already
+were), a `Ternary`'s test before its branches, a `Call`'s callee then each argument in order, the
+elements of array literals, the fields of struct literals, the object before the index of an `Index`,
+and the parts of a template string. A child's own access is still checked with the narrowing from before
+it, so `x.length + reset()` and `f(x.length, reset())` stay clean.
+
+Plumbing: `checkExpr` has no `memberTypes`/`constNames`, which `await` handling needs, so the set of
+suspendable names is now registered once per component in `checkComponentDecl` in a `WeakMap` keyed by
+the `functions` map (`suspendNamesByFunctions`, read with `suspendNamesOf`), next to the existing effects
+cache, and `checkStmts` reads it the same way; the old cache keyed by `memberTypes` is gone. No
+signatures changed.
+
+Tests (`test-checker.js`, `assertWarnedLines`): `unguarded-nullable-expression-order.crs` with exactly
+seven warnings, on lines 26, 33, 40, 47, 51, 60 and 67 (binary, call arguments, array literal, struct
+literal, `&&` chain, ternary test, awaited operand), and `guarded-nullable-expression-order-ok.crs`
+for the same shapes with the access first, a call that nulls only another name, and an `await` after
+the access. One of my first drafts of the clean fixture put two such statements in one function and
+correctly warned on the second, because the first one's `reset()` really does null the name for the
+next statement; each case now has its own function. Examples under `compiler/examples` still have zero
+nullable warnings.
+
+Docs: `docs/Crescent_Design.md` section 11 gains the in-expression rule and drops this from its
+limits; `TODO.md` updated. Remaining limits: `derived` values whose dependencies change in synchronous
+code, calls across separate nodes of a view, and event handlers.
+
+Before that:
+
+Wrote the module semantics specification ("Clearly define module semantics in the language
+specification" in `TODO.md`) as two commits: a bug fix the writing exposed, then the spec.
+
+Commit 1, `e3732bb` "fix: Skip node_modules and hidden entries when discovering files". The spec
+had to say which files belong to a project, and the honest answer was "every `.crs` under the root,
+with no exclusions", which meant `crescent check` (default directory: the current one) and the VS
+Code extension (re-checks on every save) walked all of `node_modules`, parsed any `.crs` found
+there, and would have crashed on a dangling editor lock file such as Emacs's `.#main.crs`. The walk
+in `loadAllPrograms` (`compiler/src/modules.ts`) now skips any entry whose name starts with `.` and
+any directory named `node_modules`; a directory merely named like it (`node_modules_like`) is kept
+and symbolic links to directories were never followed. Test: `compiler/scripts/test-module-discovery.js`,
+which fails on the old code with a parse error from a hidden file.
+
+Commit 2, the spec. `docs/Crescent_Grammar.md` section 11 is now 11.1 Syntax, 11.2 Modules and the
+project, 11.3 Declarations, visibility and scope, 11.4 Path resolution, 11.5 Name binding, 11.6
+Compilation model, 11.7 Diagnostics (one table: condition, severity, where it is reported, effect)
+and 11.8 Known limitations. Every earlier rule (path resolution table, cycle detection, where module
+errors are reported, unused imports, name conflicts, no re-export) is kept and moved into place; new
+text covers what a module and a project are, visibility and the single per-file namespace, the CommonJS
+compile model, and the difference between fatal errors (parse and module errors: nothing else is
+reported, nothing is emitted) and per-file errors (that file is skipped, the rest still build).
+Everything stated was checked against the implementation first by probing, and
+`compiler/scripts/test-module-semantics.js` (wired into `npm test` after
+`test-module-discovery.js`) pins what no earlier test covered: `super` in the middle of a path, a
+`use` after declarations, `use lib;` and `use lib::{};` being parse errors, a hyphenated file name
+that belongs to the project but cannot be imported, case-sensitive lookup, no re-export, the
+generated `require` for an alias, a struct-only import emitting no `require`, several `use` lines
+merging into one `require`, an unreachable file still being built, a file with a semantic error being
+skipped while the others build, and components and structs sharing one namespace.
+
+Spec correction: the grammar allowed a one-segment bare `use`; the parser (correctly) requires a
+module path plus an item, so the production now uses `+`.
+
+Facts worth knowing that the spec records: `checkProject().ok` means "no parse or module error", not
+"no diagnostics"; per-file errors live in `diagnosticsByFile`. The compiled top level contains only
+the runtime import, the requires and the component definitions (checked across all 23 generated
+files for `compiler/examples`), so module evaluation order is unobservable.
+
+Still open: module errors are fatal and hide all other diagnostics (a design question, listed in
+11.8); the two remaining null-narrowing limits (evaluation order inside one expression, `derived`
+values changing in synchronous code).
+
+Before that:
+
+Tested module graphs at scale ("Test larger module graphs" in `TODO.md`) and fixed the one bug it
+found. A probe over generated import chains showed the checker is fast (3000 files in about 0.6s,
+40000 in about 2.4s) but `detectCycles()` in `compiler/src/modules.ts` threw a raw `RangeError:
+Maximum call stack size exceeded` at about 12000 files, because its `visit` recursed once per file
+in the chain. It is now iterative: an explicit stack of frames (node, its imports, its distinct
+targets, next index) with the same traversal order, so the reported chain, file and line for a
+cycle are identical to before (checked against the 300-file case and by the 272 pre-existing
+tests, including `test-circular-import.js`).
+
+New `compiler/scripts/test-module-graphs.js` (wired into `npm test` after `test-unused-imports.js`)
+generates each project under `os.tmpdir()`, deletes it at the end, and for the buildable ones runs
+the real `buildProject()` and renders the generated JS in JSDOM: a 200-file chain (all 200 nested
+components render in order), a hub with 150 `use` lines (150 leaves rendered, zero diagnostics, so
+no false unused or conflicting imports at that size), a diamond (shared base built once, rendered
+through both a direct import and a `Base as Foundation` alias), nested directories with
+`super::super::super::` and `super::super::` paths, plus check-only cases: a 500-file cycle (chain
+of 501, reported on `c499.crs` line 1) and 12000-file chain and cycle (the two that need the
+iterative `detectCycles`). It takes about 3s.
+
+A note for anyone writing DOM assertions against built output: a view with more than one root node
+is wrapped by the runtime's `fragment` in `<span style="display: contents">`, so select on a class,
+not a bare tag; my first fan-out assertion counted the wrapper (151 instead of 150) and the fix
+was in the test, not the compiler.
+
+Docs: `TODO.md` marks the item done. Remaining open under module work: module errors are fatal and
+suppress every other diagnostic; the module semantics section of the specification
+("Clearly define module semantics in the language specification") is still not written as one
+piece, although the grammar doc now has the individual rules.
+
+Before that:
+
+Added the unused-import warning, the second piece of the open "More module error diagnostics"
+item. `checkFile` in `compiler/src/checker.ts` now remembers every import it actually binds (an
+import rejected as a name conflict is not recorded, so it is reported only as the conflict) and,
+after the import loop, warns on the `use` line for each bound name that the file never refers to:
+`Import 'Widget' from 'lib.crs' is never used`, or `Import 'Widget' (as 'W') from 'lib.crs' is
+never used` for an alias. Items of a braced `use` are judged one by one.
+
+Detection lives in the new `compiler/src/references.ts`: `collectReferencedNames` walks the whole
+file AST generically (every object property and array element, skipping `UseDecl` nodes) and
+collects names from `NamedType`, `GenericType` and `Identifier` (`name`), `StructLiteral` and
+`StructDestructure` (`typeName`) and `Element` (`tag`). Walking generically means a new AST
+position that holds a type or a tag is covered without touching the checker, and it can only err
+toward silence: a local variable or text-free identifier sharing an imported name counts as a use.
+
+Fixtures I had written earlier in `fixtures/import-conflicts/` imported names without using them,
+so they now each render their imports (`<Thing />`, `<OtherThing />`, `<Imported />`); their
+assertions are unchanged. New `compiler/scripts/test-unused-imports.js` (wired into `npm test`
+after `test-module-diagnostics.js`) with fixtures in `compiler/scripts/fixtures/unused-imports/`:
+unused component, struct and alias, a partly-used braced import, a warning on line 2 when line 1
+is used, and clean cases for a component tag, struct type, struct literal, destructure, a struct
+used only in `state<Point?>` and a parameter type, and an alias. The real examples under
+`compiler/examples` (which do import) produce no unused-import warnings.
+
+Docs: new "Unused imports" paragraph in `docs/Crescent_Grammar.md`; `TODO.md` marks the warning
+done and keeps the module-errors-are-fatal point open.
+
+Still open under that item: module errors remain fatal and suppress every other diagnostic. A
+possible follow-up here is making the warning a quick-fix in the VS Code extension; nothing in the
+extension changed, since warnings already flow through `diagnosticsByFile`.
+
+Before that:
+
+First piece of the open "More module error diagnostics" item: module errors now say where they
+are. Before, every `ModuleError` (missing module, missing export, `super` above the root, import
+cycle) became a `FatalDiagnostic` with `file: null` and no line, so `crescent check` printed a bare
+`error: ...` and VS Code could only show a popup, although each error is caused by one specific
+`use` statement.
+
+Changes: `ModuleError` in `compiler/src/modules.ts` now has `file` and `line` (constructor args,
+default null). `resolveUsePath` takes an optional `line`; `resolveFileImports` passes `decl.line`
+for the missing-module, missing-export and `super` errors; `detectCycles` attributes a cycle to the
+file that closes it and the line of its import of the node already on the stack (the last import in
+the reported chain; a self-import is attributed to itself). `FatalDiagnostic` in
+`compiler/src/project.ts` gained `line` (null for parse errors, which already embed their line in
+the message); I removed its comment describing module errors as unattributable. `cli.ts` and
+`index.ts` print `file:line: ` when known. `editors/vscode/src/extension.js` underlines
+`fatal.line` in `fatal.file` and keeps the popup only as a fallback when no file is known; the
+README's Diagnostics section is corrected. Message texts are unchanged, so
+`test-missing-import.js` and `test-circular-import.js` were not touched.
+
+Tests: new `compiler/scripts/test-module-diagnostics.js` (wired into `npm test` after
+`test-import-conflicts.js`) with fixtures under `compiler/scripts/fixtures/module-errors/`: missing
+module, missing export, `super` above root, a two-file cycle (file must be the penultimate file of
+the chain, line 3), a self-import, and a spawn of `crescent check` asserting stderr starts with
+`main.crs:3: ` and exit code 1. Before the change the same data had `file: null`.
+
+Docs: new "Where module errors are reported" paragraph in `docs/Crescent_Grammar.md`; `TODO.md`
+splits the item into this done part and a still-open part.
+
+Still open under that item: module errors remain fatal and suppress every other diagnostic (a
+design question: resolving imports is a precondition for checking), and unused imports are not
+reported. The VS Code change itself was not run in an editor, only the data it consumes was tested.
+
+Before that:
+
+Made `await` invalidate null narrowing of component state, the first item left over from the
+call-boundary work. Across an `await` other code can run, so a narrowed `state`, `derived`,
+`provide` or `inject` member is no longer known to be non-null afterwards. Narrowed locals and
+parameters survive, and `const` members are never dropped.
+
+Implementation: `compiler/src/narrowing.ts` visitors gained a `suspend()` hook fired for every
+`Unary` `await` (after its operand), and `nullifiedByStmts`/`nullifiedByExpr` take an optional
+`suspendNames` set that `suspend()` adds wholesale. `checker.ts` computes that set once per
+component in `suspendNamesFor` (members from `memberTypes` minus `constNames`, cached in a
+`WeakMap`), and `checkStmts` now builds two small closures, `nullifiedStmts` and `nullifiedExpr`,
+instead of repeating `effectsFor(functions)` at every call site. Because the existing mechanism
+is reused, an `await` in a statement, in a guard's own test (`if (x != null && await f() == ...)`),
+or anywhere in a loop body (so the second iteration) all work, and an exiting branch that awaits
+does not carry the invalidation forward. The call-effect summaries themselves are unchanged: a
+callee's own awaits do not matter to its callers, only an `await` in the caller's own code.
+
+Tests: `unguarded-nullable-after-await.crs` (four exact warning lines: after an await, guard test
+containing an await, loop with an await, narrowed `derived`) and `guarded-nullable-await-ok.crs`
+(guard placed after the await, early return after the await, use before the await, narrowed local
+across an await, await only on an exiting branch). Examples under `compiler/examples` still have
+zero nullable warnings.
+
+Docs: `docs/Crescent_Design.md` section 11 and the `TODO.md` null-safety entry now list `await` as
+handled. Remaining known limits: evaluation order inside one expression, `derived` values whose
+dependencies change in synchronous code, and calls from view expressions or event handlers.
+
+Before that:
+
+Closed the confirmed null-narrowing soundness gap across function calls, plus a wider one found
+while doing it: assignment never invalidated narrowing at all, even inside one function (`if (x !=
+null) { x = null; x.length; }` produced no diagnostic). The checker now treats narrowing as dead
+once a value may have been set back to null.
+
+How it works. New pure-AST module `compiler/src/narrowing.ts` (also now home of
+`blockDefinitelyExits`, moved out of `checker.ts`):
+- `computeFunctionEffects` builds, for every function of a component, the set of names it may
+  assign a possibly-null value to: direct assignments (`x = value` where `value` is not a
+  literal, struct or array literal or template string), minus the function's own params and
+  locals, then closed over the call graph by a fixpoint so chains and recursion work.
+- `nullifiedByStmts(stmts, effects, mode)` and `nullifiedByExpr` return the names a piece of code
+  may null, including via calls. Mode `fallthrough` skips `if` branches that always exit; mode
+  `full` includes everything and is used for loops.
+`checker.ts` uses them in four places: after every statement the nullified names are dropped from
+`narrowed`; on entry to a loop (`for`, C-style `for`, `while`, `do`-`while`) whatever its test,
+update or body may null is dropped, which covers the back-edge, and the same set is dropped after
+the loop through the generic post-statement rule; an `if` drops names nullified by its own test
+before narrowing its branches and refuses to narrow a name its test may null (`if (x != null &&
+reset())`); effects are cached per component in a `WeakMap` keyed by the `functions` map, so
+`checkStmts` signatures did not change.
+
+Tests (`compiler/scripts/fixtures/checker/` + `test-checker.js`, exact warning lines asserted via a
+new `assertWarnedLines` helper): `unguarded-nullable-across-call-boundary.crs` (renamed from
+`unsound-nullable-across-call-boundary.crs`, whose assertion used to document the gap),
+`unguarded-nullable-after-assignment.crs`, `unguarded-nullable-loop-backedge.crs`,
+`unguarded-nullable-transitive-call.crs`, `unguarded-nullable-guard-test-call.crs`, and
+`guarded-nullable-call-ok.crs` for what must stay clean (calls that assign other names or
+non-null literals, a callee that only assigns its own parameter, a guard branch that exits after a
+nulling call, a loop test that re-narrows each iteration, `continue` after a nulling call). Every
+`.crs` under `compiler/examples` still has zero nullable warnings.
+
+Docs: `docs/Crescent_Design.md` section 11 states the rules and the limits; `TODO.md` marks
+"Test nested/control-flow cases" done and lists the fixtures. The old paragraph below about this
+being "deliberately left unfixed" is superseded.
+
+Known limits, all documented and none yet addressed: evaluation order inside one expression
+(`reset() + x.length` after a guard is not caught); a narrowed `derived` value is not invalidated
+when the state it depends on changes; `await` does not invalidate narrowing of component state;
+calls from view expressions or event handlers are not analysed; a possibly-null assignment of an
+identifier or ternary is conservatively treated as nulling even when the right side is non-null.
+
+Before that:
+
+Reported conflicting names created by `use` declarations, which previously produced no diagnostic
+at all. In `compiler/src/checker.ts`, `checkFile` now tracks which module each imported name came
+from and emits an error on the `use` line when an import's bound name (the item name, or its `as`
+alias) is already bound by an earlier import in the same file, or equals a top-level `component` or
+`struct` declared in that file; the first binding is kept. `FileImports` in `compiler/src/modules.ts`
+gained a `line` field so the diagnostic points at the right `use`. The same name declared in two
+modules that no single file imports together is still fine, because each file compiles to its own
+JS module, and an `as` alias resolves a conflict.
+
+**Tests added:** `compiler/scripts/test-import-conflicts.js` (wired into `npm test` after
+`test-missing-import.js`) with fixtures in `compiler/scripts/fixtures/import-conflicts/`:
+conflicting imports, a repeated import, import vs local declaration (all exactly one error, on the
+expected line), plus aliased and unrelated-module cases that must stay clean. Before the change the
+conflicting-import and import-vs-local scenarios produced zero diagnostics.
+
+**Docs:** new "Name conflicts" paragraph in `docs/Crescent_Grammar.md`; `TODO.md` checkbox for
+duplicate/conflicting declarations across modules marked done; fixed a stale
+`blockDefinitelyReturns()` reference there (renamed `blockDefinitelyExits()` last task).
+
+Before that:
+
+Made `break` and `continue` count as early exits for post-guard null narrowing, the same way
+`return` already did. In `compiler/src/checker.ts`, `blockDefinitelyReturns` became
+`blockDefinitelyExits` and now also treats a direct `Break` or `Continue` statement as exiting the
+block, including inside a nested `if` whose two branches both exit. After
+`if (x == null) { continue; }` (or `break;`), `x` is narrowed for the rest of that block. Narrowing
+is block-local, so it does not outlive the loop, and a `break` inside a nested loop within the guard
+is not a direct statement of the guard's block, so it does not count. Only `checker.ts` changed in
+`compiler/src/`; no parser, codegen or runtime change.
+
+**Tests added** (`compiler/scripts/fixtures/checker/` + `test-checker.js`):
+`guarded-nullable-break-continue-ok.crs` (for, while, do-while and for-each, plus a nested `if`
+whose branches are `break` and `continue`), `unguarded-nullable-after-loop-guard.crs` (exactly one
+warning, after the loop), `unguarded-nullable-nested-loop-break.crs` (exactly one warning).
+Before the change the positive fixture produced 5 false warnings; the two negatives warn the same
+before and after.
+
+**Docs:** `docs/Crescent_Design.md` loop rules and `TODO.md` (Null Safety note; removed the
+resolved bullet from the loops item).
+
+**Known gap left open:** a guard whose branch calls a function that exits is not recognised, and
+narrowing is still not interprocedural (see the confirmed unsound call-boundary case below).
+
+Before that:
+
+Implemented the loop forms and loop control specified by the previous commit (`6ae4c0e`, which only
+touched the AST, tokens, grammar and design doc): C-style `for`, `while`, `do`-`while`, `break`,
+`continue`. Branch: `feature/while-break-continue-loops`. The playground and editor extensions were
+not touched.
+
+**Spec conflicts found and resolved (design doc is the first source of truth):**
+- The grammar had *replaced* the for-each statement production with the C-style one, although the
+  implementation (and `TODO.md`) still use for-each. Restored it as `ForEachStatement`; `ForStatement`
+  is now either form.
+- The design doc's `do { } while (cond);` ends with a semicolon, the grammar did not. Semicolon is
+  now required (grammar updated).
+- The design doc's example `if (i == 5) break;` has no braces, but the grammar and parser require a
+  block after `if`. The example now uses braces; brace-less `if` was not added.
+
+**What was completed:**
+- `parser.ts`: `while`, `do`-`while`, `break`, `continue`, and a C-style `for`. The `for` header is
+  tried as for-each first (`Type name in`), then falls back to C-style. The init is a declaration,
+  assignment or expression; the update is optional.
+- `ast.ts`: `ForC.update` is optional.
+- `checker.ts`: `checkStmts` takes an `inLoop` flag and now returns its final scope/narrowing so the
+  `for` header's variable stays scoped to the loop (and is invisible to code after it, but visible
+  to the test, update and body; body locals are not visible to the update). `break`/`continue`
+  outside a loop is an error. `while`/`for` bodies are narrowed from the loop test; `do`-`while` is not.
+- `codegen.ts`: emits the matching JS. `for` clauses that would expand to several JS statements throw
+  an unsupported-codegen error.
+
+**Files changed:** `compiler/src/{ast,parser,checker,codegen}.ts`, `docs/Crescent_Design.md`,
+`docs/Crescent_Grammar.md`, `TODO.md`, `HANDOFF.md`, `compiler/package.json` (adds `test-loops.js`),
+new `compiler/examples/loops.crs`, `compiler/scripts/test-loops.js`,
+`compiler/scripts/fixtures/unsupported-loop-clause.crs`, and 7 new files in
+`compiler/scripts/fixtures/checker/`.
+
+**Tests run:** `npx tsc --noEmit` clean; `npm test` in `compiler/`: **241 PASS, 0 FAIL** (223 before
+this work, 18 new).
+
+**Known problems / unfinished:** see the "Still open" list in `TODO.md` under the loops item
+(labeled loops, loops in `view {}`, closure-capture guarantee, `break`/`continue` as early exits for
+narrowing, multi-statement `for` clauses). Not updated, deliberately: the VS Code TextMate keyword
+list (`editors/vscode/syntaxes`) and the playground highlighter, so `while`/`do`/`break`/`continue`
+are not syntax-highlighted there yet.
+
+**Recommended next step:** teach `blockDefinitelyReturns`-style narrowing about `break`/`continue`, or
+update the VS Code grammar keyword list.
+
+Before that:
+**Current task:**
+Extended flow-sensitive null narrowing to cover every remaining kind of nullable binding: local
+variables, function parameters, and `for`-loop item variables. Previously the `nullable` map used
+for narrowing was built once per component from `state`/`derived`/`provide`/`const`/`inject`/
+component-params only — a local `T?` variable or a nullable function parameter was added to the
+existence-checking scope but never added to the nullable map at all, meaning it got **zero**
+null-safety checking: no warning when accessed unguarded, no narrowing when guarded. Same gap for
+a nullable `for`-loop item (`for (string? item in xs)`). The maintainer again asked that
+`playground/` remain untouched (they're working on it externally); this session only touched
+`compiler/`, `TODO.md`, and this file.
+
+**What was fixed**, all in `compiler/src/checker.ts`:
+- `VarDecl` in `checkStmts` now extends the narrowing map with a **new** `Map` (not a mutation of
+  the shared one) when the declared type is nullable, so the extension is scoped to the rest of
+  that block and doesn't leak into sibling scopes that happen to share the same underlying
+  component-level map by reference.
+- `FunctionDecl` in `checkComponentDecl` now builds a per-function nullable map (component-level
+  map + that function's own nullable params) before checking its body, for the same
+  no-shared-mutation reason — the component-level map is the exact same object passed to every
+  sibling function, so mutating it in place would have corrupted their narrowing too.
+- `For` (statement) and `TemplateFor` (view block) both extend the loop body's nullable map when
+  the item type itself is nullable — fixed identically in both places, matching this area's
+  established pattern of parity between the two.
+
+**Tests added** (`compiler/scripts/fixtures/checker/` + `test-checker.js`):
+`unguarded-nullable-local.crs`/`guarded-nullable-local-ok.crs`,
+`unguarded-nullable-param.crs`/`guarded-nullable-param-ok.crs`,
+`unguarded-nullable-for-item.crs`/`guarded-nullable-for-item-ok.crs` (the negative one checks the
+warning fires in *both* the function body and the view block, via an exact count of 2, not just
+`.some()`). Also picked up two items from this section's own "Test nested/control-flow cases" note
+while in the area:
+- `guarded-nullable-nested-and-loop-ok.crs` confirms narrowing composes correctly across nested
+  `if`s and propagates into a `for`-loop body — both already worked, just untested until now.
+- `unsound-nullable-across-call-boundary.crs` **confirms, rather than just fixes or ignores, a real
+  soundness gap**: a function that narrows a nullable state member, calls another function that
+  reassigns it to `null`, then accesses it — the checker currently reports zero diagnostics for
+  this, which is genuinely unsound (that access can be a real null dereference at runtime).
+  Deliberately left unfixed: a correct fix needs actual interprocedural analysis (does this
+  function, or anything it transitively calls, assign to this name anywhere?), which is a
+  meaningfully bigger feature than anything else in this area and deserves its own design decision
+  rather than a quick patch under an unrelated commit. `TODO.md` now states this as a confirmed,
+  open gap instead of the previous "it should reset... but this isn't tested" speculation.
+
+**Verification actually run**: `npx tsc --noEmit` — clean. `npm run build && npm test` in
+`compiler/` — **223 PASS, 0 FAIL** (was 215 at the start of this session; 8 new assertions, all
+passing). Manually confirmed the call-boundary and nested/loop behavior with one-off `.crs` files
+run directly through `checkFile` before writing them up as permanent fixtures, so the TODO note
+describes actually-observed behavior, not a guess.
+
+Not committed — see `crescent-nullable-locals-params.patch` for a transferable copy.
+
+Before that:
+**Current task:**
+Completed terminal-guard null narrowing in the semantic checker. The maintainer explicitly asked
+that playground work remain untouched; this session changed only compiler, docs, roadmap, and
+handoff files.
+
+**What was completed this session:**
+- `compiler/src/checker.ts` now preserves false-branch null facts after a statement-level `if`
+  with no `else` when its consequent definitely returns. The deliberately conservative
+  `blockDefinitelyReturns()` recognizes direct returns and nested `if`s whose two branches return.
+- `guarded-nullable-early-return-ok.crs` covers single and nested terminal guards; the companion
+  `unguarded-nullable-after-nonterminal-if.crs` proves a branch that can fall through does not
+  grant the same narrowing.
+- `docs/Crescent_Design.md` and `TODO.md` document the reachability rule and its current limits.
+- Verification so far: `npm run build; node scripts/test-checker.js` in `compiler/`, all passed.
+  Run the full `npm test` suite before committing.
+
+**Previous session's ternary narrowing work:**
+- `compiler/src/checker.ts` now treats ternary consequents as the true branch of their test and
+  alternates as the false branch. This makes both `x != null ? x.foo : default` and
+  `x == null ? default : x.foo` safe when their nullable access is in the corresponding branch.
+- `compiler/scripts/fixtures/checker/guarded-nullable-ternary-ok.crs` and `test-checker.js` cover
+  both forms in function and view expressions.
+- `docs/Crescent_Design.md` and `TODO.md` now record ternary narrowing as supported; only
+  reachability-based post-guard narrowing remains open in this part of the roadmap.
+- Verification: `npm run build; node scripts/test-checker.js` and the full `npm test` suite in
+  `compiler/` both passed end-to-end.
+- Current commit: `feat: Add ternary null narrowing`.
+
+**Previous session's short-circuit narrowing work:**
+- `compiler/src/checker.ts` now gives the right operand of `&&` the facts known when its left
+  operand is true, and the right operand of `||` the facts known when its left operand is false.
+  This makes `value != null && value.length > 0` and `value == null || value.length == 0` safe
+  during checking, including chained logical expressions. The change is deliberately limited to
+  short-circuit evaluation; it does not introduce ternary or post-guard narrowing.
+- `compiler/scripts/fixtures/checker/guarded-nullable-short-circuit-ok.crs` exercises both forms
+  in a function condition and a view condition. `test-checker.js` asserts the fixture has no
+  diagnostics.
+- `docs/Crescent_Design.md` and `TODO.md` now describe the same short-circuit rule and its scope.
+- Verification: `npm run build; node scripts/test-checker.js` and the full `npm test` suite in
+  `compiler/` both passed. The first full-suite attempt was blocked only by sandbox access to its
+  temporary preview directory; the approved rerun passed end-to-end.
+- Current commit: `feat: Add short-circuit null narrowing`.
+
+**Previous session's playground work** (do not modify unless explicitly requested):
+- `public/highlight.js` — a small, dependency-free, hand-written Crescent tokenizer. Keywords/
+  types are lifted directly from `compiler/src/tokens.ts`'s `KEYWORDS` map so they can't casually
+  drift out of sync with the real lexer. Correctly handles Crescent's actual string-interpolation
+  syntax (`"text {expr} text"`, including arbitrarily nested `{}`/`""` inside the interpolation
+  expression itself — implemented as a small stack machine tracking `string`/`brace` frames,
+  mirroring how `compiler/src/lexer.ts`'s own `readInterpolationSource()` balances braces) rather
+  than approximating with a generic language mode. Dual-mode export (CommonJS `module.exports` in
+  Node, `window.CrescentHighlight` in the browser) specifically so it's independently testable
+  without a browser.
+- `public/index.html`/`style.css`/`app.js` updated: the `<textarea>` now sits inside an
+  `.editor-wrap`, transparent, on top of a `<pre>` that shows the highlighted markup underneath —
+  the standard "shadow `<pre>`" trick (e.g. `react-simple-code-editor` uses the same approach), so
+  the real caret/selection/undo-stack is still the browser's native textarea, nothing reimplemented.
+  `app.js` re-runs highlighting on every `input` event, syncs scroll position between the two
+  layers, and now also intercepts Tab to insert a 4-space indent instead of moving focus away
+  (`e.preventDefault()` + manual `selectionStart`/`selectionEnd` splice).
+- **Chose not to reach for CodeMirror/Monaco** for this pass — deliberate, not an oversight: it
+  would mean a CDN dependency (this is a "no framework, no build step" static site, per the
+  existing README), and a generic bundled language mode wouldn't understand Crescent's own
+  interpolation syntax correctly anyway. `TODO.md` §11a's "A real code editor" item now reflects
+  this and reframes what's *actually* still missing: diagnostics-in-the-editor (squiggles from the
+  checker's real output), which needs a real editor component and is a different, larger piece of
+  work than "add a syntax highlighter."
+- Two new real test files:
+  - `scripts/test-highlight.js` — the strongest test in the whole playground: a **lossless
+    round-trip check** (strip every generated `<span>` back out and assert you get the exact
+    original source back, byte for byte) run against **every single file in
+    `compiler/examples/`** (16 real components), not just a synthetic sample — plus explicit
+    coverage for embedded `{expr}` interpolation, a nested object-literal-inside-interpolation
+    edge case, line comments, multi-line block comments, and the HTML escape/unescape helpers.
+  - `scripts/test-app.js` — a jsdom integration test that builds a minimal DOM matching
+    `index.html`'s structure, stubs `fetch`/`clipboard.writeText`/`TextEncoder`/`TextDecoder`
+    (jsdom doesn't provide the latter two by default — had to polyfill from Node's own globals),
+    then `window.eval()`s the actual `highlight.js` and `app.js` source files unmodified and drives
+    them for real: confirms the default example loads and gets highlighted on page load, that
+    editing the textarea live re-highlights it, that Tab actually inserts a 4-space indent at the
+    cursor and prevents the browser's default focus-shift, and — the one I'd have most expected to
+    get wrong on the first try — that clicking "Copy share link" produces a URL whose hash, when
+    decoded with the same URL-safe-base64 + `TextDecoder` scheme, reproduces the exact source that
+    was in the editor at share time.
+- `package.json`'s `test` script now runs all three suites in sequence
+  (`test-highlight.js && test-app.js && test-compile.js`).
+- `TODO.md` §11a updated: syntax highlighting checked off with what it actually covers and
+  deliberately doesn't (autocomplete/inline diagnostics), and the old generic "add CodeMirror or
+  Monaco" framing was replaced with the more accurate "diagnostics-in-the-editor is the real
+  remaining gap" framing.
+
+**Verification actually run**: `npm test` inside `playground/` — 34 assertions across all three
+suites, all PASS (16 lossless round-trips over real example files + 9 explicit highlighter
+assertions + 9 app.js integration assertions + 10 compile-pipeline assertions from before). Also
+restarted `scripts/dev-server.js` and confirmed with real `curl` requests that `highlight.js`
+serves with a 200 and that `index.html` actually contains the new `highlight-code` element (i.e.
+the HTML edit landed, not just the JS). Re-ran `compiler`'s own full suite afterward: 211 PASS, 0
+FAIL, unchanged — this session never touched `compiler/`.
+
+Not committed — see `crescent-playground-syntax-highlighting.patch` for a transferable copy.
+
+Before that: Latest session built the browser playground discussed and scoped in the previous (docs-only)
+session, at the maintainer's explicit request: a new `playground/` directory, sibling to
+`compiler/` and `editors/vscode/` in this same repo (matching the existing "monorepo" pattern
+`editors/vscode/src/extension.js` already uses — see its own comment about locating
+`compiler/dist` relative to itself). Deliberately took the "quick" of the two architectures
+discussed (server compiles, no client-side esbuild-wasm), with the "properly decoupled, published
+package, maybe separate repo" version explicitly deferred and documented as a future option
+rather than a todo — see the new `TODO.md` §11a "Web Playground" section for exactly what's
+deferred and why.
+
+**What was built**, all under `playground/`:
+- `lib/compileToPreview.js` — the only piece of real logic: writes the given source to a temp
+  `main.crs`, calls `compiler/src/webPreview.ts`'s existing `buildPreviewHtml()` unchanged (the
+  same function the VS Code extension's "Open Preview in Browser" command already uses), then
+  flattens `diagnosticsByFile` into a flat array for the client. **Nothing in `compiler/` was
+  modified** — this only consumes its existing public surface (`buildPreviewHtml`/`buildProject`/
+  `checkProject`).
+- `api/compile.js` — the Vercel serverless function entry point (`module.exports = async (req,
+  res) => ...`), a thin HTTP wrapper around the above. Handles non-POST (405), invalid JSON body
+  (400), and any unexpected compiler throw (500) explicitly rather than letting Vercel's default
+  error page show.
+- `scripts/dev-server.js` — a zero-dependency local dev server (plain `http.createServer`) that
+  serves `public/` and mounts the same `api/compile.js` handler at `/api/compile`, so `npm run
+  dev` gives a working local playground without needing the Vercel CLI or an account.
+- `public/index.html` + `style.css` + `app.js` — a plain static page, no framework: a `<textarea>`
+  editor (pre-filled with the `counter.crs` example, or a URL-hash-decoded snippet if the link
+  carries one), a Run button that POSTs to `/api/compile` and renders the returned diagnostics
+  plus sets the result HTML as a sandboxed `<iframe sandbox="allow-scripts">`'s `srcdoc`, and a
+  "Copy share link" button that base64-encodes the current source into the URL hash
+  (`#code=...`, URL-safe alphabet, Unicode-safe via `TextEncoder`/`TextDecoder`) — no backend
+  storage for sharing, matching how the TypeScript Playground/Svelte REPL do it.
+- `scripts/test-compile.js` — a **real** test (not just "it builds"), following
+  `compiler/scripts/test-web.js`'s own jsdom pattern: compiles the actual `Counter` example
+  through the full pipeline, loads the returned HTML into a real `jsdom` window with
+  `runScripts: 'dangerously'`, dispatches a genuine `click` `Event` on the rendered button, and
+  asserts the DOM text actually updated — not a mock. Also covers a warning-only diagnostic
+  (nullable access, still compiles), a fatal parse error (`fatal` field populated, `ok: false`,
+  no crash), and both input-rejection paths (empty / oversized source).
+- `package.json` — `crescent-compiler` as a `file:../compiler` dependency (resolves to
+  `compiler/dist/webPreview.js` once `compiler/` has been built — same requirement `editors/
+  vscode` already has), `esbuild`/`jsdom` versions matched to `compiler/package.json`'s own.
+- `vercel.json` — `outputDirectory: "public"`, registers `api/compile.js` as a function.
+- `README.md` — setup, the exact Vercel "Root Directory: playground" + build-command steps needed
+  because this is a monorepo, current scope limitations, and the "quick now, can migrate to a
+  published package (and possibly a separate repo) later" note the maintainer asked to have
+  written down.
+- Root `.gitignore`: added `.vercel/` (no per-package `.gitignore` inside `playground/` — matches
+  the existing convention that `compiler/` and `editors/vscode/` don't have their own either,
+  relying on the root one; `node_modules/` was already covered there).
+- `TODO.md`: new `# 11a. Web Playground` section (see it for the full list of what's explicitly
+  deferred: multi-file/`import` support, a real code editor, persistence beyond the URL, and the
+  eventual published-package migration).
+
+**Verification actually run** (not just "should work"): `cd playground && npm install` — resolved
+cleanly, including the `file:../compiler` local dependency. `npm test`
+(`scripts/test-compile.js`) — all assertions PASS, including the real jsdom click-and-verify.
+Also started `scripts/dev-server.js` and hit it with real `curl` requests: `GET /` and `GET
+/style.css` served correctly; a real `POST /api/compile` with a valid component returned a
+working preview HTML payload; `GET /api/compile` correctly returned 405; a malformed JSON body
+correctly returned 400; an unknown path correctly returned 404. Compiler's own full suite was
+re-run afterward to confirm the playground didn't disturb anything: `cd compiler && npm test` —
+211 PASS, 0 FAIL, unchanged.
+
+**Not verified** (couldn't be, in this environment): an actual Vercel deployment — no network
+access to vercel.com from this sandbox, so the `vercel.json` config and the README's deployment
+steps are written from documented Vercel conventions (Root Directory, zero-config `api/` function
+detection, `outputDirectory`) but have not been deployed and click-tested end-to-end on Vercel
+itself. Recommend the maintainer do one real deploy and confirm before treating this as fully
+proven.
+
+Not committed — see `crescent-web-playground.patch` for a transferable copy. The patch is large
+(a whole new subdirectory) but is one coherent unit — see `AGENTS.md` §15: this was treated as
+"one feature" (the playground), not combined with anything else.
+
+Before that: Latest session was a `TODO.md`-only planning session, at the maintainer's request: no code was
+changed. Added a new `Core Language Evolution` item, **"Additional loop forms & loop control"**,
+documenting a real, previously-untracked gap found by inspecting the parser/grammar directly (per
+`AGENTS.md` §3's "inspect the existing implementation" step): Crescent's only loop is the for-each
+`for (Type item in iterable)` form (`ForStatement`/`TemplateFor` in `docs/Crescent_Grammar.md`) —
+there is no traditional C-style counting `for`, no `while`/`do-while`, and confirmed via `grep`
+across `compiler/src/` that there is also no `break`/`continue` statement of any kind. Not designed
+or implemented — the new bullet lays out open questions per `AGENTS.md` §4 ("Do not invent language
+semantics"): whether a counting `for` belongs in `view {}` blocks at all given `TemplateFor`'s
+reactive identity comes from its `key` clause (a counting loop has no natural per-iteration
+identity to key on); per-iteration vs. shared loop-variable binding once closures exist; how
+`while`'s condition should interact with the already-tracked null-narrowing-through-`if` gap; and
+what `break`/`continue` mean for the existing for-each loop plus whether labeled variants are in
+scope for v0.x. Also reviewed the `Ecosystem, Runtime & Peripheral Ideas` list (the previous
+session's `num`/`float`/`double`/`decimal` additions) and the `Types` section's existing
+"Complete assignment compatibility" `[ ]` item to confirm neither already covered this — they
+don't; loops are an independent, previously-blank spot in the roadmap. `npm test` re-run to confirm
+the doc-only change didn't regress anything: 211 PASS, 0 FAIL, unchanged. Not committed — see
+`crescent-todo-loop-forms.patch` for a transferable copy (a single-file `TODO.md` diff; no source
+changed this session, so there is nothing to test beyond the "did the suite still pass" check
+above).
+
+Before that: Latest session picked up the specific follow-up the previous session's own `TODO.md` note
+prescribed: narrowing through `&&`/`||`-joined conditions. By this session's start, the
+else-branch narrowing fix (previous session) was already committed upstream (`acb11e0`). Renamed
+`narrowingTarget` (single `string | null` result) to `narrowingTargets` (returns `string[]`) and
+added a case that recurses into `Binary` nodes whose operator matches the branch's own combinator —
+`&&` for the `then` branch, `||` for the `else` branch, symmetric to the existing `!=`/`==`
+single-condition case — so `if (x != null && y != null) { ... }` narrows both `x` and `y` in the
+`then` branch, `if (x == null || y == null) { ... } else { ... }` narrows both in the `else` branch,
+and either recurses to any depth (`a != null && b != null && c != null` narrows all three). Both
+call sites (`checkStmts`'s `If` case and `checkTemplateNode`'s `TemplateIf` case) were updated
+identically — same shared-logic situation as the previous session's else-branch fix. A sibling
+condition that isn't itself a recognizable null-check (e.g. `second.length > 0` inside `first !=
+null && second.length > 0`) is deliberately left un-narrowed, matching the existing single-condition
+behavior of only narrowing operands that are themselves `!=`/`==` `null` comparisons (or bare
+identifiers, for `then`). 3 new fixtures: `guarded-nullable-and-then-branch-ok.crs` (positive, `&&`
+in both a function body and a view block), `guarded-nullable-or-else-branch-ok.crs` (positive, `||`
++ `else`, same two contexts), `guarded-nullable-and-partial-warns.crs` (negative, confirms the
+unguarded sibling of an `&&` still warns). `TODO.md`'s `Null Safety` section updated: the previously
+separate "Correct narrowing through logical conditions" `[ ]` item is now folded into "Flow-sensitive
+null narrowing" and "Correct narrowing through `if`" as done, with ternary narrowing and
+post-guard-clause reachability narrowing left as the explicitly open remaining items (unchanged from
+before — neither was touched this session). Also added two new, deliberately unstarted `TODO.md`
+items under `Core Language Evolution` at the maintainer's request: a Dart-style `num` numeric type
+(a common supertype of `int`/`float` for contexts that accept either), and a three-way
+`float`/`double`/`decimal` distinction (today Crescent only has a single `float` numeric type — see
+`docs/Crescent_Design.md` §2 "Primitives"). Neither was designed or implemented this session; both
+are flagged as open design questions per `AGENTS.md` §4's "Do not invent language semantics" rule —
+see `TODO.md` for the specific open questions each raises. Full suite: 211 PASS, 0 FAIL, up from
+208, no regressions. Not committed — see `crescent-null-safety-logical-narrowing.patch` for a
+transferable copy.
+
+Before that: Latest session audited `Null Safety`'s five open items — per its own previous session's "Next
+step" suggestion — the same way `Structs` was audited two sessions ago. By this session's start,
+the const-reassignment fix had already been committed upstream (`8625e74`). Found a real, genuine
+bug (not just a stale checkbox this time): `narrowingTarget` only ever narrowed the **consequent**
+branch of an `if`, for both statement-level `if` (`checkStmts`) and view-block `if`
+(`checkTemplateNode`'s `TemplateIf`) — so `if (x == null) { ... } else { <use x here> }`, exactly
+the pattern `docs/Crescent_Design.md` §11's own example shows as the intended safe usage (with `!=`
+instead of `==`, but symmetric), produced a false-positive "accessed without a null check" warning
+in the `else` branch. Fixed: `narrowingTarget` now takes a `branch: 'then' | 'else'` parameter and
+recognizes `==` for the `else` direction (symmetric to the existing `!=` for `then`); both `If` and
+`TemplateIf` now build a separate `alternateNarrow`/pass it to the `else` branch instead of reusing
+the un-narrowed outer `narrow`. Also discovered "Prevent invalid nullable access" was already fully
+implemented and unchecked (like three `Structs` boxes before it) — corrected that too. 2 new
+fixtures (one negative confirming the *then*-branch of `== null` still correctly warns, one positive
+covering the *else*-branch fix in both a function body and a view block). Full suite: 208 PASS, 0
+FAIL, up from 206, no regressions. Explicitly left open and documented in `TODO.md`: narrowing
+through logical `&&`/`||` conditions, narrowing through ternary expressions, and narrowing that
+should persist past an early-return guard clause — none of these were touched, each is its own
+separate piece of work. **Not committed** — see `crescent-null-safety-else-branch-narrowing.patch`
+for a transferable copy.
+
+Before that: picked up the small, well-scoped item the previous session had specifically flagged
+and spec'd out: **forbidding `const` reassignment**. By that session's start, "Assignment
+compatibility" (previous session) had already been committed upstream as `8c844f5`. Implemented
+exactly per the TODO note's own prescription: a `constNames: Set<string>` built alongside the
+existing `derivedNames` in `checkComponentDecl`, threaded through `checkStmts` the same way, and
+checked in `checkAssignmentTarget` for both an `Assignment` target and a `PostfixStmt` target (so
+`max_items++;` on a `const int` is caught too, not just `title = "x";`). Message: `Cannot assign to
+const '<name>'; it can only be set at declaration`. Had to update the previous session's own
+`correct-assignment-ok.crs` fixture — it had a `const` reassignment as a documented *passing* case,
+testing the old (buggy) permissive behavior, which is no longer true — replaced it with a `const`
+*read* instead, and added a new `const-reassignment-forbidden.crs` fixture covering both the
+`Assignment` and `PostfixStmt` paths. `TODO.md`'s note checked off with a short "fixed as spec'd"
+update. Full suite: 206 PASS, 0 FAIL, up from 205, no regressions (confirmed no real example
+anywhere reassigns a `const`). Committed upstream as `8625e74` ("feat: Add forbid const
+reassignment") between sessions.
+
+Before that: went back to hardening the checker after one language-feature session (struct
+destructuring, previous session — already committed upstream as `03158e7` by this session's
+start). Reviewed `Structs` and `Null Safety` for the next well-scoped item and found something
+worth a note before picking one: three of `Structs`' four open `[ ]` boxes — "Complete field
+validation," "Missing-field diagnostics," "Extra-field diagnostics" — were **already fully
+implemented** (`checkExpr`'s `StructLiteral` case, already exercised by
+`missing-struct-field.crs`/`unknown-struct-field.crs`) and just never checked off. Fixed the
+bookkeeping and picked the one real remaining gap: **Assignment compatibility**.
+
+Added type-checking for plain `=` reassignments (`total = "wrong";`), refactoring
+`checkLiteralTypeMatch` into a shared `checkValueTypeMatch` core so the new `checkAssignmentTypeMatch`
+reuses the exact same null/array-element logic with different wording. New `memberTypes` map in
+`checkComponentDecl`, threaded through `checkStmts`. **Deliberately scoped to component-level named
+members only** (`state`/`derived`/`provide`/`const`/`inject`/component params) — local variables,
+function parameters, and `obj.field = x` writes are explicitly out of scope, since `localScope` only
+tracks names (not types) for those, and extending it is a bigger refactor than this box needs. Only
+plain `=` is checked, not `+=`/`-=`/`*=`/`/=`. 4 new fixtures (3 negative, 1 positive covering
+correct/non-literal/compound/nullable/`const` reassignment — all of which should pass). Discovered,
+as a side effect of writing that positive fixture, that reassigning a `const` isn't forbidden by
+anything today; noted as a new, separate, well-scoped `TODO.md` item under Reactivity rather than
+fixed here (out of scope for a "type compatibility" task — that's a mutability question). Full
+suite: 205 PASS, 0 FAIL, up from 201, no regressions. Committed upstream as `8c844f5` ("feat: Add
+assignment compatibility") between sessions.
+
+Before that: picked a `TODO.md` §12 **language-feature** item — **struct destructuring** in
+local variable declarations — rather than continuing to hardened the checker, per §16's own note
+that three-plus hardening sessions in a row (return-type checking → array element checking →
+precise diagnostic messages, all previous sessions) is itself a signal to deliberately switch to
+real language design work. By that session's start, the precise-diagnostic-messages patch had
+already been committed upstream (`9b9f18a`), leaving §5 Types with no remaining `[ ]` boxes.
+
+New syntax: `Point { x, y } = current;` — declares `x`/`y` as new local variables read off
+`current`'s matching struct fields, including partial-field selection (`Point { x } = current;`).
+Scoped deliberately narrowly (local variable declarations only) with two related extensions —
+function-parameter destructuring and array destructuring — explicitly designed-and-deferred rather
+than silently out of scope; see `docs/Crescent_Design.md`'s new "Struct Destructuring" subsection
+for the reasoning. New AST `StructDestructure` statement; parser disambiguates it from both
+`VarDecl` and a `StructLiteral` expression by parse-attempt-and-restore, the same mechanism already
+used to disambiguate `VarDecl` from a plain assignment; checker reuses `StructLiteral`'s
+unknown-struct/struct-vs-component diagnostics plus a new unknown-field/duplicate-field check;
+codegen emits plain JS object destructuring, which works for free since Crescent structs already
+compile to plain JS objects. `docs/Crescent_Design.md` and `docs/Crescent_Grammar.md` (§2.5, §6,
+§10) both updated — design-doc-first, matching the string-interpolation session's approach. New
+example (`examples/struct_destructuring.crs`) plus its e2e test wired into `npm test`, 5 new checker
+fixtures, 6 new tests total (201 passing, up from 195, no regressions). `TODO.md`'s "Destructuring"
+bullet marked `[~]` (partial) with a note on exactly what's done and what's deliberately deferred.
+Committed upstream as `03158e7` ("feat: Add struct destructuring") between sessions.
+
+Before that: fixed the **"More precise diagnostic messages"** item (`TODO.md` §5 Semantic
+Checker → Types) — the last previously-open box in that section, and one that already had a fully
+specified fix written into the TODO note from an earlier session's sweep. By the time this session
+started, array element type checking (previous session's patch) had already been committed
+upstream (`dc9dd27`). `checkLiteralTypeMatch` now calls `typeIsResolvable` on the declared type
+before comparing it to the initializer, so `state<BogusType> x = "hello";` reports `Unknown type
+'BogusType'` instead of the more confusing `Type mismatch: declared as 'BogusType' but initialized
+with a 'string' value` — and only that one diagnostic, since the function returns immediately once
+`Unknown type` fires rather than also running the (now-redundant) `Type mismatch`/array-element
+checks. One new fixture (`unknown-state-type.crs`) plus a `test-checker.js` assertion that pins down
+the *exact* diagnostic count (1), not just the message's presence, since the suppression behavior
+is the actual point of the fix. Committed upstream as `9b9f18a` ("feat: Add precise diagnostic
+messages") between sessions.
+
+Before that: implemented **array element type checking** (`TODO.md` §5 Semantic Checker →
+Types), the next unchecked item after function return-type checking (which itself had already been
+committed to `develop` — `b0b00e5` — by the time this session started; this session's own prior
+patch had been applied and merged upstream). Added `checkArrayElements()` in `checker.ts`: walks
+every element of an array literal (recursively for nested array literals) once the expected type is
+known to be (or unwrap to) an `ArrayType`, catching a mismatched element or a disallowed `null`
+element at *any* index — a real gap, since `inferLiteralType`'s existing array-type inference only
+looks at `elements[0]`, so e.g. `int[] x = [1, 2, "three"]` previously passed the top-level
+type-match check undetected. Wired into all four existing call sites that already do
+literal-type-matching (`checkLiteralTypeMatch`, `checkCallArgs`, `checkAttributeTypeMatch`,
+`checkReturnStmt`), each guarded to only run after its own existing top-level check passes. Four
+new fixtures + `test-checker.js` cases (194 total tests, up from 190, all passing, no regressions).
+`TODO.md` checked off with an implementation note. Committed upstream as `dc9dd27` ("feat: Add
+array element checking") between sessions.
+
+Before that: implemented **function return-type checking** (`TODO.md` §5 Semantic Checker →
+Types), the next unchecked item in that section after argument/prop-type checking. Added
+`checkReturnStmt()`/`ReturnContext` in `checker.ts`: each `return` statement inside a `FunctionDecl`
+body (including nested `if`/`for` blocks) is now validated against that function's declared return
+type — a `void` function returning a value, a non-`void` function's bare `return;`, a
+literal-shaped value of the wrong type, and a `null` return against a non-nullable type are all
+flagged. Threaded through a new optional `returnCtx: ReturnContext | null` parameter on
+`checkStmts()`, defaulting to `null`; `on_mount`/`on_change` bodies still call `checkStmts()`
+without it, so they remain unaffected (lifecycle-block validation is a separate, still-unstarted
+TODO item). Same literal-shaped-only limitation as the existing arg/prop/struct-field checks: a
+`return someVar;` with a non-literal expression is left unchecked. Added four negative fixtures
+(`wrong-return-type.crs`, `missing-return-value.crs`, `void-return-with-value.crs`,
+`null-return-not-nullable.crs`) and one positive regression fixture (`correct-return-ok.crs`,
+covering a matching nullable return and an early bare `return;` inside a `void` function), plus
+matching `test-checker.js` cases. `TODO.md`'s "Function return-type checking" line checked off with
+a note. Committed upstream as `b0b00e5` ("feat: Add return type checking") between sessions.
+
+Before that: implemented **string interpolation** end to end — the first real
+`TODO.md` §12 "Core Language Evolution" item picked up under the "important, not urgent, alternate
+with hardening" framing from the previous session. A `string` literal can now embed `{ Expression }`
+directly (`"Hello, {name}!"`), in any context a string literal appears (expressions, `view {}` text,
+attribute values), with `\{`/`\}` as literal-brace escapes. See the top "Latest session" entry in
+"Session Log" for the full design/implementation writeup. 6 new `npm test` cases (2 checker
+fixtures + 4 e2e assertions), 185 total, all passing. `docs/Crescent_Grammar.md` and
+`docs/Crescent_Design.md` both updated — this is the first session where a `TODO.md` §12 language
+feature went from idea to a documented, implemented, tested part of the language, not just a
+roadmap entry.
+
+Before that: documentation-only — restructured `TODO.md`
+§12 around ten maintainer-supplied core-language-evolution ideas (string interpolation,
+destructuring, tuples, enums/ADTs, pattern matching, exhaustiveness diagnostics, first-class
+function types, generics, interfaces/traits, broader type-system polish), framed explicitly as
+"important, not urgent" with a note that hardening work (the last several sessions) shouldn't
+indefinitely crowd it out. 179 total tests at that point (see the next "Older session" entry).
+
+Before that: finished sweeping every `typeIsResolvable(...)` call site in `checker.ts` for
+fixture coverage. Added tests for three untested paths (component-level param type, struct field
+type, `inject<T>` type) and flagged (but did not fix) that `state`/`derived`/`provide`/`const`
+declared types are never checked for existence, only compared against their initializer. 179 total
+tests at that point (see further "Older session" entries).
+
+Before that: added checker-level tests for the `Cannot assign to derived` and direct-property-
+write-forbidden diagnostics, which previously were only exercised indirectly via `codegen.ts`'s
+own separate `CodegenError` checks — flagged (but did not fix) that codegen still duplicates both
+rules independently of the checker. 176 total tests at that point (see further "Older session"
+entries).
+
+Before that: added regression-test coverage for several semantic-checker diagnostics that were
+already implemented but untested/marked unstarted in `TODO.md` (component existence/prop/
+declaration checking, general undefined-name diagnostics). 174 total tests at that point (see
+further "Older session" entries).
+
+Before that: a documentation-only session organized an externally-sourced set of future-direction
+ideas into `TODO.md` and fixed a stale `README.md` bullet (see further "Older session" entries).
+
+Before that: `Crescent: Preview` for the VS Code extension (`editors/vscode/`) — a
+`compiler/src/webPreview.ts` builds a project and bundles its previewable components (via
+`esbuild`) into a single HTML page, `require()`d in-process by a `crescent.preview` command
+that opens/reloads a webview panel, plus a `crescent.previewInBrowser` command
+("Crescent: Open Preview in Browser") that builds the identical HTML but opens it in a real
+system browser tab instead. The generated page has no "Crescent Preview"/component-name/file-path
+chrome above each mounted app (just the rendered component(s)), `.crs` files get a file icon
+(`editors/vscode/icons/crescent-logo.svg`), the preview page's own wrapper boxes (skipped-files/
+bundling-failure/empty-project messages) are scoped to a `.crs-preview-box` class instead of a
+bare `section` selector (so a user's own `<section>` in their view no longer picks up an unwanted
+border), and tag punctuation (`>`/`/>`) in the TextMate grammar is now colored consistently with
+`<`/`</` instead of like the `>`/`>=` comparison operator. All of the above is committed — see
+"Last Completed Work"/"Session Log" for exactly which commit introduced which piece. Choose the
+next item from `TODO.md` before beginning new work — the maintainer's stated plan was CLI → VS Code
+support → real project testing → broader language features (enum, match, etc); there is no
+"playground" step (an earlier session's summary of this plan mentioned one, which was
+inaccurate — corrected here). Continuous/on-change diagnostics, multi-root diagnostic
+partitioning, and the LSP replacement (`TODO.md` §10) are also still open if the maintainer
+wants more VS Code work first. `TODO.md` itself grew substantially this session (see below) with
+longer-term items (dev server/HMR/incremental compilation, `Result`/pattern matching, a typed-AST
+architecture note, etc.) — none of it changes near-term priority, which remains the semantic
+checker per `TODO.md` §16.
+
+---
+
+## Repository Reality
+
+Crescent currently contains:
+
+- a handwritten lexer;
+- a recursive-descent parser;
+- an AST;
+- multi-file module resolution;
+- a semantic checker;
+- JavaScript code generation;
+- a reactive runtime;
+- example `.crs` programs;
+- compiler and browser/DOM smoke tests.
+
+Important documentation:
+
+- `docs/Crescent_Design.md`
+- `docs/Crescent_Grammar.md`
+- `compiler/README.md`
+
+The design and grammar documents should be consulted before changing language behavior.
+
+---
+
+## Last Completed Work
+
+### Feature
+
+`Crescent: Preview` for the VS Code extension (`TODO.md` §10 "Near-Term VS Code Enablement", the
+last unstarted bullet besides continuous diagnostics and the LSP replacement — the maintainer's
+explicit next step, requested via a plain "continue"), plus a same-session follow-up requested by
+the maintainer after reviewing it. Three parts:
+
+**1. `compiler/src/webPreview.ts` — the compiler-side build/bundle engine, kept independent of the
+extension so it's directly unit-testable:**
+- `buildPreviewHtml(root, outDir)` calls `buildProject()` (the same `project.ts` API `cli.ts` and
+  the diagnostics feature already use), then bundles each successfully-compiled file with
+  `esbuild` (`bundle: true, format: 'iife'`, one unique `globalName` per file) — the same approach
+  `scripts/build-web.js` already used for `compiler/examples/`, generalized to an arbitrary
+  project root instead of a hard-coded target list.
+- **Which components get mounted:** only top-level components declared with **zero parameters**.
+  A component that takes parameters (e.g. `component Card(Point origin)`, `component
+  Greeting(string name)`) exists to be used as `<Card origin={...}>`/`<Greeting name="...">` inside
+  another component's view — the preview has no value to supply for `origin`/`name`. This isn't a
+  guess: it was verified against every `.crs` file in `compiler/examples/` to match, component-for-
+  component, the hand-picked target list `scripts/build-web.js` already used (`Counter`,
+  `DayPicker`, `ThemeToggle`, the composition/provide_inject/modules `App`s, `TaskBoard`, `Cart`,
+  `TodoList`, `TaskList`, `NumberList`, `Header` all have zero params; `Greeting` and the
+  `modules/components/card.crs` `Card(Point origin)` are the only excluded ones).
+- **Mount-time failure isolation:** a zero-param component can still fail once mounted standalone —
+  most notably `inject<T>` (design doc §12) with no ancestor `provide<T>`, since a preview root by
+  definition has no ancestors (`provide_inject.crs`'s `DeepNestedWidget` and `Dashboard` both hit
+  this). Detecting that *transitively* — including through components nested arbitrarily deep in
+  the view tree — is a real dataflow analysis, not something to bolt onto a preview-bundling tool
+  in the same session. Instead, each mount call in the generated HTML is wrapped in its own
+  try/catch: a failing root shows an inline "Preview error: ..." message in its own section,
+  console-logs the real error, and does not prevent any other root on the page from rendering.
+  This was a real bug caught by testing, not a decision made up front — see "Manual verification".
+- A file that fails semantic checking is skipped for codegen exactly the way `buildProject()`
+  already skips it for **Build**; skipped files are listed under a "Skipped files" section at the
+  top of the preview page (with the checker's own message) instead of silently vanishing. If
+  *every* file fails, the result is a valid, empty preview page saying so — not a thrown error.
+- A **fatal** error (parse/lex, or a module-level error like an import cycle) has no partial output
+  to bundle, same as `FatalDiagnostic` in the diagnostics feature — `buildPreviewHtml()` returns
+  `{ ok: false }` in that case rather than throwing or producing broken HTML.
+
+**2. The `crescent.preview` command, in `editors/vscode/src/extension.js`:**
+- `findWebPreviewModulePath()`/`loadWebPreviewModule()` mirror the existing
+  `findProjectModulePath()`/`loadProjectModule()` pattern exactly (same `crescent.cliPath`/
+  `findDistDir()` resolution, same in-process `require()` rationale, same bare-command limitation
+  and same Node module-cache dev-loop caveat) — resolving to `webPreview.js` instead of
+  `project.js`.
+- Compiles into `<root>/<crescent.outDir>/preview` — nested under the existing `crescent.outDir`
+  setting rather than a new setting, so it never collides with a **Build** run's own `gen/`/
+  `runtime.js` in the same directory.
+- On first run, opens a `vscode.WebviewPanel` (`enableScripts: true`); on subsequent runs, replaces
+  that panel's `webview.html` in place and reveals it, rather than opening a second panel —
+  verified with a mock-`vscode` harness (see "Manual verification").
+- Saving or opening a `.crs` file also triggers this same rebuild-and-replace, but with
+  `reveal=false` (doesn't steal focus from the editor while typing) and **only** when a preview
+  panel is already open **and** was built from the same project root as the saved/opened document
+  — so a save in a different open project (multi-root workspace) can't silently swap out what an
+  unrelated open preview panel is showing.
+- The `crescent.preview` command handler and the save/open-triggered refresh both call (and, for
+  the command, `return` — see "Manual verification" for why this mattered) the same
+  `refreshPreview(root, reveal)` helper, keeping the "open" and "reload" paths from drifting apart.
+- `editors/vscode/README.md`: added a "Preview" section covering all of the above (what gets
+  mounted and why, mount-failure isolation, skipped-files/fatal-error reporting, panel reuse and
+  the save-triggered reload's scoping, and the honest limitation that a reload replaces the whole
+  webview rather than doing a real hot-module-reload — so a previewed component's local state, like
+  a `Counter`'s count, resets on every save); updated the intro bullet list, the `cliPath`/`outDir`
+  settings notes, and "Known limitations" (removed the now-stale "no `Crescent: Preview` command
+  yet" bullet, added the HMR/state-reset one in its place).
+- `compiler/README.md`: added `src/project.ts`, `src/webPreview.ts`, and
+  `scripts/test-preview.js` to the structure list (the first was previously undocumented there
+  despite already existing; the other two are new this session).
+- `TODO.md`: checked off the `Crescent: Preview` bullet under §10 with a pointer to what it covers
+  and its known HMR/state-reset trade-off.
+
+**3. A same-session follow-up, requested directly by the maintainer after reviewing the panel-only
+version:** a second command, `crescent.previewInBrowser` ("Crescent: Open Preview in Browser"),
+for seeing the preview as a genuine browser tab rather than a VS Code webview panel. Required no
+new compiler-side work — `buildPreviewHtml()`'s output was already a self-contained HTML string
+with no webview-specific assumptions baked in. In `extension.js`:
+- Extracted the shared "load `webPreview.js`, call `buildPreviewHtml()`, report any failure via
+  `showErrorMessage()`" logic out of `refreshPreview()` into a new `buildPreviewResult(root)`
+  helper, so both commands agree on exactly what counts as a build failure and how it's reported,
+  instead of duplicating that error-handling.
+- `openPreviewInBrowser(root)`: writes the built HTML to
+  `<root>/<crescent.outDir>/preview/index.html` (same `previewOutDir` `buildProject()` already
+  wrote the compiled `gen/`/`runtime.js` into, so no new directory-creation logic was needed —
+  `fs.mkdirSync(..., { recursive: true })` inside `project.ts` already guarantees it exists by the
+  time this runs) and opens it via `vscode.env.openExternal()` — a real `file://` page outside the
+  webview's sandbox/CSP.
+- Deliberately **not** wired to the save/open auto-reload `refreshPreview()`'s panel gets: there's
+  no live connection to an already-open external browser tab to push a reload into, so it's
+  documented as a one-shot "build now, open now" — rerunning the command rewrites the same file
+  and re-invokes the OS's "open" on it, and whether that refreshes an already-open tab is up to the
+  browser/OS, not something this extension can control.
+- `editors/vscode/README.md`: new "Opening it in a real browser" subsection under "Preview", an
+  intro bullet, and a "Known limitations" bullet for the no-auto-reload trade-off.
+- `TODO.md`: extended the `Crescent: Preview` bullet's note to mention this second command rather
+  than adding a new bullet, since it's the same TODO item ("opens ... the browser output") — this
+  command is arguably a more literal reading of that original wording than the webview panel is.
+
+**4. Two more follow-ups, requested after the maintainer committed and actually looked at the
+rendered output — not yet committed as of this writing:**
+- **Removed the preview page's debug chrome.** The generated page used to open with a visible
+  `<h1>Crescent Preview</h1>`, then a `<h2>{ComponentName}</h2>` and a `<p>{file path}</p>` above
+  every mounted component — useful while eyeballing a dozen unrelated `compiler/examples/`
+  components at once, but wrong for a single real project: it just reads as clutter above your
+  actual app. `compiler/src/webPreview.ts` now emits a bare `<div id=... data-crescent-component=
+  "..." data-crescent-file="...">` for each mount instead — the component/file mapping survives
+  (visible in devtools, or `grep`-able in the HTML source) but isn't printed on the page.
+  `<title>Crescent Preview</title>` (the browser **tab** title, not on-page text) was left as-is.
+  Skipped-files/bundling-failure/empty-project messaging is untouched — those are real diagnostics,
+  not decorative chrome, and only ever render when actually relevant. `body`'s margin dropped to
+  `0` so a single mounted app isn't padded away from the page edge the way a real deployment
+  wouldn't be either.
+- **A file icon for `.crs` files**: `assets/crescent-logo.svg` (repo root) copied into
+  `editors/vscode/icons/crescent-logo.svg` — copied rather than referenced via a `../../` path so
+  the extension stays self-contained if it's ever packaged/published standalone outside this
+  monorepo — and wired up via `contributes.languages[0].icon` (`{ light, dark }`, both pointing at
+  the same file) in `package.json`. This is VS Code's own documented mechanism for exactly this
+  (https://code.visualstudio.com/api/extension-guides/file-icon-theme), present well before this
+  extension's `engines.vscode: ^1.75.0` floor, so no version bump was needed. One real caveat,
+  from that same doc, recorded in `editors/vscode/README.md`'s new "File icon" section: a
+  language's `icon` is only a **fallback** — it's shown only when the person's active File Icon
+  Theme doesn't already define its own icon for that file (by extension/filename/language ID). In
+  practice this means it'll show for effectively everyone, since no theme has ever heard of `.crs`
+  — but there's no VS Code API to force it to win over an active theme's own choice if one is ever
+  added, and that's deliberate on VS Code's end, not a gap here.
+
+### Manual verification
+
+Extended the existing mock-`vscode` approach (from the diagnostics session) with a minimal
+`WebviewPanel`/`createWebviewPanel` mock, plus a real, committed automated test
+(`compiler/scripts/test-preview.js`, wired into `npm test`) for the compiler-side half:
+
+- **`buildPreviewHtml()` against `compiler/examples/`**: asserts every expected zero-param root
+  (`Counter`, `DayPicker`, `ThemeToggle`, `App` ×3, `TaskBoard`, `Cart`, `TodoList`, `TaskList`,
+  `NumberList`, `Header`) is mounted, the two prop-taking components are not, there are zero
+  bundling errors, and — via `jsdom` with real script execution — that `Counter` actually renders
+  ("Current Count: 0") and increments on a simulated click ("Current Count: 1") inside the *actual
+  generated preview page*, not just the underlying component module directly.
+- **The inject-without-provider case**: the same `jsdom` page asserts `DeepNestedWidget`'s mount
+  shows the `crs-preview-mount-error` class (confirming the try/catch path fires) **and** that
+  `Counter` still incremented correctly on the same page — proving one failing root doesn't take
+  down the others. This test is what caught the crash in the first place: the initial
+  implementation had no try/catch, so `provide_inject.crs`'s `DeepNestedWidget`/`Dashboard` roots
+  threw during mount and crashed the whole page's `DOMContentLoaded` handler, silently breaking
+  every other mount call queued after them.
+- **All-semantic-errors project**: a throwaway project with a single type-mismatch-only file still
+  produces `{ ok: true }` with zero mounts and the broken file listed under `builds` with
+  `outFile === null` — not a thrown exception.
+- **The VS Code command, via mock-`vscode`**: ran `crescent.preview` against the real
+  `compiler/examples/` — a webview panel was created with the expected title, its HTML contained
+  the expected mount IDs for both `Counter` and the composition example's `App`; running the
+  command a **second** time confirmed exactly one panel exists (not two) and `reveal()` was called
+  on it. This surfaced a real bug: the command handler didn't `return` the promise from
+  `refreshPreview()`, so `await`ing the command resolved before the build actually finished —
+  harmless in real VS Code (which doesn't wait on a void-returning command either way) but flagged
+  as worth fixing anyway, since a command handler that *can* return its promise should, for any
+  caller (including a future test) that does want to await completion. Fixed by returning it.
+- **The fatal-error path**: ran the command against a project with an unterminated `view {` block
+  — zero panels created, `showErrorMessage` called with the parser's real message
+  (`Expected a template node inside view block at line 3 (got EOF '')`), not a bare "unknown
+  error". This caught a second real bug: the code originally read `result.build.fatal` instead of
+  the correctly-nested `result.build.check.fatal`, which silently produced "unknown error" for
+  every fatal case. Fixed, then re-verified.
+- `node --check editors/vscode/src/extension.js` — no syntax errors.
+- Full compiler regression: `npx tsc --noEmit` and `npm test` (168 PASS, up from 145 — the 23 new
+  assertions are `test-preview.js`; every pre-existing assertion still passes unchanged).
+- **`crescent.previewInBrowser`, via mock-`vscode`** (extended with an `env.openExternal` mock):
+  ran it against `compiler/examples/` — no webview panel was created, `openExternal` was called
+  exactly once with a `file://` path under `<root>/dist/preview/index.html`, and that file's
+  actual on-disk contents contained the expected `Counter` mount ID, matching what the panel
+  command would have shown. Ran it a second time to confirm it doesn't accumulate a second target
+  or error — same path both times. Ran it again against the same unterminated-`view{`-block
+  project used for the panel's fatal-error check: no file was written, no `openExternal` call was
+  made, and the same real parser message surfaced via `showErrorMessage` — confirming the shared
+  `buildPreviewResult()` extraction didn't change either command's fatal-error behavior. No new
+  automated test was added for this follow-up (only manual verification, as above) — the extracted
+  `buildPreviewResult()` has no new *compiler-side* logic to unit-test; it's a thin VS Code-side
+  wrapper around the already-tested `buildPreviewHtml()`.
+- **Chrome removal**: inspected `buildPreviewHtml()`'s actual output against `compiler/examples/`
+  directly (not through the mock-`vscode` harness) — confirmed no literal `<h1>Crescent
+  Preview</h1>` or any `<h2>` remains anywhere in the generated HTML, and that
+  `data-crescent-component="Counter"` is present on its mount `<div>`. Re-ran the full
+  `test-preview.js` suite unmodified — still 168 PASS, since its `Counter` assertions query
+  `counterRoot.querySelector('h1')` for the `<h1>` the *component itself* renders inside its own
+  view, which is unrelated to (and unaffected by) the page-chrome `<h1>` that was removed. Re-ran
+  both the panel and browser-open verifications end-to-end against the new HTML shape — both still
+  create/write correctly.
+- **File icon**: `python3 -c "import json; json.load(...)"` confirmed `package.json` is still valid
+  JSON after the `icon` addition; confirmed `editors/vscode/icons/crescent-logo.svg` is byte-
+  identical to `assets/crescent-logo.svg`. Could not visually confirm the icon actually renders in
+  a live VS Code Explorer pane — that needs an actual VS Code window (or `@vscode/test-electron`),
+  neither of which this environment can run; this is a real, documented gap in verification, not
+  something resolved silently. The mechanism itself (`contributes.languages[].icon`) is confirmed
+  against VS Code's own extension API documentation, not assumed from general knowledge.
+
+### Files changed
+
+- `compiler/src/webPreview.ts` (`buildPreviewHtml()`; this round removed its page-chrome
+  `<h1>`/`<h2>`/path-paragraph output, replacing it with invisible `data-*` attributes on each
+  mount `<div>`)
+- `compiler/scripts/test-preview.js` (wired into `npm test`)
+- `compiler/package.json` (`test` script now runs `test-preview.js`)
+- `compiler/README.md` (structure list: `src/project.ts`, `src/webPreview.ts`,
+  `scripts/test-preview.js`)
+- `editors/vscode/src/extension.js` (`crescent.preview`/`crescent.previewInBrowser` commands,
+  `refreshPreview()`/`openPreviewInBrowser()`/`buildPreviewResult()`,
+  `findWebPreviewModulePath()`/`loadWebPreviewModule()`, webview panel state, save/open-triggered
+  reload)
+- `editors/vscode/package.json` (registered both preview commands; this round added
+  `contributes.languages[0].icon` pointing at the new `icons/crescent-logo.svg`)
+- `editors/vscode/icons/crescent-logo.svg` (new this round — copy of `assets/crescent-logo.svg`)
+- `editors/vscode/README.md` ("Preview" section plus its "Opening it in a real browser"
+  subsection, a new "File icon" section, updated intro/settings/"Known limitations", and a
+  "three commands" → "four commands" count fix left stale by the previous round)
+- `TODO.md` (checked off the `Crescent: Preview` bullet, noting the browser-open follow-up)
+- `HANDOFF.md`
+
+---
+
+## Tests
+
+### Last type-check and full suite
+
+```text
+cd compiler && npx tsc --noEmit
+-> no errors
+
+cd compiler && npm test
+-> 168 PASS, 0 FAIL, exit code 0 (up from 145 — 23 new assertions from
+compiler/scripts/test-preview.js, added this session; every pre-existing assertion still passes
+unchanged)
+```
+
+No automated suite exercises `editors/vscode/` — see "Manual verification" above for what was
+checked by hand instead (now covering the `Crescent: Preview` command too, not just Check/Build/
+diagnostics), and "Recommended Next Step" for a real, committed test harness as a worthwhile
+follow-up.
+
+---
+
+## Important Decisions
+
+Record decisions here when they affect future implementation.
+
+Current known design constraints:
+
+- Crescent is explicitly typed.
+- `state<T>` provides reactive state.
+- Reactivity is intentionally shallow for objects.
+- Reactive collections have special mutation behavior.
+- `derived<T>` is lazy/pull-based.
+- Components use `view {}` blocks.
+- Styling uses component-scoped `style {}` blocks.
+- JavaScript is the current v0.x compilation target.
+- v1.0 requires a trustworthy semantic checker and a real editor/LSP experience.
+
+For details, see `docs/Crescent_Design.md`.
+
+---
+
+## Known Problems
+
+Keep only currently relevant problems here.
+
+### Documentation consistency
+
+Resolved this session: `compiler/README.md`'s "Running" section and "Semantic Checker" → "What it
+checks" list were out of sync with the implementation (see "Last Completed Work" above for the
+specific fixes). Re-check this periodically as the checker grows — it's easy for a new check to
+land in `checker.ts` without a matching README bullet.
+
+### Other
+
+- `Crescent: Preview` (this session) mounts a zero-param component standalone even when it (or
+  something nested inside its view, arbitrarily deep) declares `inject<T>` with no ancestor
+  `provide<T>` — a preview root has no ancestors by construction, so this always fails at mount
+  time. It's caught per-mount (an inline "Preview error" instead of crashing the page — see "Last
+  Completed Work"), not prevented; detecting it statically would need to trace `provide`/`inject`
+  through the whole component-nesting graph, which is a real, separate analysis task, not
+  something to fold into a preview-bundling tool. Also: a preview reload replaces the entire
+  webview HTML rather than doing a real hot-module-reload, so a previewed component's own local
+  `state<T>` (e.g. a counter's current count) resets on every save — a real, documented trade-off
+  of the "just replace the panel" approach, not an oversight.
+- `Crescent: Open Preview in Browser` (follow-up, this session) has no equivalent of the panel's
+  save-triggered auto-reload — there's no live connection to an already-open external browser tab
+  to push a reload into, so it's a one-shot "build now, open now" and the person has to refresh
+  the tab themselves after re-running the command.
+- `callback_param.crs` isn't wired into `build-web.js`/`test-web.js`, so `void()` callback params
+  are checked and code-generated (verified by hand) but not yet exercised by a real-browser DOM
+  click test. Would be a reasonable small follow-up if `void()` params become more widely used.
+- The `void()` marker is still a narrow special case, not a real function-type feature — there is
+  no grammar production for it, and no support for callback shapes with parameters or return
+  values (e.g. `void(int)`). Formalizing function types as a real `CrescentType` variant (rather
+  than a magic-string `NamedType`) is a larger, separate design task, not attempted here.
+- Component prop type checking (prior session) has the identical literal-shaped-only limitation:
+  `checkAttributeTypeMatch` only flags a mismatch when the attribute is a plain string or an
+  expr-attribute whose value is a literal; a variable, call, or arithmetic-expression prop value
+  (by far the most common case — e.g. `<UserCard user={user}/>`) is not type-checked.
+- Argument/prop type checking, like every other type-compatibility check in this file, only covers
+  literal-shaped values (`inferLiteralType` returns `null`, and is silently skipped, for a
+  variable, a call, or an arithmetic expression). This is a pre-existing limitation of the whole
+  checker, not something new — "Complete assignment compatibility" and general type inference
+  remain open `TODO.md` items. Closing this properly would need a real expression type-inference
+  pass (tracking declared types for identifiers/derived/state through `scope`, not just literals),
+  which is a materially bigger task than any single session so far and should be scoped
+  deliberately rather than folded into the next narrow fixture-driven task.
+- Duplicate declaration diagnostics (this session) checks name collisions in four specific
+  positions (top-level decls within one file, struct fields, component params+members combined,
+  and function params). It does *not* yet cover: duplicate names across module boundaries (e.g.
+  two `use`-imported names colliding with each other or with a local declaration — "Cross-module
+  symbol resolution" is a separate, still-open `TODO.md` item); duplicate `for`-loop item names
+  shadowing an outer binding (shadowing is allowed by design in most languages and wasn't treated
+  as an error here); or duplicate local `VarDecl` names within a function body (not attempted this
+  session — would need `checkStmts` to track declared-so-far names per block, which the current
+  `localScope: Set<string>` passed to `checkStmts` doesn't distinguish from "declared in an outer
+  scope" vs. "declared earlier in this exact block").
+
+---
+
+## Unfinished Work
+
+_No active unfinished implementation. This session's `Crescent: Preview` command
+(`compiler/src/webPreview.ts` + `editors/vscode/src/extension.js`'s `crescent.preview`) is
+complete, covered by a new committed automated test (`compiler/scripts/test-preview.js`, in
+`npm test`) for its compiler-side half, and manually verified end-to-end for the extension half —
+see "Last Completed Work" above. Continuous/on-change diagnostics, multi-root diagnostic
+partitioning, and the LSP replacement (`TODO.md` §10) remain unstarted — deliberately out of scope
+this session per `AGENTS.md` §15 ("do not begin a second major feature")._
+
+---
+
+## Recommended Next Step
+
+1. Read `TODO.md`.
+2. **The maintainer's stated order was: CLI → VS Code support → real project testing → broader
+   language features (enum, match, etc)** (there is no "playground" step — an earlier session's
+   summary of this plan mentioned one, which was inaccurate; corrected here and in "Current
+   State" above). CLI, a first VS Code extension, in-editor diagnostics, and now
+   `Crescent: Preview` are all done (see "Last Completed Work" above and the session log below).
+   Remaining unstarted bullets in `TODO.md`'s "Near-Term VS Code Enablement (v0.x)":
+   - **Diagnostics on document changes** (continuous/incremental checking), not just save/open.
+     Would need debouncing (don't re-run `checkProject()` on every keystroke) and, since
+     `checkProject()` currently only reads from disk, either writing changed buffers to a temp
+     location before checking or teaching `loadAllPrograms()`/`checkProject()` to accept in-memory
+     file contents for the currently-edited document(s) — the latter is more invasive and was
+     explicitly *not* attempted in the diagnostics session (see its in-process `project.js`
+     approach, which still shells out to disk).
+   - **LSP replacement** — the plan's own note is to defer this until the diagnostic model has
+     stabilized; three sessions of hand-verified/tested VS Code tooling (diagnostics, then preview)
+     is a reasonable point to start considering it, but there's no urgency while the extension's
+     current process/in-process-`require()` approach still works.
+   - **Multi-root workspace diagnostic partitioning** (see `editors/vscode/README.md`'s
+     "Diagnostics" section) — currently, saving in one project's folder clears diagnostics for a
+     different open project until it's re-saved. Scope the `DiagnosticCollection` per project root
+     (e.g. key entries by root, or run `checkProject()` for every currently-open root on each save)
+     rather than doing one global clear-and-repopulate. Note this session's `crescent.preview`
+     command has the analogous scoping already (a save only reloads a preview panel built from the
+     *same* root) — the diagnostics fix could follow the same pattern.
+3. A worthwhile small addition, independent of the above: a real, committed test harness for
+   `cli.ts` and the rest of `editors/vscode/` (this session added one for the compiler-side half of
+   `Crescent: Preview` — `compiler/scripts/test-preview.js` — but `cli.ts` itself and the
+   extension's diagnostics/command-wiring logic are still only verified by hand across three
+   sessions now — see "Manual verification" in "Last Completed Work" above). Options, roughly in
+   order of effort:
+   - A script-based smoke test for `cli.ts` itself, following the existing
+     `compiler/scripts/test-*.js` convention: spawn `node dist/cli.js check/build <fixture-dir>
+     --out-dir <tmp>` via `child_process` and assert on stdout/exit code for a valid project, a
+     semantic-error project, and a parse-error project (use a temp dir under `os.tmpdir()`, not a
+     committed fixture, since this is exercising filesystem I/O, not checker behavior). Now that
+     fatal errors carry a file, also assert the `<file>: <message>` prefix appears.
+   - A grammar-tokenization test for `editors/vscode/syntaxes/crescent.tmLanguage.json`, using
+     `vscode-textmate`/`vscode-oniguruma` (not currently a dependency anywhere in this repo — would
+     need adding, presumably as a devDependency of a new `editors/vscode/package.json` "test"
+     script) to tokenize `compiler/examples/*.crs` and assert on a few key scopes. This is exactly
+     the manual check a previous session did by hand in a scratch directory; committing it as a
+     real test would catch a regression like the `state<int>`-mistaken-for-a-tag bug that session
+     found and fixed, before it ships next time.
+   - A script-based smoke test for `extension.js`'s diagnostics **and** preview command logic,
+     committing the mock-`vscode` approach both sessions have built up by hand
+     (`DiagnosticCollection`/`Diagnostic`/`Range`/`Uri`/`WebviewPanel` mocks) as a real fixture
+     rather than a throwaway scratch directory each time.
+   - A real VS Code extension test (`@vscode/test-electron`) is the most thorough option but the
+     heaviest to set up; now that the extension's feature set has settled more (Check, Build,
+     diagnostics, and Preview are all in), this is a reasonable point to consider it if VS Code
+     work continues being the priority.
+4. If VS Code/testing work is deferred, the semantic checker (`TODO.md` §16 "Current Priority
+   Order") is the other standing priority:
+   - **"Undefined-name diagnostics"** (Scope/Names) is worth checking against the current
+     implementation before assuming it's unstarted — `checkExpr`'s `Identifier` case already
+     reports `Undefined identifier 'name'` for unresolved identifiers in expressions, and
+     `OnChangeDecl` separately checks its watched names. It's plausible this TODO item is already
+     substantially done and mostly needs verification/regression tests rather than new code.
+   - Extending duplicate-declaration checking to local `VarDecl`s within a single block (see "Known
+     Problems" below) would be a small, coherent follow-on.
+   - The remaining Types-section items (assignment compatibility, array elements, function-type
+     compatibility) all fundamentally need a real expression type-inference helper — consider
+     scoping that inference helper as its own small unit before building more callers on top of it.
+5. Keep diagnostics honest and source-backed: parser/module/codegen failures must remain distinct
+   from semantic diagnostics, and incomplete checking must not be presented as full type safety.
+6. Read the relevant design/grammar sections.
+7. Inspect the existing implementation.
+8. Implement the task.
+9. Run tests.
+10. Update this file.
+11. Commit the completed unit if appropriate.
+
+---
+
+## Session Log
+
+### Latest session
+
+**AI:** Claude
+
+**Task:** Continuing from the previous session (its diff already committed upstream as `8625e74`
+by this session's start). That session's own "Next step" note listed auditing `Null Safety` first,
+since the same "maybe already done, just unchecked" possibility found in `Structs` (two sessions
+ago) hadn't been ruled out there. Did exactly that: read every line of `narrowingTarget` and its
+call sites in `checkStmts`'s `If` case and `checkTemplateNode`'s `TemplateIf` case before assuming
+anything about what the five `Null Safety` boxes did or didn't cover.
+
+**Result:** One box was indeed already fully done and just unchecked — "Prevent invalid nullable
+access" (`checkExpr`'s `Member`/`Index` cases already warn on an unguarded nullable access,
+exercised by `unguarded-nullable.crs`) — corrected that checkbox the same way three `Structs` boxes
+were corrected earlier. But this audit also turned up something the `Structs` audit didn't: an
+actual, live bug, not just bookkeeping. `narrowingTarget` was only ever called to narrow the
+**consequent** (`then`) branch of an `if`; the `alternate` (`else`) branch, in both the
+statement-level `If` case and the view-block `TemplateIf` case, always passed the original,
+un-narrowed `narrow` straight through. That means `if (x == null) { ... } else { <use x here> }` —
+exactly the pattern `docs/Crescent_Design.md` §11's own worked example shows as the intended,
+compiler-verified-safe usage, just with `!=` instead of `==` — produced a false-positive "accessed
+without a null check" warning on every use of `x` inside that `else` branch. The bug was invisible
+in the test suite until now because no existing fixture or example happened to combine `== null`
+(rather than `!= null`) with an `else` branch that reads the narrowed variable.
+
+Fixed by making `narrowingTarget` branch-aware: it now takes a `branch: 'then' | 'else'` parameter
+(defaulting to `'then'` so any caller not yet updated keeps its old behavior — though in practice
+every caller was updated). For `'then'`, the recognized patterns are unchanged (bare nullable
+identifier, `x != null`, `null != x`). For `'else'`, the single new pattern is `x == null` / `null
+== x` — the direct negation, and the natural symmetric counterpart to what already existed. Both
+`checkStmts`'s `If` case and `checkTemplateNode`'s `TemplateIf` case were updated identically (they
+had the exact same bug, since both were built from the same original single-target,
+consequent-only design): each now computes a `thenTarget` for the consequent narrow scope (as
+before) and, when there's an `alternate`/`node.alternate`, a separate `elseTarget` for a distinct
+`alternateNarrow`/narrow scope passed only to that branch.
+
+Manually verified before writing any fixture, same discipline as every prior session: built a
+scratch component with `state<User?> user`, both a function-body `if (user == null) {...} else
+{console.log(user.name);}` and the equivalent view-block `if`, plus a second function using
+`user.name` inside the *then* branch of `if (user == null)` (where `user` is still genuinely
+possibly-null and the warning should still fire) — ran it through `checkFile` directly and
+confirmed exactly one warning, on exactly the right line, in exactly the right function. Added
+`guarded-nullable-else-branch-ok.crs` (positive — the else-branch fix, in both a function body and
+a view block) and `unguarded-nullable-in-null-branch.crs` (negative — confirms the then-branch of
+`== null` still correctly warns, so the fix didn't accidentally suppress the case it's supposed to
+still catch). Matching `test-checker.js` cases added.
+
+`TODO.md`'s `Null Safety` section rewritten with per-item notes: `Flow-sensitive null narrowing` and
+`Correct narrowing through if` both moved to `[~]` (this specific gap fixed, but logical
+`&&`/`||` conditions and ternary expressions still entirely unnarrowed, and narrowing doesn't yet
+persist past an early-return guard clause — each flagged as its own separate follow-up rather than
+attempted here); `Correct narrowing through logical conditions` stays `[ ]` with a sketch of what
+it would need (`narrowingTarget` recursing into `&&`/`||`-joined `Binary` nodes); `Prevent invalid
+nullable access` moved to `[x]`; `Test nested/control-flow cases` stays `[ ]` (for loops, nested
+`if`s, and interprocedural narrowing are all still untested, distinct from the single-level cases
+now covered).
+
+**Commit:** Not committed — working tree contains this focused diff. Handed over as
+`crescent-null-safety-else-branch-narrowing.patch`.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 208 PASS, 0 FAIL, exit 0 (up from 206 before this
+session — exactly the 2 new fixture-driven cases, no regressions anywhere, including "all real
+examples pass the semantic checker cleanly" — meaning no existing example's `if`/`else` combined
+with a nullable variable in a way that newly trips or newly passes the check; the bug this session
+fixed simply hadn't been exercised by any of them).
+
+**Decisions:** Kept the fix to the single, symmetric missing pattern (`==` mirroring the existing
+`!=`) rather than trying to also add logical-condition or ternary narrowing in the same pass — each
+of those is a materially different piece of pattern-matching work (recursing into `&&`/`||`, or
+restructuring `checkExpr`'s `Ternary` case to thread per-branch narrow states through an
+expression rather than a statement list), and bundling them together risked turning one clean,
+verifiable fix into a larger, harder-to-review change. Used a `branch` parameter on the existing
+`narrowingTarget` function rather than writing a separate `elseNarrowingTarget` function, since the
+two share almost all their logic (only the comparison operator and the bare-identifier special case
+differ) and parameterizing kept the "single source of truth for how narrowing patterns are
+recognized" property the rest of the checker's type-matching functions already follow (e.g.
+`checkValueTypeMatch`'s `verb` parameter, from an earlier session).
+
+**Problems:** None. The fix was small and precisely targeted once the bug was actually found;
+finding it required reading the narrowing code carefully rather than just checking off boxes.
+
+**Remaining:** `Null Safety` now has one `[x]`, two `[~]`, and two `[ ]` items — see `TODO.md` for
+the specifics of what's left in each partial item. `TODO.md` §12's "Destructuring" (array/parameter
+destructuring), and `Reactivity`'s five untouched `[ ]` items, are all still open from before.
+
+**Next step:** The natural, smallest continuation of this exact session would be "Correct narrowing
+through logical conditions" — the TODO note already sketches the approach (`narrowingTarget`
+recursing into `&&`/`||`). Ternary narrowing is a reasonable alternative next hardening step, though
+it touches `checkExpr` rather than `checkStmts`/`checkTemplateNode` and would need its own
+"is this actually worth the complexity" judgment call, since ternaries are less central to the
+if/else-guard idiom `docs/Crescent_Design.md` §11 actually demonstrates. On the language-feature
+side, array destructuring remains the standing `TODO.md` §12 candidate if this session's own
+"alternate with feature work" instinct applies again.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Continuing from the previous session (its diff already committed upstream as `8c844f5`
+by this session's start). That session's own "Next step" note offered two hardening candidates
+specifically: auditing `Null Safety`'s open items, or fixing the `const`-reassignment gap it had
+just discovered and fully spec'd out in a `TODO.md` note. Picked the latter — smaller, already
+designed, lower risk of discovering the box was stale like `Structs` turned out to be.
+
+**Result:** Implemented exactly what the previous session's note prescribed, with one small
+addition: a `constNames: Set<string>` built alongside the existing `derivedNames` in
+`checkComponentDecl` (`decl.members.filter((m): m is AST.ConstDecl => m.kind === 'ConstDecl')`,
+mirroring the `derivedNames` line immediately above it), threaded through `checkStmts` as one more
+trailing parameter with a `= new Set()` default (so, same as `memberTypes` before it, no call site
+that doesn't care about `const` had to change). `checkAssignmentTarget` gained a `constNames`
+parameter and now checks it in an `else if` right after the existing `derivedNames` check, keeping
+the two mutually exclusive (a name can't be both `derived` and `const`, so this is just avoiding
+two diagnostics on the same line if it somehow could be). Message: `Cannot assign to const
+'<name>'; it can only be set at declaration`.
+
+The one addition beyond the note's literal text: checked `checkAssignmentTarget`'s two call sites in
+`checkStmts` and found `PostfixStmt` (`x++`/`x--`) already went through the exact same function as
+`Assignment` — so `max_items++;` on a `const int` needed covering too, not just `title = "x";`, and
+turned out to already work correctly once `constNames` was threaded through, since both call sites
+share the one function. Verified this by hand before writing the fixture (same "check the real
+behavior before asserting it" discipline as every prior fixture-writing session): built a fixture
+with both a plain-assignment and a postfix `++` against two different `const` members in the same
+component, ran it through `checkFile` directly, and confirmed both diagnostics fired independently
+at their own line numbers, from two different functions.
+
+Also updated the assignment-type-mismatch condition in the `Assignment` case
+(`stmt.op === '=' && stmt.target.kind === 'Identifier' && !derivedNames.has(...)`) to also exclude
+`constNames`, so a `const` reassignment reports exactly the one `Cannot assign to const` diagnostic
+rather than that plus a possibly-also-firing `Type mismatch` on the same line — same "one root-cause
+diagnostic, not a pile-on" principle the precise-diagnostic-messages session established for
+`Unknown type` vs `Type mismatch`.
+
+Had to touch the previous session's own `correct-assignment-ok.crs` fixture: it included a `const`
+reassignment as a documented-passing case, explicitly noting at the time that this was testing
+today's (buggy, permissive) behavior rather than endorsing it. That behavior is now fixed, so the
+case is no longer true — replaced the reassignment with a `const` *read* (`console.log(title);`)
+instead, which is the actually-valid thing to do with a `const`. Added
+`const-reassignment-forbidden.crs` (both the `Assignment` and `PostfixStmt` paths, two different
+`const` members) as the new negative fixture, plus matching `test-checker.js` cases and an updated
+assertion message on the positive fixture.
+
+**Commit:** Handed over as `crescent-forbid-const-reassignment.patch`; the maintainer applied and
+committed it upstream as `develop`'s `8625e74` ("feat: Add forbid const reassignment") between
+sessions.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 206 PASS, 0 FAIL, exit 0 (up from 205 before this
+session — exactly the 1 new fixture-driven case; `correct-assignment-ok.crs` still counts as one
+test, just with different content now). Confirmed via the "all real examples pass the semantic
+checker cleanly" check that no existing example anywhere reassigns a `const` member, so this was
+purely additive with zero risk of breaking a real example.
+
+**Decisions:** Placed the `constNames` check as an `else if` after `derivedNames` in
+`checkAssignmentTarget` rather than two independent `if`s, since a name can only realistically be
+one or the other (a component's `derived`/`const`/`state`/`provide`/`inject` members all share one
+namespace, checked for duplicates elsewhere) — this is a minor defensive choice more than a
+meaningfully different design, since the "both fire" case shouldn't be reachable anyway. Excluded
+`constNames` from the type-mismatch condition in the `Assignment` case for the same
+one-diagnostic-per-mistake principle used elsewhere, rather than leaving it to fire both (which
+would still be "correct" in the sense that both statements are true, but noisier than necessary).
+
+**Problems:** None. Small, exactly-scoped fix; the only real work was double-checking the
+`PostfixStmt` path and updating the one fixture whose behavior assumption changed.
+
+**Remaining:** `Null Safety` still has five of its six items unchecked, not yet audited for the
+same "already-done-but-unchecked" possibility found in `Structs` two sessions ago. `TODO.md` §12's
+"Destructuring" item still has array destructuring and parameter destructuring open. `Reactivity`'s
+other five `[ ]` items (comprehensive state mutation analysis, reactive collection mutation
+validation, derived-state dependency validation, lifecycle/reactivity validation, reactive CSS
+expression validation, `provide`/`inject` component-context validation) are all still untouched.
+
+**Next step:** This was a small, quick hardening session — no strong signal either way on
+alternating with a language feature next per `TODO.md` §16. Reasonable options, roughly in order of
+how well-scoped they currently look: (1) audit `Null Safety`'s five open items the way `Structs` was
+audited two sessions ago, since the same "maybe already done, just unchecked" possibility hasn't
+been ruled out there; (2) design array destructuring, the next `TODO.md` §12 item; (3) pick one of
+`Reactivity`'s remaining open items, though several of those ("Comprehensive state mutation
+analysis," "Lifecycle/reactivity validation") read as larger, less-scoped efforts than this
+session's work and would need their own scoping-down pass before starting.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Continuing from the previous session (its diff already committed upstream as `03158e7`
+by this session's start). That session's own "Next step" note left both directions open —
+designing array destructuring, or going back to hardening §5's other subsections. Chose hardening:
+reviewed `Structs` and `Null Safety` for a well-scoped next item.
+
+**Result:** Before picking anything, actually checked what each open `Structs` box currently does —
+worth doing explicitly, since a stale checkbox left unchecked looks identical to genuinely
+unstarted work from the TODO list alone. Found `checkExpr`'s `StructLiteral` case already
+implements per-field type checking (`checkLiteralTypeMatch` called per field), missing-field
+diagnostics (`Missing field '<name>' in struct literal '<type>'`), and extra-field diagnostics
+(`Unknown field '<name>' on struct '<type>'`) — all three already covered by existing fixtures
+(`missing-struct-field.crs`, `unknown-struct-field.crs`, the `wrong-prop-type*.crs` family). Checked
+off all three with a note explaining they were already done, not new work. That left exactly one
+real gap in `Structs`: **Assignment compatibility** — nothing checks a reassignment's value against
+its target's declared type at all.
+
+Implemented it, scoped narrowly on purpose. Refactored `checkLiteralTypeMatch`'s body into a shared
+`checkValueTypeMatch(declared, value, where, line, diagnostics, globalScope, verb)` — same
+unknown-type/null/literal-mismatch/array-element logic, but the mismatch message's verb
+("initialized with" vs "assigned") is now a parameter, so `checkLiteralTypeMatch` and the new
+`checkAssignmentTypeMatch` share one implementation instead of two copies that could drift. Added a
+`memberTypes: Map<string, CrescentType>` to `checkComponentDecl`, populated alongside the existing
+`scope`/`nullable` maps for component params and `state`/`derived`/`provide`/`const`/`inject`
+members, threaded through `checkStmts` as a new trailing parameter (default `new Map()`, so every
+existing call site not explicitly passed it keeps working unchanged — only the `FunctionDecl`/
+`OnMountDecl`/`OnChangeDecl` call sites in `checkComponentDecl` and the `If`/`For` recursive calls
+needed updating). The `Assignment` case now calls `checkAssignmentTypeMatch` when: the operator is
+plain `=` (not `+=`/`-=`/`*=`/`/=` — a compound op's actual required type relationship isn't the
+same question, and wasn't tackled here), the target is a bare `Identifier` (not `Member`/`Index` —
+those already get a different, existing error for writing through a state's property), the target
+isn't a `derived` name (already an error via `checkAssignmentTarget`), and the name is found in
+`memberTypes` (so a local `VarDecl` variable or a function parameter — neither tracked in
+`memberTypes` — is silently skipped, not a false negative introduced by this change, since nothing
+checked those before either).
+
+Manually verified the behavior before writing any fixture: built a scratch `.crs` file with a
+correct reassignment, a wrong-type reassignment, a non-literal reassignment (`total = total + 1;`),
+a compound `+= 1`, and a `const` reassignment, ran it through `checkFile` directly, and confirmed
+each one's diagnostics (or lack of any) matched intent — same "verify raw behavior before asserting
+it" discipline as every prior fixture-writing session. That manual check is what surfaced an
+unrelated discovery: nothing in the checker currently distinguishes a `const` member from a
+`state`/`provide` one for assignment purposes, so `const string title = "X"; ... title = "Y";`
+passes with zero diagnostics — meaning `const`'s whole point (immutable after declaration) isn't
+actually enforced. Didn't fix it here (a mutability question, not this task's type-compatibility
+question) — added a new, well-scoped `TODO.md` item under `Reactivity` describing exactly what a
+fix would look like (a `constNames: Set<string>` alongside the existing `derivedNames`, checked in
+`checkAssignmentTarget`), so a future session doesn't have to rediscover it. `correct-assignment-
+ok.crs` deliberately includes that `const` reassignment as a *passing* case, documented in-fixture
+as testing today's (arguably wrong) behavior rather than silently omitting it.
+
+Added 4 fixtures: `wrong-assignment-type.crs`, `wrong-assignment-array-element-type.crs`,
+`null-assignment-not-nullable.crs` (negative), `correct-assignment-ok.crs` (positive — correct
+literal, non-literal, compound `+=`, nullable, and `const` reassignment, none of which should
+fire). Matching `test-checker.js` cases added.
+
+**Commit:** Handed over as `crescent-assignment-compatibility.patch`; the maintainer applied and
+committed it upstream as `develop`'s `8c844f5` ("feat: Add assignment compatibility") between
+sessions.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 205 PASS, 0 FAIL, exit 0 (up from 201 before this
+session — exactly the 4 new fixture-driven cases, no regressions anywhere, including "all real
+examples pass the semantic checker cleanly" — none of the existing examples' plain reassignments
+(`array_mutators.crs`'s `items = ...`, `keyed_list.crs`'s `todos = ...`, etc.) newly trip the check,
+since they're all either correctly-typed or non-literal expressions).
+
+**Decisions:** Kept the type-check scoped to component-level members and explicitly did not attempt
+to extend `localScope` (currently just `Set<string>`) into a typed map to also cover local
+variables and function parameters — that's a real, larger refactor (every `checkStmts`/`checkExpr`
+call site that touches `localScope` would need updating) better done as its own deliberate session
+than folded quietly into this one. Left compound assignment operators unchecked entirely rather
+than guessing at partial rules for them (e.g. allowing `total += 1` for `int` but not
+`total += "x"` for `int` — actually already a `string`-vs-`int` mismatch worth catching — but what
+about `label += "!"` where `label` is `string`? That's valid string-concatenation `+=`, so the rule
+isn't simply "same type as declared," and figuring out the real rule is its own task). Reused
+`StructLiteral`'s existing check names/wording style, and refactored rather than duplicated,
+following the pattern already established across every type-check function in this file.
+
+**Problems:** None. The `Structs`-checkbox bookkeeping fix was mildly annoying to have missed
+across three separate hardening sessions, but harmless — flagged in case the pattern recurs
+(checking whether a claimed-open box is actually still open, before assuming a TODO checklist is
+perfectly in sync with the code, seems worth doing as a matter of habit).
+
+**Remaining:** `Structs` now has no `[ ]` boxes at all. `Null Safety` still has five of its six
+listed items unchecked (`Flow-sensitive null narrowing`, `Correct narrowing through if`, `Correct
+narrowing through logical conditions`, `Prevent invalid nullable access`, `Test nested/control-flow
+cases`) — worth checking, the same way this session checked `Structs`, whether any of those are
+also already-done-but-unchecked before assuming they're all genuinely unstarted. The new `const`
+reassignment gap is now a tracked `TODO.md` item under `Reactivity`. `TODO.md` §12's "Destructuring"
+item still has array destructuring and parameter destructuring open.
+
+**Next step:** Per `TODO.md` §16's alternating framing, and since this was only one hardening
+session after one language-feature session, either direction is legitimate again. Two well-scoped
+hardening candidates surfaced this session specifically: the `const`-reassignment fix (small, clear,
+already spec'd out in the new TODO note) or auditing `Null Safety`'s five open items for the same
+"already-done-but-unchecked" possibility found in `Structs` this time. On the language-feature
+side, array destructuring is still the natural next `TODO.md` §12 pick.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Continuing from the previous session (its diff already committed upstream as `9b9f18a`
+by this session's start, leaving `TODO.md` §5 Types with no remaining `[ ]` boxes). Per §16's own
+framing — "if several sessions in a row have all been hardening work, that is itself a signal to
+deliberately pick a §12 item next" — and having just landed three hardening sessions in a row
+(return-type checking, array element checking, precise diagnostic messages), picked **struct
+destructuring** from §12's "Core Language Evolution" list: the first item after string
+interpolation, and the one the roadmap's own sequencing note flags as worth doing before
+tuples/enums ("both of those become much more useful once values can be destructured").
+
+**Result:** Designed first, in `docs/Crescent_Design.md`, before touching the parser — same
+approach as the string-interpolation session. Deliberately scoped down to **struct destructuring in
+a local variable declaration only**: `Point { x, y } = current;` binds `x`/`y` as new locals from
+`current`'s matching struct fields; `Point { x } = current;` (naming only some fields) is
+explicitly supported and is expected to be the common case. Two related, real extensions —
+destructuring in a function's parameter list, and array destructuring — are written up as
+deliberately deferred rather than silently missing, each flagged as needing its own design pass
+(parameter destructuring interacts with existing arg-count/type checking and codegen's positional-
+parameter assumption; array destructuring needs its own answer for a length mismatch, which a
+struct's named-field shape has no equivalent question for).
+
+Implementation, once the design was settled, turned out small:
+- **`ast.ts`:** one new `Stmt` variant, `StructDestructure { typeName, fields, init, line }`.
+- **`parser.ts`:** `parseStructDestructureStatement()` (`Identifier '{' Identifier { ',' Identifier
+  } '}' '=' Expression ';'`), tried at an `Identifier`-led statement after `parseVarDeclStatement`
+  fails — same snapshot/restore mechanism the parser already uses to fall from `VarDecl` through to
+  a plain assignment/expression statement, extended by one more attempt rather than any new
+  lookahead machinery. No ambiguity with a `StructLiteral` **expression** (`Identifier '{'
+  FieldInit... '}'`): a `FieldInit` requires `Identifier ':' Expression`, so the destructure
+  pattern's bare-identifier field list diverges at the first field and fails/restores instead of
+  being misread.
+- **`checker.ts`:** new `StructDestructure` case in `checkStmts`, reusing `StructLiteral`'s own
+  unknown-struct-type and struct-vs-component diagnostics verbatim (same wording, same shape),
+  plus one destructure-specific check the struct-literal path doesn't need: `Duplicate field` when
+  the same field is named twice (which would otherwise silently redeclare the same local name
+  twice with no error). Destructured names are added to `localScope` like an ordinary `VarDecl`.
+- **`codegen.ts`:** one line — `const { ${fields.join(', ')} } = ${exprToJs(init)};`. This works
+  for free, with no new runtime support needed, because a Crescent struct value already compiles to
+  a plain JS object with matching field-name keys (confirmed by inspecting `StructLiteral`'s
+  existing codegen case) — so native JS destructuring assignment is exactly the right target, and
+  `exprToJs` already handles unwrapping a `state<T>` via `.get()` for the `init` expression for
+  free too (verified: `Point { x, y } = origin;` where `origin` is `state<Point>` compiles to
+  `const { x, y } = origin.get();`).
+
+Added `examples/struct_destructuring.crs` (a `state<Point>`, a function that destructures it and
+builds a summary string, wired through `on_mount` so the summary renders on first paint) plus
+`scripts/test-struct-destructuring.js` (a real jsdom mount asserting the rendered text), wired into
+`package.json`'s `test` script. Five new checker fixtures: `unknown-struct-destructure-type.crs`,
+`unknown-struct-destructure-field.crs`, `duplicate-struct-destructure-field.crs`,
+`component-as-struct-destructure.crs` (all negative), and `correct-struct-destructure-ok.crs`
+(positive — both a full-field and a partial-field destructure). `docs/Crescent_Grammar.md` updated:
+new §2.5 disambiguation-rule writeup, the `Statement`/`VarDecl` production in §6 extended with
+`StructDestructureStatement`, and a new "Resolved" entry in §10 alongside the existing string-
+interpolation one. `TODO.md`'s "Destructuring" bullet changed from `[ ]` to `[~]` (partial) with a
+note on exactly what shipped and what's still open.
+
+**Commit:** Handed over as `crescent-struct-destructuring.patch`; the maintainer applied and
+committed it upstream as `develop`'s `03158e7` ("feat: Add struct destructuring") between
+sessions.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 201 PASS, 0 FAIL, exit 0 (up from 195 before this
+session — the 5 new checker-fixture cases plus the 1 new e2e mount test, no regressions anywhere).
+Manually verified before wiring anything into `test-checker.js`: parsed the feature's AST shape by
+hand, ran the checker against both the new example and each new fixture individually to confirm the
+*exact* diagnostic (or lack of one) before writing the corresponding assertion, and inspected the
+raw generated JS for the example to confirm the `state<T>`-unwrapping codegen behavior mentioned
+above — the same "verify the actual behavior before asserting it" discipline used in every prior
+session's fixture work.
+
+**Decisions:** Allowed partial-field destructuring (naming only some of a struct's fields) rather
+than requiring every field to be named, unlike a struct *literal*, which does require every field.
+The two aren't the same shape of problem: a literal that's missing a field can't construct a valid
+value of the type, but a destructure that only wants `x` and not `y` isn't creating an incomplete
+value — it's just choosing not to bind a name for a field it doesn't need. Reused `StructLiteral`'s
+diagnostic wording verbatim for the two errors that are conceptually identical (unknown struct
+type, struct-vs-component), rather than writing new, subtly-different phrasing for the same
+underlying mistake. Did not attempt to type-check `init` against `typeName` (e.g. flagging
+`Point { x, y } = "not a point";`) — `init` is typically a plain identifier (an existing struct-
+typed variable), which the checker's literal-shaped-only type-matching machinery can't evaluate
+anyway (same boundary noted in every prior type-check session); a real expression-type-inference
+pass, if one is ever built, would be the natural place to close this gap too.
+
+**Problems:** None. No pre-existing behavior needed to change; this was purely additive.
+
+**Remaining:** Per this session's own design write-up: function-parameter destructuring and array
+destructuring are both still fully open, each needing its own design pass rather than inheriting
+this feature's specific answers. `TODO.md` §12's next items after "Destructuring" (Tuples, Enums,
+Pattern matching, ...) are all still untouched. §5 Types has no remaining `[ ]` boxes, but §5's
+other subsections (`Scope / Names` → cross-module symbol resolution; `Null Safety` → most of its
+five sub-items; `Structs` → complete/missing/extra-field validation, assignment compatibility;
+`Reactivity`, `Components`, `Diagnostics`) all still have real open work.
+
+**Next step:** Both directions are legitimate per `TODO.md` §16's alternating framing. A natural
+continuation of *this* session would be designing array destructuring next (`docs/Crescent_
+Design.md` already sketches the open question — what happens on a length mismatch — that a real
+design session would need to resolve before implementing). Equally legitimate: switch back to
+hardening, since this was only one language-feature session and §5's other subsections have
+several small, well-scoped-looking items (e.g. `Structs`' "Missing-field diagnostics"/"Extra-field
+diagnostics" look like they may already substantially exist under different names — worth checking
+what's actually still missing there before assuming they're unstarted).
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Continuing from the previous session (its diff already committed upstream as `dc9dd27`
+by this session's start). Followed `TODO.md` §16's priority order into §5 Types' last open box:
+**"More precise diagnostic messages."** Unlike the last few sessions, this box wasn't a bare
+one-liner — an earlier session's sweep of `checker.ts` had already pinned down exactly what was
+wrong and exactly what the fix should be, in the TODO note itself. This session's job was mostly to
+implement that already-designed fix and verify it, not to design something new.
+
+**Result:** `checkLiteralTypeMatch` (serving both `state`/`derived`/`provide`/`const` initializers
+and struct-field values) now takes a `globalScope` parameter and calls `typeIsResolvable(declared,
+globalScope)` before doing anything else — mirroring the `VarDecl`/function-param/function-return/
+struct-field/component-param/`inject` checks that already did this. If the declared type doesn't
+resolve, it reports `Unknown type '<name>'` and returns immediately, so the (now redundant, and
+actively confusing) `Type mismatch: declared as '<name>' but initialized with a '<value's type>'`
+diagnostic — and the array-element check added last session — never also fire for that same
+declaration. `state<BogusType> x = "hello";` now reports one diagnostic (`Unknown type
+'BogusType'`) instead of one confusing one.
+
+Both call sites (`checkLiteralTypeMatch(declaredFields.get(f.name)!, ...)` for struct-literal
+fields, and `checkLiteralTypeMatch(m.type, m.init, ...)` for `state`/`derived`/`provide`/`const`
+members) already had a `globalScope` variable in their enclosing scope, so threading it through was
+a pure signature change with no ripple beyond the two call sites and the new
+`typeIsResolvable`/`err` calls inside the function itself.
+
+Added `unknown-state-type.crs` (a `state<BogusType> x = "hello";` fixture) and, deliberately, a
+`test-checker.js` assertion that checks `diagnostics.length === 1` and the exact message — not just
+`hasDiagnostic(...)` presence-of-pattern, which every other `cases`-array entry uses — because the
+*suppression* of the redundant `Type mismatch` diagnostic is the actual point of this fix, and a
+presence-only assertion would pass even if both diagnostics fired.
+
+**Commit:** Handed over as `crescent-precise-diagnostic-messages.patch`; the maintainer applied and
+committed it upstream as `develop`'s `9b9f18a` ("feat: Add precise diagnostic messages") between
+sessions.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 195 PASS, 0 FAIL, exit 0 (up from 194 before this
+session — exactly the 1 new fixture-driven case, no regressions anywhere, including "all real
+examples pass the semantic checker cleanly").
+
+**Decisions:** Returned immediately after the `Unknown type` diagnostic rather than trying to
+"continue checking what we can" against an unresolvable type — there's nothing meaningful left to
+compare the initializer against once the declared type itself doesn't exist, and continuing would
+just reintroduce the exact redundant-diagnostic problem this fix exists to remove. Did not touch
+any other `checkLiteralTypeMatch`-adjacent function (`checkCallArgs`, `checkAttributeTypeMatch`,
+`checkReturnStmt`) — none of those had the same gap; they already call `typeIsResolvable` (directly
+or via the resolvability check already present on params/return types/props) before doing their
+type-match comparison, which is exactly why the TODO note called out `checkLiteralTypeMatch`
+specifically rather than "the checker in general."
+
+**Problems:** None. The fix was exactly as scoped in the TODO note; no surprises during
+implementation.
+
+**Remaining:** `TODO.md` §5 Types now has no more `[ ]` boxes — every remaining item there is
+either `[x]` or the two `[~]`/partial ones (`Nullable checking`, tracked separately under `Null
+Safety` below with its own five open sub-items). §5's other subsections (`Scope / Names`,
+`Null Safety`, `Structs`, `Reactivity`, and further down `Components`/`Styling`/`Diagnostics
+Quality`) still have real open work — see the section immediately below "Types" in `TODO.md` for
+the next candidates once this patch is applied and committed.
+
+**Next step:** Per `TODO.md` §16's own framing, this is now three checker-hardening sessions in a
+row (return-type checking → array element checking → this). The `TODO.md` §16 note explicitly says
+not to get stuck forever hardening — a healthy project alternates with real language-design work.
+Next session should seriously consider picking a §12 "Core Language Evolution" item instead of
+immediately grabbing the next `[ ]` box in §5's `Structs` or `Null Safety` subsections, unless there
+is a specific reason (like a particularly small, well-scoped item) to keep hardening one more round.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Continuing from the previous session (whose diff had, by this session's start, already
+been committed to `develop` as `b0b00e5` outside the AI's own workflow — the maintainer applied and
+committed the handed-off patch between sessions). Re-checked `HEAD`, confirmed the working tree was
+clean and green, then continued down `TODO.md` §16's priority order: **array element type
+checking** in §5 Types, the next unchecked box.
+
+**Result:** Investigated first, since the box's true scope wasn't obvious from its one-line
+description. Found `inferLiteralType`'s existing `ArrayLiteral` case only infers a type from
+`expr.elements[0]` — meaning `state<int[]> nums = [1, 2, "three"];` already passed the top-level
+`literalTypeMatches` check silently, because the check only ever "sees" the first element's type.
+That's the actual gap, not a from-scratch feature.
+
+Added `checkArrayElements(declared, expr, where, line, diagnostics, messagePrefix)` to
+`checker.ts`: unwraps a `NullableType` wrapper off `declared`, bails out if what remains isn't an
+`ArrayType` (or `expr` isn't an `ArrayLiteral`) — safe no-op for any type it doesn't apply to — then
+walks every element by index: a `null` element against a non-nullable element type is flagged, a
+nested `ArrayLiteral` element recurses (so `int[][]` is checked element-by-element at every depth,
+not just the outer array), and everything else goes through the same `inferLiteralType` +
+`literalTypeMatches` pair every other check in this file already uses, with the mismatching index
+named in the message.
+
+Wired into all four places that already do a top-level literal-type match, each call added
+*after* its own existing check and only reached when that check passed — so a wholesale wrong array
+type (e.g. passing a `string[]` where `int[]` is declared) still produces exactly the one
+pre-existing top-level diagnostic, not that plus a redundant per-element pile-on:
+- `checkLiteralTypeMatch` — `state`/`derived`/`provide`/`const` initializers and struct-field
+  values (both call sites this function already serves).
+- `checkCallArgs` — call arguments, message prefixed `element of argument '<param>' of function
+  '<fn>'`.
+- `checkAttributeTypeMatch` — component props, message prefixed `element of prop '<attr>'`.
+- `checkReturnStmt` — return values, message prefixed `element of function '<fn>' return value`
+  (guarded on `returnType !== 'void'`, reusing the `ReturnContext` from last session).
+
+Added four fixtures under `scripts/fixtures/checker/`: `wrong-array-element-type.crs` (a mismatched
+element deep in a `state` initializer), `null-array-element-not-nullable.crs` (a `null` element
+against non-nullable `int`), `wrong-array-element-type-arg.crs` (a mismatched element in an inline
+array literal passed as a call argument), and `correct-array-elements-ok.crs` (positive — a plain
+`int[]`, an `int?[]` with a `null` element, and a nested `int[][]`, plus that array being both a
+`state` initializer and a function-call argument, none of which should fire). Matching
+`test-checker.js` cases added. `TODO.md`'s "Array element type checking" line checked off with an
+implementation note.
+
+**Commit:** Handed over as `crescent-array-element-checking.patch`; the maintainer applied and
+committed it upstream as `develop`'s `dc9dd27` ("feat: Add array element checking") between
+sessions.
+
+**Tests:** `npx tsc --noEmit` clean. `npm test`: 194 PASS, 0 FAIL, exit 0 (up from 190 before this
+session — exactly the 4 new fixture-driven cases above, no regressions anywhere, including the "all
+real examples pass the semantic checker cleanly" check — the existing examples' array literals
+(`array_mutators.crs`, `keyed_list.crs`, `reactive_list.crs`, `structs_and_generics.crs`, etc.) all
+still produce zero diagnostics under the new per-element walk).
+
+**Decisions:** Ran the element-wise check only *after* the existing top-level check succeeds, not
+instead of it or in addition unconditionally — a wrong array type shouldn't drown the person in one
+diagnostic per element when the real problem is the declared type itself. Recursed through nested
+`ArrayLiteral` elements rather than trying to handle `int[][]` as a special flat case, since the
+recursive form falls out naturally from `checkArrayElements` calling itself with `elementType` and
+generalizes to any depth for free. Did not attempt to check non-literal array elements (e.g. an
+identifier or function call inside `[a, b(), c]`) — same literal-shaped-only boundary as every other
+check in this file; a real expression-type-inference pass is the actual prerequisite for going
+further, as already noted in earlier sessions' "Decisions".
+
+**Problems:** None. No pre-existing behavior needed to change; this was purely additive (new
+diagnostics for cases that previously fell through silently).
+
+**Remaining:** `TODO.md` §5 Types still has open items: complete assignment compatibility (the
+`todos = [...]` plain-reassignment case in `keyed_list.crs`/`reactive_list.crs` is *not* checked by
+anything today, array or otherwise — reassignment isn't routed through `checkLiteralTypeMatch` at
+all), function-type compatibility, and the "More precise diagnostic messages" `typeIsResolvable`
+note. None started this session.
+
+**Next step:** Per `TODO.md` §16, either keep hardening the checker — "complete assignment
+compatibility" is the most natural next box, and would also make the plain `state<T> x; ... x =
+<value>;` case exercise the same `checkArrayElements` machinery — or, since hardening has now run
+two sessions in a row, deliberately pick a §12 language-feature item next per the note at the end of
+§16.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** No explicit maintainer task; followed `TODO.md` §16's priority order ("strengthen the
+semantic checker" ranks above expanding language features) and picked **function return-type
+checking** from §5 Types — the next unchecked box after argument checking and component prop-type
+checking, both already done in prior sessions using the same literal-shaped-comparison approach.
+
+**Result:** Added `ReturnContext` (`{ functionName, returnType }`) and `checkReturnStmt()` to
+`checker.ts`. `checkComponentDecl()`'s `FunctionDecl` case now builds a `ReturnContext` from the
+function's own name/declared return type and passes it into `checkStmts()` via a new optional
+`returnCtx` parameter (default `null`), which the `If`/`For` recursive calls thread through
+unchanged so a `return` nested inside a loop or branch is still checked against the *enclosing
+function's* return type, not treated as un-contextualized. The `Return` statement case then calls
+`checkReturnStmt()`, which mirrors `checkCallArgs()`'s existing null/literal-type-matching logic:
+- a `void` function's `return <expr>;` is flagged ("has a 'void' return type but returns a value");
+- a non-`void` function's bare `return;` is flagged ("must return a value of type '...'");
+- `return null;` against a non-nullable declared type is flagged, matching the existing
+  arg/prop/struct-field null-check wording;
+- a literal-shaped return value (int/float/string/bool/struct-literal/array-literal) of the wrong
+  type is flagged with the same "Type mismatch: ... but returns/received a '...' value" phrasing
+  used elsewhere in the checker.
+
+`on_mount`/`on_change` bodies call `checkStmts()` without a `returnCtx` (still `null`), so a
+`return;` used there for early-exit is deliberately left unchecked — lifecycle-specific return
+semantics are an open, separate `TODO.md` item ("Lifecycle block validation"), not something to
+invent here. Only literal-shaped return expressions are checked; `return someVar;` (the common
+case) is left alone, consistent with every other type-match check in this file — see the existing
+"More precise diagnostic messages" `TODO.md` note for the same limitation elsewhere.
+
+Added five fixtures under `scripts/fixtures/checker/`: `wrong-return-type.crs`,
+`missing-return-value.crs`, `void-return-with-value.crs`, and `null-return-not-nullable.crs`
+(negative), plus `correct-return-ok.crs` (positive — a normal `int` return, an `int?` function that
+both returns `null` and returns a plain `int` depending on a branch, and a `void` function with an
+early bare `return;` inside an `if`, none of which should produce a diagnostic). Added matching
+cases to `scripts/test-checker.js`. Checked off "Function return-type checking" in `TODO.md` §5
+Types with a short implementation note (existence-checking of the return type name itself was
+already done by an earlier Codex session — this is the separate, previously-missing check that a
+`return` statement's *value* matches that type).
+
+**Commit:** Handed over as `crescent-return-type-checking.patch`; the maintainer applied and
+committed it upstream as `develop`'s `b0b00e5` ("feat: Add return type checking") between sessions.
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm install` (needed — `node_modules` was
+absent at the start of this session, fresh clone); `npm test` (190 PASS, 0 FAIL, exit 0 — up from
+185 before this session, i.e. exactly the 5 new fixture-driven assertions above, no regressions in
+any pre-existing case, including the "all real examples pass the semantic checker cleanly" check
+and every runtime/DOM/preview test).
+
+**Decisions:** Kept the check literal-shaped-only (no attempt at a real expression type-inference
+pass) to stay consistent with every other type-comparison check already in `checker.ts` — see the
+"Decisions" note on component prop type checking two sessions ago, which flagged that a real
+inference helper is the actual prerequisite for going beyond literal-only checking anywhere in this
+file, return types included. Did not touch `on_mount`/`on_change` — giving lifecycle blocks a
+return context (and deciding what "returning early" should even mean there) is a different,
+undecided piece of work.
+
+**Problems:** None encountered. No pre-existing behavior needed to change.
+
+**Remaining:** `TODO.md` §5 Types still has open items: complete assignment compatibility, array
+element type checking, function-type compatibility, and the "More precise diagnostic messages"
+note (checking `typeIsResolvable` on `state`/`derived`/`provide`/`const` declared types before
+comparing against the initializer). None started this session.
+
+**Next step:** Per `TODO.md` §16, either continue hardening the checker (array element type
+checking is the next naturally-scoped item using the same literal-shaped pattern used here and in
+`checkCallArgs`/`checkAttributeTypeMatch`/`checkReturnStmt`) or, if hardening has now run several
+sessions in a row, deliberately pick a §12 language-feature item instead per the note at the end of
+§16.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Explicit instruction to continue, following through on the previous session's own
+framing ("important, not urgent... don't get stuck forever fixing things — a healthy project
+alternates hardening with real language-design work"). Picked **string interpolation** from
+`TODO.md` §12's "Core Language Evolution" list — the item explicitly flagged as "a reasonable
+place to start if a small, self-contained language change is wanted" — and, per the framing note's
+own instruction to "design it against `docs/Crescent_Design.md`'s existing principles, and write it
+up there before touching the parser," did real design work first, then implemented the whole
+feature (not just the design writeup) since the design turned out small and low-risk once grounded
+in an existing pattern already in the codebase.
+
+**Result:**
+- Investigated before designing anything: Crescent had *zero* real string interpolation anywhere,
+  including in `view`/`style` blocks — what looks like interpolation there
+  (`<p>"Don't Buy " {item}</p>`) is actually just adjacent template-node siblings, not embedding
+  inside one string. But `style {}` value parsing already has a working, tested mechanism for
+  exactly this shape of problem: `Lexer.readInterpolationSource()` (brace-depth counting to find a
+  matching `}`) plus `AST.StyleValuePart` (`raw`/`expr` parts) plus a nested `new Parser(exprSource)`
+  to parse each captured expression source substring
+  (`parser.ts`'s `parseStyleDeclaration()`). Designed string interpolation to reuse this exact
+  mechanism rather than invent a second one, which kept the actual diff small and low-risk despite
+  touching every compiler layer.
+- **`compiler/src/ast.ts`:** generalized `StyleValuePart` into a new `InterpolatedPart` type alias
+  (kept `StyleValuePart = InterpolatedPart` so every existing reference is untouched) and added a
+  new `Expr` variant, `TemplateString { parts: InterpolatedPart[] }`.
+- **`compiler/src/tokens.ts`:** added an optional `stringParts` field to `Token`, carrying
+  `Array<{ kind: 'raw'; text } | { kind: 'expr'; source }>` when a string literal contains
+  interpolation; left `undefined` for the overwhelming majority of strings that don't, so nothing
+  about a non-interpolated `STRING_LITERAL` token changes shape.
+- **`compiler/src/lexer.ts`:** the `"` string-scanning branch now detects an *unescaped* `{`
+  (an escaped `\{` still falls through the pre-existing backslash-escape fallback, exactly like
+  `\"`/`\\` already did — no new escape convention was invented) and, on finding one, delegates to
+  `readInterpolationSource()` to capture the raw expression source up to its balanced matching `}`
+  (this already correctly handles a nested brace pair inside the expression, e.g. a struct literal
+  like `{Point { x: 1, y: 2 }}`, by depth-counting rather than assuming the first `}` closes it —
+  the same reasoning applied to the TextMate grammar fix several sessions ago). Also generalized
+  `readInterpolationSource()`'s error message from `'Unterminated style interpolation'` to
+  `'Unterminated interpolation'`, since it now serves two callers, not one — a one-line, symmetric
+  improvement to both. A string with no unescaped `{` returns the exact same `STRING_LITERAL` token
+  as before this session; behavior for the entire existing corpus of non-interpolated strings is
+  provably unchanged (confirmed by the full, unmodified 179-test suite still passing after this
+  layer alone).
+- **`compiler/src/parser.ts`:** added a `parseInterpolatedStringParts(token)` helper mirroring
+  `parseStyleDeclaration()`'s own expression-parsing loop, and updated all three (and only three)
+  places a `STRING_LITERAL` token is consumed: `parsePrimary()` now returns a `TemplateString` expr
+  when the token has interpolation parts (otherwise the same plain `StringLiteral` as before);
+  `parseTemplateNodeInner()` now returns a `TextInterpolation` node wrapping a `TemplateString`
+  (reusing the *existing* `TextInterpolation` `TemplateNode` kind — no new template-node variant
+  needed); the plain-attribute-value branch now produces `{ isExpr: true, exprValue: TemplateString }`
+  instead of a static `stringValue` when interpolated (reusing the *existing* `isExpr`/`exprValue`
+  attribute shape — no new `Attribute` variant needed either). Reusing existing AST shapes this
+  thoroughly meant the feature needed a total of one new `Expr` variant and zero new `TemplateNode`
+  or `Attribute` variants.
+- **`compiler/src/checker.ts`:** added a `TemplateString` case to `checkExpr` (recurses into each
+  `expr` part exactly like `Binary`/`Call`/etc. already do for their sub-expressions — an
+  identifier used inside an interpolation is checked the same as anywhere else) and to
+  `inferLiteralType` (a `TemplateString` always infers as `string`). The `inferLiteralType` case is
+  a genuine, if incidental, improvement over the status quo: before this session, an initializer
+  that wasn't a bare literal returned `null` from `inferLiteralType` and skipped type-mismatch
+  checking entirely (a pre-existing, `TODO.md`-documented limitation — see the "More precise
+  diagnostic messages" note added two sessions ago); a `TemplateString` initializer now gets real
+  type checking for free, e.g. `state<int> x = "count: {n}";` is correctly flagged as a type
+  mismatch rather than silently accepted.
+- **`compiler/src/codegen.ts`:** renamed `styleValuePartsToJs` to `interpolatedPartsToJs` (now used
+  by both style values and the new `TemplateString` case, so the style-specific name no longer
+  fit) and added a `TemplateString` case in `exprToJs` that calls it — an interpolated string
+  compiles to a genuine JS template literal (`` `Hello, ${name.get()}!` ``), not a manually
+  constructed `+`-concatenation chain.
+- **New example + tests:** `compiler/examples/string_interpolation.crs` (interpolation in view
+  text, an attribute, and escaped braces, on a component with reactive `state`);
+  `compiler/scripts/test-string-interpolation.js` (a jsdom end-to-end test — mounts the compiled
+  component, asserts the initial interpolated text/attribute render correctly, asserts escaped
+  braces render literally, then clicks a button and asserts the interpolated text updates
+  reactively); two new `compiler/scripts/fixtures/checker/` fixtures
+  (`interpolated-string-undefined-identifier.crs`, `interpolated-string-type-mismatch.crs`) with
+  matching `test-checker.js` cases. Wired the new e2e test into `package.json`'s `test` script
+  chain, in the same position as the other page-mount tests.
+- **Docs:** `docs/Crescent_Grammar.md` — added a formal `StringLiteral`/`StringPart`/`StringEscape`
+  lexical grammar (§6, previously entirely unspecified beyond the bare `Literal` alternative); a
+  new §2.4 disambiguation subsection for `{`/`}` inside a string literal, describing precisely how
+  this differs from `MODE_VIEW`/`MODE_STYLE`'s interpolation (it's lexer-internal to one token, not
+  a parser-visible mode transition); fixed a now-false claim in §7 ("No quoted-brace hybrid form is
+  legal" — this was true before this session and is not anymore, so it was corrected rather than
+  left stale, per `AGENTS.md`'s rule against a knowingly-incorrect grammar doc); and a "Resolved"
+  entry in §10 cross-referencing all the new files. `docs/Crescent_Design.md` — new "String
+  Interpolation" subsection under §2 (Type System & Variables), with the concatenation-equivalence
+  explanation, the escaping rule, and an explicit note that formatting expressions (padding,
+  decimal places) are a deliberately separate, deferred piece of `TODO.md` §12's original item, not
+  bundled into this one.
+- `TODO.md` §12: checked off "String interpolation," with a note on exactly what shipped and what
+  (formatting expressions) is explicitly still open and why it's a separate, larger piece of work
+  rather than an oversight.
+
+**Files changed:** `compiler/src/ast.ts`, `compiler/src/tokens.ts`, `compiler/src/lexer.ts`,
+`compiler/src/parser.ts`, `compiler/src/checker.ts`, `compiler/src/codegen.ts`,
+`compiler/examples/string_interpolation.crs` (new),
+`compiler/scripts/test-string-interpolation.js` (new),
+`compiler/scripts/fixtures/checker/interpolated-string-undefined-identifier.crs` (new),
+`compiler/scripts/fixtures/checker/interpolated-string-type-mismatch.crs` (new),
+`compiler/scripts/test-checker.js`, `compiler/package.json` (test script chain),
+`docs/Crescent_Grammar.md`, `docs/Crescent_Design.md`, `TODO.md`, `HANDOFF.md`.
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean throughout — checked after each layer, not just
+at the end). `npm test`: 185 PASS, 0 FAIL, exit 0 (up from 179 — 2 new checker-fixture cases plus 4
+new e2e assertions in `test-string-interpolation.js`). The full existing suite (179 tests) was
+re-run and confirmed passing after the lexer change alone, before any parser/checker/codegen
+changes were made, specifically to isolate and confirm that non-interpolated strings are
+byte-for-byte unaffected.
+
+**Problems/Decisions:** The main design decision, stated explicitly above: reuse the `style{}`
+interpolation mechanism rather than build a second one, and reuse existing AST shapes
+(`TextInterpolation`, `isExpr`/`exprValue`) rather than add new `TemplateNode`/`Attribute` variants
+— both choices were about keeping the diff small and consistent with the codebase's own
+conventions, not about cutting corners on the feature itself (the feature is fully implemented,
+checked, code-generated, and tested end to end, not a stub). Deliberately left out of scope:
+formatting expressions (documented as future work, both in `docs/Crescent_Design.md` and
+`TODO.md`); a would-be edge case where an interpolation's expression source itself contains a
+nested string literal with a `{`/`}` inside it (e.g. `` {fn("a}b")} ``) is not specially handled —
+`readInterpolationSource()`'s raw depth-counting doesn't know about nested string literals, exactly
+the same pre-existing limitation `MODE_STYLE` interpolation already has, so this is not a new
+regression, just an inherited, narrow edge case worth knowing about.
+
+**Next:** `TODO.md` §16's priority order applies as always — pick the next item, whether that's
+more §12 language-evolution work (destructuring is the natural next step per §12's own stated
+dependency ordering, since tuples/pattern-matching both build on it) or a return to
+hardening/testing work if that's judged more valuable right now. Either is legitimate per the
+alternating-priorities framing from two sessions ago.
+
+---
+
+### Older session (documentation only)
+
+**AI:** Claude
+
+**Task:** The maintainer gave a structured list of ten core-language-evolution ideas (string
+interpolation, destructuring, tuples, enums/ADTs, pattern matching, exhaustiveness diagnostics,
+first-class function types, generics, interfaces/traits, and broader type-system polish) and asked
+for them to be recorded in the project's docs as *important but not urgent*, with an explicit
+instruction not to let the project get "stuck forever fixing things" instead of also evolving the
+language — a direct response to the last several sessions, which were all checker regression-test
+hardening.
+
+**Result:**
+- Restructured `TODO.md` §12 ("Language Features to Evaluate") around the maintainer's ten items,
+  organized as a new "Core Language Evolution" subsection, roughly sequenced by real dependency
+  (destructuring before tuples/pattern-matching; enums before `Result<T,E>`; pattern matching
+  before exhaustiveness checking) rather than just transcribed in the order given — and
+  cross-referenced each against what's already tracked elsewhere in `TODO.md` so nothing exists in
+  two places with two different descriptions (e.g. "First-class function types" now explicitly
+  notes its overlap with §5's existing "Function-type compatibility" checker item; "More powerful
+  type-system features" notes its overlap with §5's existing "Flow-sensitive null narrowing" work).
+  This superseded and absorbed four flatter, less-detailed bullets from an earlier session's
+  version of this section (generics, function types, pattern matching, destructuring) rather than
+  leaving duplicates.
+- Added an explicit "important, not urgent" framing note at the top of §12, addressed to future
+  sessions (including future instances of me), stating directly that hardening work has no natural
+  end point and should not be used as a permanent excuse to defer language evolution — a healthy
+  project alternates between the two. Added a short cross-reference to this from §16's "Current
+  Priority Order" too, so the framing is visible from both the feature-list side and the
+  task-selection side.
+- Deliberately did **not** put this level of detail in `docs/Crescent_Design.md`: that document is
+  the source of truth for *decided* semantics (per `AGENTS.md` §2), and every one of these ten
+  items is explicitly undesigned/undecided (e.g. "decide whether interfaces and traits should be
+  one concept or two" is itself listed as open work). Putting a decided-looking write-up in the
+  design doc before any of this is actually designed would misrepresent the document's own stated
+  purpose. `TODO.md` is the correct home for "important, not urgent, not yet designed" ideas — this
+  matches how the maintainer's previous batch of future-direction ideas were handled two sessions
+  ago.
+
+**Files changed:** `TODO.md`, `HANDOFF.md`. No compiler/runtime/extension source touched — this was
+a documentation/roadmap session per the maintainer's explicit request, not a code task.
+
+**Tests:** Not applicable (no code changed). `git diff --check` run to confirm no whitespace issues.
+
+**Problems/Decisions:** The one deliberate restructuring choice: grouped and lightly reordered the
+maintainer's ten items by dependency rather than preserving their exact given order, since several
+of them explicitly build on each other (this was called out per-item so the reasoning is visible,
+not just imposed silently).
+
+**Next:** No new code work implied by this session. `TODO.md` §16's priority order (with its new
+note that hardening work shouldn't indefinitely crowd out §12) is still the right place to pick up
+the next task — including, now more explicitly than before, a §12 "Core Language Evolution" item if
+the next session judges the recent run of checker-hardening work sufficient for now.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Continued the same `checker.ts` regression-coverage sweep, per the previous session's
+"Next" note: check every `typeIsResolvable(...)` call site for fixture coverage.
+
+**Result:**
+- Enumerated all `typeIsResolvable` call sites in `checker.ts` (12 total, including the recursive
+  helper itself) and cross-referenced each against `test-checker.js`. Found three genuinely
+  untested-but-implemented paths, each distinguishable from an already-tested one only by *where*
+  it fires (same message shape, different declaration context) — the existing tests' regex
+  patterns don't check the `where` field, so a superficial grep for the message text alone would
+  have missed that these were actually different code paths:
+  - Component-level param type (`checkComponentDecl`'s own `for (const p of decl.params)` loop,
+    `where = "component '...'"`) — previously only the *function*-param path (`fnWhere = "...,
+    function '...'"`) had a fixture (`unknown-function-param-type.crs`).
+  - Struct field type (`checkStructDecl`, "referenced by field").
+  - `inject<T>` declared type (`checkComponentDecl`'s `InjectDecl` case, "referenced by inject").
+- Added matching fixtures (`component-param-unknown-type.crs`, `struct-field-unknown-type.crs`,
+  `inject-unknown-type.crs`) and three `test-checker.js` cases. All three passed against the
+  existing, unmodified checker.
+- While enumerating, noticed `state`/`derived`/`provide`/`const` declared types are the one
+  category *not* checked via `typeIsResolvable` at all — `checkLiteralTypeMatch` only compares the
+  declared type against the initializer's inferred type. Verified experimentally (a scratch
+  `/tmp` fixture, not committed) that `state<BogusType> x = "hello";` still produces a diagnostic
+  today, just a less precise one (`Type mismatch: declared as 'BogusType' but initialized with a
+  'string' value` instead of `Unknown type 'BogusType'`). This is not a silent gap — an error does
+  fire — so it didn't belong in this session's "add a test for existing behavior" scope; recorded
+  as a concrete example under `TODO.md`'s existing (previously vague) "More precise diagnostic
+  messages" bullet instead, per `AGENTS.md` §4 ("identify it ... explain the conflict ... only
+  then change it" — the "only then change it" part is future work, not this session's).
+
+**Files changed:**
+- `TODO.md` (Types section: added a concrete example to the existing "More precise diagnostic
+  messages" bullet; no checkbox states changed elsewhere this session — the three newly-tested
+  paths all fall under the already-`[x]`-checked "Generic-aware type positions")
+- `compiler/scripts/test-checker.js` (3 new test cases)
+- `compiler/scripts/fixtures/checker/component-param-unknown-type.crs` (new)
+- `compiler/scripts/fixtures/checker/struct-field-unknown-type.crs` (new)
+- `compiler/scripts/fixtures/checker/inject-unknown-type.crs` (new)
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean). `npm test`: 179 PASS, 0 FAIL, exit 0 (up from
+176 before this session).
+
+**Problems/Decisions:** The `state`/`derived`/`provide`/`const` type-resolvability gap described
+above is a real, if minor, diagnostic-quality issue — not fixed this session, deliberately, since
+it's new checker behavior (an additional `typeIsResolvable` call plus a decision about whether the
+existing `Type mismatch` diagnostic should still fire alongside a new `Unknown type` one, or be
+suppressed) rather than a test for something that already works as designed.
+
+**Next:** Implementing the fix just described would be a good next small unit: add
+`typeIsResolvable(m.type, globalScope)` alongside the existing `checkExpr`/`checkLiteralTypeMatch`
+calls in `checkComponentDecl`'s `StateDecl`/`DerivedDecl`/`ProvideDecl`/`ConstDecl` case, decide
+what the resulting message/severity should be when both an unresolvable type *and* a mismatched
+initializer are present at once (probably: report `Unknown type` and skip the now-redundant `Type
+mismatch` check for that declaration, since comparing against a type that doesn't exist isn't a
+meaningful comparison), add a fixture, and update the `TODO.md` note accordingly. Beyond that, the
+`typeIsResolvable` sweep is now complete; `TODO.md` §16's standing priorities (Null Safety's
+flow-sensitive narrowing, or the Types section's remaining assignment-compatibility gaps) are the
+next candidates if further coverage-sweeping is judged sufficient for now.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Direct continuation of the previous session's own "Next" recommendation: sweep
+`checker.ts` for more implemented-but-untested diagnostics, starting with the two it named —
+`Cannot assign to derived '...'` and the direct-property-write-forbidden diagnostic, both inside
+`checkAssignmentTarget` — and, per its explicit caveat, first check whether the existing
+`test-forbidden-derived-assignment.js`/`test-forbidden-property-write.js` scripts already cover
+them before assuming they don't.
+
+**Result:**
+- Confirmed those two existing test scripts exercise `codegen.ts`'s own independent
+  `CodegenError` checks (calling `generateProgram()` directly on a parsed program, never running
+  the checker), not `checker.ts`'s `checkAssignmentTarget` diagnostics. The two enforcement points
+  are separate code paths with separate (if similarly-worded) error messages — the checker's own
+  diagnostics genuinely had no regression coverage before this session, confirming the earlier
+  session's guess.
+- Added two new fixtures under `compiler/scripts/fixtures/checker/`
+  (`derived-assignment-forbidden.crs`, `direct-property-write-forbidden.crs` — content mirrors the
+  existing top-level `fixtures/forbidden-derived-assignment.crs`/`forbidden-property-write.crs`
+  used by the codegen tests, since the same source naturally exercises both layers) and two
+  matching cases in `compiler/scripts/test-checker.js` asserting the checker's own diagnostic
+  messages (`Cannot assign to derived 'total'; ...` and `Direct property write on state 'user' is
+  forbidden; ...`).
+- Updated `TODO.md`'s Reactivity subsection: annotated "Restrictions on reactive object property
+  mutation" (already checked `[x]`) with what's now actually covered and, importantly, flagged that
+  codegen still duplicates both rules independently rather than the checker being the sole source
+  of truth — this is a real (if minor) architectural duplication worth knowing about per `AGENTS.md`
+  §9/§10, not something this session tried to fix, since collapsing it is a separate, larger unit
+  of work (would mean deciding whether codegen should trust the checker having already run, which
+  touches the CLI's compile pipeline, not just these two rules).
+
+**Files changed:**
+- `TODO.md` (annotation only)
+- `compiler/scripts/test-checker.js` (2 new test cases)
+- `compiler/scripts/fixtures/checker/derived-assignment-forbidden.crs` (new)
+- `compiler/scripts/fixtures/checker/direct-property-write-forbidden.crs` (new)
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean). `npm test`: 176 PASS, 0 FAIL, exit 0 (up from
+174 before this session).
+
+**Problems/Decisions:** Noticed but explicitly did not fix: `checker.ts` and `codegen.ts` each
+independently re-derive and enforce the same two reactive-mutation rules. This isn't a bug today —
+both layers currently agree — but it's a duplication that could silently drift if one side changes
+without the other (e.g. a future new dependency of `total` that codegen's own check doesn't handle
+the same way the checker's does). Recorded in `TODO.md` rather than acted on, since fixing it means
+deciding whether `cli.ts`'s pipeline should skip codegen's own checks once the semantic checker has
+already run cleanly — a design/architecture question, not a same-session fix.
+
+**Next:** The rest of the sweep this session didn't get to: the `Unknown type` family already has
+partial fixture coverage (`unknown-generic-type.crs`, `unknown-function-param-type.crs`,
+`unknown-return-and-for-types.crs`) but it's worth double-checking every `typeIsResolvable(...)`
+call site in `checker.ts` has at least one fixture exercising it (e.g. `InjectDecl`'s unknown-type
+check doesn't appear to have one yet). Otherwise, `TODO.md` §16's next-highest items (Null Safety's
+flow-sensitive narrowing, or the Types section's remaining assignment-compatibility gaps) remain
+the standing priority once this kind of coverage sweep is judged sufficient.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** No explicit instruction — picked up `TODO.md` §16's priority order (fix
+spec/implementation contradictions, strengthen the semantic checker, add regression tests). The
+previous session's own "Recommended Next Step" #4 specifically flagged "Undefined-name diagnostics"
+as plausibly already implemented and just needing verification; investigating that turned up a
+broader pattern worth the same treatment: `TODO.md`'s §5 "Components" subsection listed five items
+as entirely `[ ]` unstarted, but reading `checker.ts` showed three of them (component existence
+checking, component prop checking, and most of component declaration checking) were already
+substantially implemented and simply untested/undocumented.
+
+**Result:**
+- Confirmed via `checker.ts` inspection, not assumption, exactly what already exists:
+  - `checkExpr`'s `Identifier` case (used for every expression context — reads, assignment targets,
+    view interpolations, function arguments, etc.) already flags any name that isn't in scope,
+    global scope, or `BUILTIN_GLOBALS`. This is "Undefined-name diagnostics" (§5 Scope/Names),
+    confirmed genuinely general-purpose, not narrowly scoped to the one assignment-target fixture
+    that existed before this session.
+  - `checkTemplateNode`'s `Element` case already reports `Unknown component '<Tag>'` for a
+    nonexistent component name, `'Tag' is a struct, not a component...` when a struct name is used
+    as an element, and `Unknown prop 'x' passed to <Tag>` for an undeclared prop (in addition to
+    the already-tested "Missing prop"/type-mismatch cases). This is "Component existence checking"
+    and most of "Component prop checking" (§5 Components).
+  - `checkComponentDecl` already rejects a component with zero or more than one `view` block, on
+    top of the already-tested duplicate-member-name check. This is most of "Component declaration
+    checking" (§5 Components).
+- Added 6 new fixtures under `compiler/scripts/fixtures/checker/` and 6 corresponding cases in
+  `compiler/scripts/test-checker.js`, each asserting the exact diagnostic message and exercising a
+  behavior that had no regression coverage before this session: `undefined-identifier-read.crs`
+  (a plain read of an undefined name in a view interpolation, to complement the existing
+  assignment-target fixture), `unknown-component.crs`, `struct-as-component.crs`,
+  `unknown-prop.crs`, `missing-view-block.crs`, `duplicate-view-block.crs`. All six pass against
+  the existing, unmodified checker — no compiler behavior changed this session, only test coverage
+  and documentation accuracy.
+- Updated `TODO.md` §5's "Scope / Names" and "Components" subsections to check off the
+  now-verified-and-tested items, with a short note next to each pointing at the fixture(s) that
+  cover it and, where relevant, what's explicitly still *not* covered (e.g. undefined-name
+  diagnostics don't cover cross-module resolution; component prop checking exempts `on*` attributes
+  entirely rather than validating them, which is exactly why "Event handler signature checking"
+  is still unchecked). Removed the separate "Component argument checking" bullet, folding it into
+  "Component prop checking" — components don't have a distinct "argument" concept apart from props
+  in Crescent's current design, and the two bullets described the same behavior.
+
+**Files changed:**
+- `TODO.md` (checkbox/documentation accuracy only — see above)
+- `compiler/scripts/test-checker.js` (6 new test cases)
+- `compiler/scripts/fixtures/checker/undefined-identifier-read.crs` (new)
+- `compiler/scripts/fixtures/checker/unknown-component.crs` (new)
+- `compiler/scripts/fixtures/checker/struct-as-component.crs` (new)
+- `compiler/scripts/fixtures/checker/unknown-prop.crs` (new)
+- `compiler/scripts/fixtures/checker/missing-view-block.crs` (new)
+- `compiler/scripts/fixtures/checker/duplicate-view-block.crs` (new)
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean). `npm test`: 174 PASS, 0 FAIL, exit 0 (up from
+168 before this session — 6 new cases, all passing on the first real run since they test existing,
+unmodified behavior rather than new code).
+
+**Problems/Decisions:** None requiring resolution. The main judgment call was scope: rather than
+also adding tests/checkboxes for every other untested diagnostic in the checker (there are more —
+e.g. `Cannot assign to derived`, `Direct property write on state ... is forbidden`, the
+`Unknown type` family for params/returns/for-loops which already has partial coverage), this
+session stayed focused on the Components subsection plus the one Scope/Names item the previous
+session explicitly flagged, per `AGENTS.md` §4 ("make small coherent changes") and §15 ("one
+feature ... over large unrelated rewrites"). The remaining untested-but-implemented diagnostics are
+a reasonable, well-scoped follow-up in the same spirit.
+
+**Next:** A natural continuation, if VS Code/tooling work isn't the priority: sweep the rest of
+`checker.ts` for other implemented-but-untested/unchecked diagnostics using the same method (read
+the code, don't assume the checklist is accurate, add a fixture + test case, then correct the
+checkbox) — `Cannot assign to derived '...'` and the direct-property-write-forbidden diagnostic
+(both in `checkAssignmentTarget`) are the most obvious candidates, and would round out the
+Reactivity subsection's "Restrictions on reactive object property mutation" claim with real
+regression coverage rather than relying on it having been exercised only via `forbidden-derived-
+assignment.js`/`forbidden-property-write.js` (which test *codegen*/runtime behavior, not that the
+checker itself reports the right diagnostic message — worth double-checking whether those already
+cover it before assuming they don't). Otherwise, `TODO.md` §16's next-highest items (Null Safety's
+flow-sensitive narrowing, or the Types section's remaining assignment-compatibility gaps) remain
+open.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** The maintainer pasted an external review/brainstorm document (someone else's analysis of
+where Crescent could go next — compiler architecture, LSP, dev server/hot-reload, `Result`/pattern
+matching, ecosystem ideas, self-hosting, etc.) and asked for its ideas to be organized into the
+project's existing `TODO.md`/roadmap rather than left as a one-off message, with freedom to adjust
+or complement the ideas rather than transcribe them verbatim. Separately, asked for the top-level
+`README.md`'s VS Code Extension bullet to be reworded: it listed specific current commands
+(`Crescent: Check`/`Crescent: Build`) and was flagged as already out of date (`Crescent: Preview`
+and `Crescent: Open Preview in Browser` exist too, per the last two sessions) — the maintainer's
+point was that the top README should stay static/high-level like its other three bullets, not
+restate implementation details that drift out of sync as commands are added.
+
+**Result:**
+- Read the pasted document and cross-checked every idea against the current implementation
+  (`grep`ed for `on_mount`/`on_change`/`on_destroy` etc. to confirm which lifecycle hooks actually
+  exist, confirmed no `Result`/pattern-matching/router/typed-AST support exists yet) and against
+  `TODO.md`'s existing structure, so nothing was added as a duplicate of something already tracked.
+  Distributed the ideas into the existing numbered sections rather than dumping them as one new
+  block, matching the roadmap's own stated principle ("organized by dependency and maturity rather
+  than cool features first"):
+  - §5 Semantic Checker: new "Architecture" subsection for an eventual typed-AST/IR pass (resolve
+    names → resolve modules → infer/check types → validate reactivity → typed AST → codegen),
+    framed as a foundation for codegen, a future LSP, and future optimizations rather than a
+    feature of its own.
+  - §7 Runtime: a note under "Reactive Core" about evaluating additional primitives (e.g. a
+    `resource`-style async-reactive shape) only once async semantics settle, explicitly requiring
+    justification against `state`/`derived`/`effect`/`watch` rather than copying other frameworks;
+    a new "Lifecycle" subsection recording that only `on_mount`/`on_change` exist today and that
+    `on_destroy`/`before_update`/`after_update` should only be added if a real need shows up.
+  - §9 Testing: new "Compiler Robustness" (fuzzing the lexer/parser so it never crashes on garbage
+    input; a compiler benchmark suite) and "Conformance" (a `tests/valid`/`tests/invalid` fixture
+    suite with declared expected outcomes) subsections.
+  - §10 Developer Experience: new "Project Scaffolding & Dev Server (Later)" subsection —
+    `crescent new`, `crescent.toml`, `crescent dev`, hot-module-reload for the preview/dev loop
+    (explicitly contrasted with today's full-webview-reload `Crescent: Preview`), and incremental
+    compilation — placed *before* the existing "Near-Term VS Code Enablement" block with an
+    explicit warning not to start it before the compiler/CLI/semantic-checker foundations are
+    solid. Also cross-referenced incremental compilation from the existing "Language Server"
+    subsection as a real prerequisite, not parallel work.
+  - §11 Frontend Output: SSR added under "Future," with the same "don't add a second target before
+    semantics stabilize" reasoning already stated there for Wasm.
+  - §12 Language Features to Evaluate: expanded "Pattern matching" and "Better error/result
+    conventions" with a concrete `Result<T, E>` sketch (the two motivate each other); added router,
+    an official component library (framed as a stress test for the language, not a UI-work item),
+    and compiler-assisted accessibility warnings (framed as "helps avoid mistakes," not "solves
+    accessibility"); tightened the existing "Compile-time/meta-programming" bullet to explicitly
+    say post-v1.0 and why. Closed the section with the document's strongest idea verbatim in spirit
+    — every proposal here should answer "why is this especially good *in Crescent*", not "language
+    X has this too" — since it's a good complement to §13's existing "don't add casually" list
+    without duplicating it.
+  - §14 Milestones: new "Someday / Maybe" subsection for self-hosting (rewriting compiler stages in
+    Crescent itself) and a note to revisit the Wasm question alongside it — explicitly framed as
+    not scheduled and not influencing near-term priority.
+  - Deliberately did **not** add: a package manager beyond the existing "module/package ecosystem"
+    bullet (already adequately hedged), or a separate "External Feedback" dump section — the
+    document's ideas belong at the level of the concepts, integrated with what's already tracked,
+    not attributed to a specific external source inside the roadmap itself.
+- `README.md`: reworded the VS Code Extension bullet from enumerating specific commands to
+  "Editor support for `.crs` files — see its README for the current feature set and commands,"
+  matching the descriptive-not-enumerative style the other three bullets already use (design doc:
+  "reactivity model, type system, ..."; grammar doc: "EBNF grammar, lexer modes, ..."; compiler
+  doc: "how to build, test, and run"). This should not need touching again every time a VS Code
+  command is added or renamed — that's exactly the property the maintainer asked for.
+
+**Files changed:** `TODO.md`, `README.md`, `HANDOFF.md`. No compiler, runtime, or extension source
+touched — this was a documentation/roadmap session per the maintainer's explicit request, not a
+code task, so `AGENTS.md` §12's test commands were not applicable; confirmed no source files
+appear in `git diff --stat` for this session beyond the three doc files above.
+
+**Tests:** Not applicable (no code changed). `git diff --check` run to confirm no whitespace issues
+in the modified Markdown files.
+
+**Problems/Decisions:** None — this was integration of already-reasonable external ideas into an
+existing, well-organized roadmap, not a design decision requiring resolution. The one deliberate
+change from the source document: it proposed a single linear "Phase 1–5" plan as a wholesale
+replacement mental model; this was not adopted as a new top-level structure, since `TODO.md`
+already has an equivalent (§14 "Milestones" + §16 "Current Priority Order") and duplicating it
+under a different name would create two competing sources of sequencing truth.
+
+**Next:** No new code work was started or implied by this session. The next AI should still pick up
+`TODO.md` §16's priority order (semantic checker first) unless the maintainer gives an explicit new
+instruction — none of this session's roadmap additions are meant to be picked up next; they are
+long-term context, most of them explicitly gated behind current work.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Maintainer-reported preview/editor polish, requested directly: (1) remove the leftover
+"Crescent Preview"/component-name/file-path chrome the maintainer said they were still seeing atop
+the rendered preview; (2) remove an unexplained horizontal rule appearing below their own rendered
+content; (3) fix TextMate syntax highlighting so a tag's closing `>`/`/>` is colored like the rest
+of the tag punctuation (`<`, `</`) instead of like the `>`/`>=` comparison operator.
+
+**Result:**
+- (1) Inspected `compiler/src/webPreview.ts` at HEAD: the `<h1>Crescent Preview</h1>` and per-mount
+  `<h2>{name}</h2>`/`<p>{file}</p>` chrome the maintainer described was already removed in the
+  prior session's commit `db5b3c0` ("feat: Add Icon and Polish Preview") — confirmed by `grep`ing
+  the whole repo for that literal markup (none found) and by reading the commit's diff. No further
+  compiler-side change was needed for this part; the maintainer's screenshot most likely reflects a
+  stale local build (an unrebuilt `compiler/dist/` and/or a cached VS Code webview panel HTML from
+  before pulling `db5b3c0`) rather than a regression at HEAD. Flagged this to the maintainer rather
+  than silently assuming it — see `AGENTS.md` §4 ("Do not invent language semantics"/verify before
+  changing) and §18 (inspect actual repo state, not a summary).
+- (2) Found the real, still-open bug behind the horizontal rule: `webPreview.ts`'s page stylesheet
+  had a bare `section { margin: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; }`
+  rule, originally meant only for the tool's own `<section class="crs-preview-warnings">`/
+  `<section class="crs-preview-empty">` wrapper blocks (skipped-files, bundling-failure, empty-
+  project messages). Because it targeted the bare `section` element rather than a class, it also
+  applied to any `<section>` tag a *user's own* Crescent component renders in its view — exactly
+  the maintainer's case (a `<section>` around their counter's UI), which is why only their content
+  showed the rule and not a `<div>`-based layout. Fixed by renaming the rule to a
+  `.crs-preview-box` class added to the tool's own wrapper `<section>` elements only, leaving a
+  user's own `<section>` (or any other tag) with no injected default page styling.
+- (3) Root cause: `editors/vscode/syntaxes/crescent.tmLanguage.json`'s `tags` rule only tokenized
+  the opening `<`/`</` and the tag name, matching them once and stopping; the closing `>` (and the
+  `/>` of a self-closing tag) was left for the root `operators` rule to pick up, which colors it
+  identically to the `>`/`>=` comparison operator — the actual bug the maintainer's screenshot
+  showed (white, not gray). Fixed by turning `tags` into a `begin`/`end` rule: `begin` still
+  matches `<`/`</` + tag name exactly as before (same negative-lookbehind guard against `state<int>`
+  generics), and `end` matches `/?>`, both captured as `punctuation.definition.tag.crescent` so the
+  whole tag's punctuation is visually consistent. A new `tag-interpolation` sub-rule (a recursive
+  `{`/`}` `begin`/`end`, included inside `tags`) ensures a `>`/`>=` comparison or a nested struct
+  literal inside an attribute's `{...}` expression (e.g. `<HelloPoint p={Point { x: item, y: item }}/>`)
+  is consumed as its own nested region before the outer tag's `end` pattern ever sees it, so it
+  can't prematurely close the tag or get mis-highlighted. The dead standalone
+  `punctuation.terminator.tag.crescent` rule for a bare `/>` (now unreachable, since the tag rule's
+  own `end` consumes it first) was removed to avoid two rules claiming the same token.
+  Verified (scratch-only, not committed — see below) with `vscode-textmate`/`vscode-oniguruma`
+  against: a self-closing component tag with a nested-brace/struct-literal attribute expression
+  (`<HelloPoint p={Point { x: item, y: item }}/>` — confirmed the trailing `/>` and every inner
+  `{`/`}` tokenize correctly, no premature tag close); a text-interpolated child (`<p>...{item}</p>`
+  — confirms plain in-between `{item}` text interpolation, outside any tag's attribute list, is
+  untouched by this change); `state<int>` (confirms the generic-vs-tag guard is unaffected); and
+  two bare comparison lines (`if (count < 5)`, `if (a > b && c >= d)`) confirming ordinary
+  comparison operators outside a tag are still `keyword.operator.crescent`, not tag punctuation.
+
+**Commit:** Not committed at the time — working tree contains the diff described above (modified
+`compiler/src/webPreview.ts`, `editors/vscode/syntaxes/crescent.tmLanguage.json`).
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (168 PASS, 0 FAIL, exit 0 —
+unchanged count; both changes are non-functional-surface — a CSS class rename and a grammar-only
+fix — so no assertion was expected to change). Grammar fix verified with a scratch
+`vscode-textmate`/`vscode-oniguruma` tokenizer script (not committed to the repo — this remains a
+real, standing gap per a previous session's "Recommended Next Step" #3: a committed TextMate
+tokenization test would catch a future regression here automatically instead of relying on manual
+verification each time).
+
+**Problems/Decisions:** The "Crescent Preview" header the maintainer reported is not reproducible
+against the current `develop` HEAD; this is noted rather than silently "fixed" again, since
+re-touching already-correct code without a reproducible cause would risk masking the real issue
+(a stale local build) instead of pointing the maintainer at it.
+
+**Next:** Ask the maintainer to rebuild (`cd compiler && npm run build`) and fully reload/reopen
+the preview panel (or reload the VS Code window) to confirm the header is in fact already gone at
+HEAD; if it still appears after a clean rebuild, that would mean this session's read of the code is
+missing something and needs re-investigation with the maintainer's exact repro steps. Committing a
+real TextMate-tokenization regression test (see "Recommended Next Step" #3 in the previous entries)
+would be a good small follow-up given this session found and fixed a real coloring bug there.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** `Crescent: Preview` for the VS Code extension (`TODO.md` §10, "Near-Term VS Code
+Enablement" plan's last unstarted feature bullet besides continuous diagnostics and the LSP
+replacement) — the maintainer's explicit next step, requested via a plain "continue" after
+reading `AGENTS.md`/`HANDOFF.md`/`TODO.md`. Followed, across the same sitting after each round
+was committed and reviewed, by three further requests: a second command to open the preview in a
+real browser tab instead of only a VS Code webview panel; removing the preview page's visible
+"Crescent Preview"/component-name/file-path chrome once the maintainer actually looked at the
+rendered output; and a file icon for `.crs` files.
+
+**Result:** Done. New `compiler/src/webPreview.ts` exports `buildPreviewHtml(root, outDir)`:
+builds the project via the existing `buildProject()`, bundles each compiled file with `esbuild`
+(same technique `scripts/build-web.js` already used, generalized off a hard-coded target list),
+and mounts every top-level **zero-parameter** component (verified to exactly match
+`build-web.js`'s hand-picked target list across all of `compiler/examples/`) into one HTML page.
+Each mount is wrapped in its own try/catch so a component that needs an ancestor `provide<T>` it
+doesn't have (`inject<T>` with nothing providing it — a preview root has no ancestors by
+definition) shows an inline error without crashing the rest of the page; a project where every
+file fails semantic checking still produces a valid, empty preview rather than throwing. Wired up
+via a new `crescent.preview` command in `editors/vscode/src/extension.js`, following the exact
+same `findDistDir()`/in-process-`require()` pattern the diagnostics feature already established
+(`findWebPreviewModulePath()`/`loadWebPreviewModule()`) — opens a `WebviewPanel` on first run,
+replaces its HTML and reveals it on later runs, and auto-reloads (without stealing focus) on save/
+open of a `.crs` file, scoped to only affect a preview panel built from the *same* project root.
+Added a real, committed automated test (`compiler/scripts/test-preview.js`, now in `npm test`) for
+the compiler-side half — including a `jsdom` test that actually clicks a real `Counter` inside the
+generated preview page — plus manual verification of the VS Code command with an extended
+mock-`vscode` harness (`WebviewPanel` mock). Testing caught two real bugs before they shipped: (1)
+no try/catch around mount calls, so `provide_inject.crs`'s `DeepNestedWidget`/`Dashboard` crashed
+the whole page; (2) the command handler read `result.build.fatal` instead of the correctly-nested
+`result.build.check.fatal`, so every fatal-error case printed a bare "unknown error" instead of the
+real message — both fixed and re-verified. Updated `editors/vscode/README.md` (new "Preview"
+section, updated intro/settings/"Known limitations"), `compiler/README.md` (structure list), and
+`TODO.md` (checked off the bullet). The maintainer committed this part as `3684f51`
+("feat: Add preview"). The browser-open follow-up — extracted the shared build/error-
+reporting logic into `buildPreviewResult(root)`, added `openPreviewInBrowser(root)` and a
+`crescent.previewInBrowser` command that writes the same HTML to
+`<root>/<crescent.outDir>/preview/index.html` and opens it via `vscode.env.openExternal()` — needed
+no compiler-side changes at all, since `buildPreviewHtml()`'s output was already a plain,
+self-contained HTML string with no webview-specific assumptions baked in. Verified the same way
+(mock-`vscode`, now with an `env.openExternal` mock): correct file written, correct URI opened, no
+webview panel created, and the same fatal-error path re-verified through the new shared helper.
+The maintainer committed this part too, as `c51415a` ("feat: Add preview in browser"). Then, once
+the maintainer actually saw the rendered page: removed the page's visible `<h1>Crescent
+Preview</h1>` and per-mount `<h2>{name}</h2>`/`<p>{file}</p>` chrome from `webPreview.ts`,
+replacing them with invisible `data-crescent-component`/`data-crescent-file` attributes on each
+mount `<div>` (kept for debuggability without being printed on the page); and added a file icon
+for `.crs` files — copied `assets/crescent-logo.svg` into `editors/vscode/icons/` and wired it up
+via `contributes.languages[0].icon` in `package.json`, VS Code's own documented mechanism for a
+language-level fallback file icon. This last round is **not yet committed**.
+
+**Commit:** The panel command (`webPreview.ts`, `crescent.preview`, and the associated docs/tests)
+was committed by the maintainer as `3684f51` ("feat: Add preview"). The browser-open command
+(`crescent.previewInBrowser`, `buildPreviewResult()`, `openPreviewInBrowser()`) was committed as
+`c51415a` ("feat: Add preview in browser"), on top of `3684f51`/`b47d2e9`/`b57be3f`/`4f51112`/
+`4e6f485` — this repo's actual `develop` HEAD as of this writing. The chrome-removal and file-icon
+round on top of `c51415a` is **not committed**: working tree contains modified
+`compiler/src/webPreview.ts`, `editors/vscode/package.json`, `editors/vscode/README.md`,
+`HANDOFF.md`, plus the new `editors/vscode/icons/crescent-logo.svg`.
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (168 PASS, 0 FAIL, exit 0 — up
+from 145; the 23 new assertions are `test-preview.js`, every pre-existing assertion unchanged;
+unchanged again after the browser-open command and the chrome removal, neither of which added or
+removed any assertions — `test-preview.js`'s `Counter` checks query the `<h1>` the *component*
+itself renders, not the page chrome that was removed). Manually verified the VS Code command
+end-to-end for both the panel (creation/reuse/reveal, the fatal-error popup path with the real
+parser message, and that a saved `.crs` file in the *same* project reloads an already-open panel)
+and the browser-open command (correct file written, correct URI passed to `openExternal`, no panel
+created, fatal-error path unaffected by the refactor) via the mock-`vscode` harness — see "Manual
+verification" in "Last Completed Work" for the specific scenarios and the two bugs each one caught
+for the panel command. No automated suite covers `editors/vscode/` itself yet — see "Recommended
+Next Step" #3 for making that a real, committed test.
+
+**Next:** Continuous/on-change diagnostics, multi-root diagnostic partitioning, and the LSP
+replacement are all still open under `TODO.md` §10 — see "Recommended Next Step" #2 for specifics
+on each. A committed test harness (`cli.ts` itself, the TextMate grammar, or the extension's
+diagnostics/command-wiring logic — see "Recommended Next Step" #3) would also be a good small unit
+if VS Code work isn't picked up immediately. If the maintainer likes the browser-open command,
+worth considering whether it should also support a lightweight local HTTP server (instead of a
+bare `file://` URL) for cases where `file://` script execution is restricted by browser security
+settings — not attempted here since a plain `file://` page already works for the verified case.
+The maintainer should confirm the `.crs` file icon actually renders correctly in a real VS Code
+Explorer pane (light and dark themes) — this environment can't launch a real VS Code window to
+check that visually, only that the JSON/SVG are well-formed and the mechanism matches VS Code's
+documented API.
+
+---
+
+### Previous session
+
+**AI:** Claude
+
+**Task:** In-editor diagnostics for the VS Code extension (`TODO.md` §10, "Near-Term VS Code
+Enablement" plan's diagnostics bullet) — the maintainer's explicit next step after last session's
+minimal extension, requested via a plain "continue".
+
+**Result:** Done. Small compiler-side fix first: `LexError`/`ParseError` gained an optional
+`file?` field, set by `loadAllPrograms()` (`modules.ts`) when it catches one during its directory
+walk (previously lost entirely); `FatalDiagnostic` (`project.ts`) gained a matching `file: string |
+null`, left `null` for `ModuleError` (import cycles/missing exports involve ≥2 files — no single
+file to guess); `cli.ts`/`index.ts` now print `<file>: <message>` when known. Then the actual
+feature in `editors/vscode/src/extension.js`: a `vscode.DiagnosticCollection`, populated by
+calling `checkProject()` **in-process** (`require()`ing the compiled `compiler/dist/project.js`,
+not spawning the CLI and parsing text) on save and on open (continuous/on-change checking
+explicitly deferred, its own still-open `TODO.md` bullet). Refactored `findCliPath()` to share a
+`findDistDir()` helper with the new `findProjectModulePath()`. Diagnostics republish the whole
+collection every `checkProject()` run (correct for cross-file issues via `use` imports, at the
+documented cost of clearing a *different* open project's diagnostics in a multi-root workspace
+until it's re-saved). Verified end-to-end (not just `node --check`) by extending last session's
+mock-`vscode` approach with `DiagnosticCollection`/`Diagnostic`/`Range`/`Uri`: a real semantic
+error showed up on the right file/line/severity/message, a clean project produced zero
+diagnostics, and a real parse error was correctly attributed to its file — proving the new
+`FatalDiagnostic.file` threads all the way through to a real `vscode.Diagnostic`, not just CLI
+text output. Updated `editors/vscode/README.md` (new "Diagnostics" section, version bump to
+`0.2.0`, corrected the "press F5" instruction to reference the `.vscode/launch.json` the
+maintainer committed between sessions) and `TODO.md` (checked off the save/open bullet, split
+"on document changes" into its own still-open item).
+
+**Commit:** Not committed at the time — working tree contained the diff described above (modified
+`compiler/src/lexer.ts`, `compiler/src/parser.ts`, `compiler/src/modules.ts`,
+`compiler/src/project.ts`, `compiler/src/cli.ts`, `compiler/src/index.ts`,
+`editors/vscode/src/extension.js`, `editors/vscode/README.md`, `editors/vscode/package.json`,
+`TODO.md`, `HANDOFF.md`), on top of the previous two sessions' already-committed CLI and minimal-
+extension work (`4e6f485`, `4f51112`) plus the maintainer's own `b57be3f` (`.vscode/launch.json`).
+Since committed by the maintainer as `b47d2e9` ("feat: Add diagnostics").
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean); `npm test` (145 PASS, 0 FAIL, exit 0 —
+unchanged count; the compiler-side changes are additive: an optional field plus a try/catch that
+only changes what's attached to an already-thrown error, not any check's pass/fail outcome).
+Manually verified the compiler-side fix (`broken.crs: Expected a template node...` instead of a
+bare `error: ...`) and the full diagnostics pipeline via the mock-`vscode` harness (see "Manual
+verification" in "Last Completed Work" for the three specific scenarios). No automated suite
+covers `editors/vscode/` — see "Recommended Next Step" #3 for making that a real, committed test.
+
+**Next:** Continuous/on-change diagnostics, `Crescent: Preview`, multi-root diagnostic
+partitioning, and the LSP replacement are all still open under `TODO.md` §10 — see "Recommended
+Next Step" #2 for specifics on each. A committed test harness (`cli.ts`, the TextMate grammar, or
+this session's diagnostics logic — see "Recommended Next Step" #3) would also be a good small unit
+if VS Code work isn't picked up immediately.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Minimal VS Code extension (`TODO.md` §10, "Near-Term VS Code Enablement" plan's first
+bullet) — the maintainer's explicit next step after last session's CLI.
+
+**Result:** Done. New `editors/vscode/`: `package.json` (language `crescent`, `.crs` association,
+`crescent.check`/`crescent.build` commands, `crescent.cliPath`/`crescent.outDir` settings),
+`language-configuration.json` (comments, bracket matching — deliberately excluding `<`/`>`, see
+"Last Completed Work" for why), `syntaxes/crescent.tmLanguage.json` (flat TextMate grammar,
+verified by actually tokenizing `compiler/examples/*.crs` with `vscode-textmate` in a scratch
+directory — caught and fixed a real bug where `state<int>` was misread as a tag), and
+`src/extension.js` (plain CommonJS, no build step; auto-detects `compiler/dist/cli.js` in this
+monorepo, spawns it, streams output to a "Crescent" output channel). No in-editor diagnostics yet
+— that's the plan's next bullet, deliberately not started this session. Verified the extension
+logic end-to-end (not just `node --check`) by mocking the slice of the `vscode` API it uses and
+invoking the real command handlers against this actual repo — both **Check** and **Build**
+correctly found the compiler, ran it, and produced correct output (see "Manual verification").
+
+**Commit:** Committed by the maintainer as `4f51112` ("feat: Add vscode"), on top of `4e6f485`
+("feat: Add CLI" — the previous session's work, also committed by the maintainer, byte-for-byte
+identical to the patch handed over).
+
+**Tests:** `cd compiler && npx tsc --noEmit` (clean, unchanged); `npm test` (145 PASS, 0 FAIL,
+exit 0, unchanged — this session touched nothing under `compiler/`). No automated suite covers
+`editors/vscode/`; see "Manual verification" in "Last Completed Work" for what was checked by hand,
+and "Recommended Next Step" #3 for options to make that a real, committed test.
+
+**Next:** Diagnostics-in-editor (done — see "Older session" below, then superseded by "Previous
+session" and "Latest session" above).
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Build the `crescent` CLI (`TODO.md` §8/§10, "Near-Term VS Code Enablement" plan's first
+two bullets) — the maintainer's explicit next step before VS Code support, a playground, and
+broader language features (enum, match, etc).
+
+**Result:** Done. Extracted `checkProject(root)` / `buildProject(root, outDir)` into new
+`src/project.ts` from the logic previously inlined in `src/index.ts`. Added `src/cli.ts`
+implementing `crescent check [path]` and `crescent build [path] --out-dir <dir>`, with per-file
+`file:line [severity] where: message` diagnostics, clear exit codes (0 clean, 1 on any error or
+usage mistake), and a self-contained build output (`<out-dir>/gen/*.js` + `<out-dir>/runtime.js`).
+Rewrote `src/index.ts` to call `buildProject()` instead of duplicating the load/check/codegen
+loop; verified identical console output and `dist/gen` file locations via `npm test`. Added a
+`bin` entry and `cli` npm script to `package.json`, and a "CLI" section to `compiler/README.md`.
+Manually exercised the compiled `dist/cli.js` against throwaway `/tmp` projects covering the
+clean/semantic-error/parse-error/missing-flag/no-args cases (see "Manual verification" above) —
+no automated test yet exercises `cli.ts` directly, only `index.ts`/`project.ts` via `npm test`.
+A follow-up request in the same conversation asked for docs to be cleaned up alongside the CLI
+patch: fixed `compiler/README.md`'s stale "prints their ASTs as JSON" line and its "What it
+checks" list missing two later-added checks (see the CLI patch's own follow-up note, folded into
+this entry since it was the same session/task from the maintainer's perspective).
+
+**Commit:** Committed by the maintainer as `4e6f485` ("feat: Add CLI").
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (145 PASS, 0 FAIL, exit 0 — same count as
+before this session). `dist/cli.js` manually exercised against `/tmp` fixtures (not part of
+`npm test`; see "Recommended Next Step" #3 for adding this as a real script-based test).
+
+**Next:** VS Code support (done — see "Previous session" above).
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Duplicate declaration diagnostics (`TODO.md`, Semantic Checker → Scope/Names) — flag
+name collisions in top-level declarations, struct fields, component params+members, and function
+params, all of which previously silently overwrote in a `Map`/`Set` with no diagnostic.
+
+**Result:** Done. Added a small generic `checkDuplicateNames()` helper used at all four call sites.
+Component params and members are checked as one combined list so cross-kind collisions (a param
+shadowing a state, etc.) are caught too, not just same-kind ones. Added four negative fixtures and
+one positive regression fixture.
+
+**Commit:** Not committed — working tree contains the focused diff described above.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (145 PASS, 0 FAIL, exit 0).
+
+**Next:** See "Recommended Next Step" above. Flagged that "Undefined-name diagnostics" may already
+be substantially implemented (`checkExpr`'s `Identifier` case) and worth verifying before assuming
+it's unstarted; also noted local-`VarDecl`-within-a-block duplicate checking as an unaddressed gap
+in this session's own work.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Component prop type checking (`TODO.md`, Semantic Checker → Types) — compare
+literal-shaped prop values passed to component elements against the target component's declared
+param types, extending the existing prop *name* check (`Missing prop`/`Unknown prop`).
+
+**Result:** Done. Added `checkAttributeTypeMatch()`, covering both plain string attributes
+(`name="World"`) and expr attributes (`name={42}`); non-literal expr values (the common
+`name={someVar}` case) are left unchecked, matching the checker's existing literal-shaped-only
+limitation. Added two negative fixtures and one positive regression fixture, plus matching
+`test-checker.js` cases.
+
+**Commit:** Not committed at the time; pushed to `develop` by the maintainer as commit
+`59ac055 feat: add component prop type checking`.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (140 PASS, 0 FAIL, exit 0).
+
+**Next:** See "Recommended Next Step" above — a real expression type-inference helper is needed
+before the remaining Types-section TODO items (assignment compatibility, array elements,
+function-type compatibility) can go beyond literal-only checking.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Function argument checking (`TODO.md`, Semantic Checker → Types) — validate a function
+call's argument count and (for literal-shaped arguments) types against the callee's declared
+parameters, for same-component function calls.
+
+**Result:** Done. Added `checkCallArgs()` and threaded a per-component `functions` map through
+`checkExpr`/`checkStmts`/`checkTemplateNode` so calls anywhere in a component's body, view, or
+style block can be resolved. Added two negative fixtures (`wrong-arg-count.crs`,
+`wrong-arg-type.crs`) and one positive regression fixture (`correct-call-ok.crs`).
+
+**Commit:** Not committed at the time; pushed to `develop` by the maintainer as commit
+`541a24a feat: add function argument checking`.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (137 PASS, 0 FAIL, exit 0). Note:
+`compiler/node_modules` was not present at the start of that session (fresh clone); `npm install`
+was run first.
+
+---
+
+### Older session
+
+**AI:** Claude
+
+**Task:** Extend declared type-name resolution to function parameter types (the last unchecked
+declared-type position identified by the prior session).
+
+**Result:** Done, plus two pre-existing bugs found and fixed along the way. Extending the check
+surfaced that `typeIsResolvable()` already broke the design doc's own `void()` callback-param
+example (§6) *before* this session touched it, and would have newly broken the `KeyboardEvent`/
+`MouseEvent`/`FormEvent` typed-event-handler example (§13.3) once function params were checked.
+Fixed both with narrow, documented special cases in `typeIsResolvable()`, and added working
+examples (`callback_param.crs`, `typed_event_handler.crs`) plus a negative regression fixture for
+the new function-param check itself.
+
+**Commit:** Not committed — working tree contains the focused diff described above.
+
+**Tests:** `npx tsc --noEmit` (clean); `npm test` (134 PASS, 0 FAIL, exit 0), including both new
+examples compiling end-to-end and the new checker regression case.
+
+**Next:** No known type-existence-checking gaps remain; move to a different `TODO.md` priority
+(see "Recommended Next Step").
+
+---
+
+## Previous session
+
+**AI:** Codex
+
+**Task:** Extend declared type-name resolution to non-`void` function return types and statement/
+template `for` loop item types.
+
+**Result:** Done. The checker now reports unresolved return and loop item types in all relevant AST
+positions. Added one fixture and three regression assertions. Grammar documentation updated.
+
+**Commit:** Not committed at the time.
+
+**Tests:** `npm run build && node scripts/test-checker.js` (clean/all PASS); `npm test` passed all
+steps before the sandbox blocked its final esbuild directory read; `node scripts/build-web.js &&
+node scripts/test-web.js` rerun with elevated sandbox access (all PASS).
+
+---
+
+## Handoff Checklist
+
+Before ending a session:
+
+- [ ] Current task is clearly stated.
+- [ ] Completed work is listed.
+- [ ] Every relevant changed file is listed.
+- [ ] Tests actually run are listed.
+- [ ] Failures are explicitly listed.
+- [ ] Important design decisions are recorded.
+- [ ] Unfinished work is recorded.
+- [ ] Next step is explicit.
+- [ ] `git diff` was inspected.
+- [ ] No unrelated work was accidentally reverted.
+- [ ] This file reflects the repository's actual state.

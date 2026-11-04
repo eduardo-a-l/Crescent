@@ -1,0 +1,7 @@
+use lib::Library;
+
+component Library {
+    view {
+        <p>"local"</p>
+    }
+}

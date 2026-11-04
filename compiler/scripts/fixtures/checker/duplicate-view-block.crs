@@ -1,0 +1,9 @@
+component Broken {
+    view {
+        <p>"One"</p>
+    }
+
+    view {
+        <p>"Two"</p>
+    }
+}

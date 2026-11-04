@@ -1,0 +1,22 @@
+struct Point {
+    int x;
+    int y;
+}
+
+component DestructuringDemo {
+    state<Point> origin = Point { x: 0, y: 0 };
+    state<string> summary = "";
+
+    void describe_origin() {
+        Point { x, y } = origin;
+        summary = "x is " + x + ", y is " + y;
+    }
+
+    on_mount {
+        describe_origin();
+    }
+
+    view {
+        <p>{summary}</p>
+    }
+}

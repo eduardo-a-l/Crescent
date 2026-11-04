@@ -1,0 +1,13 @@
+component Broken {
+    int add(int a, int b) {
+        return a + b;
+    }
+
+    void run() {
+        add(1);
+    }
+
+    view {
+        <p>"static"</p>
+    }
+}

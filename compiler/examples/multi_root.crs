@@ -1,0 +1,31 @@
+component Header {
+    state<bool> show_subtitle = true;
+
+    void toggle_subtitle() {
+        show_subtitle = !show_subtitle;
+    }
+
+    view {
+        <h1>"Dashboard"</h1>
+        if (show_subtitle) {
+            <p class="subtitle">"Welcome back"</p>
+            <p class="hint">"Click below to hide this"</p>
+        } else {
+            <p class="subtitle">"Subtitle hidden"</p>
+        }
+        <button onclick={toggle_subtitle}>"Toggle subtitle"</button>
+    }
+}
+
+component ItemGrid {
+    state<string[]> labels = ["A", "B"];
+
+    view {
+        <div class="grid">
+            for (string label in labels key label) {
+                <span class="tag">{label}</span>
+                <span class="separator">"|"</span>
+            }
+        </div>
+    }
+}

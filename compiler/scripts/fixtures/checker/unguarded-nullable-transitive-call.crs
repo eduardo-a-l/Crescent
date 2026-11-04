@@ -1,0 +1,42 @@
+component Transitive {
+    state<string?> name = "Ada";
+
+    void clear_name() {
+        name = null;
+    }
+
+    void middle() {
+        clear_name();
+    }
+
+    void outer() {
+        middle();
+    }
+
+    void ping() {
+        pong();
+    }
+
+    void pong() {
+        ping();
+        name = null;
+    }
+
+    void through_chain() {
+        if (name != null) {
+            outer();
+            console.log(name.length);
+        }
+    }
+
+    void through_recursion() {
+        if (name != null) {
+            ping();
+            console.log(name.length);
+        }
+    }
+
+    view {
+        <p>"transitive"</p>
+    }
+}

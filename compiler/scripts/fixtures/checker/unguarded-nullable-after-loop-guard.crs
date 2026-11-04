@@ -1,0 +1,17 @@
+component Broken {
+    state<string?> message = null;
+
+    void run() {
+        for (int i = 0; i < 3; i++) {
+            if (message == null) {
+                break;
+            }
+            console.log(message.length);
+        }
+        console.log(message.length);
+    }
+
+    view {
+        <p>"broken"</p>
+    }
+}
