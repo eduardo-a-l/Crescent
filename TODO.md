@@ -77,16 +77,10 @@
   Crescent version for the language, compiler, runtime and CLI (`compiler/package.json`), separate
   versions for the VS Code extension and the web apps, a `CHANGELOG.md`, and the release steps.
   `test-versioning.js` guards the three-part versions and the changelog. Nothing is tagged yet
-- [ ] Cut the first release under it (`0.2.0`, proposed in the changelog): choose the date, bump
-  `compiler/package.json`, close `[Unreleased]`, merge `develop` into `main` and tag `v0.2.0`
-  (a maintainer step; assistants do not touch `main`)
-
----
-
-# 1. Lexer
-
-## Core
-
+- [~] Cut the first release under it (`0.2.0`) — the bump (`compiler/package.json` and the lockfiles that
+  embed it) and the changelog are committed on `develop`; still to do, by the maintainer: merge `develop`
+  into `main`, tag `v0.2.0`, publish the GitHub release notes, and (optional) make `main` the Vercel
+  production branch
 - [x] Basic tokenization
 - [x] Keywords
 - [x] Identifiers

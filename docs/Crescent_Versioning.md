@@ -132,10 +132,10 @@ the old tag if `develop` already contains changes that must not ship yet.
 
 ## 6. Where this stands today
 
-- `compiler/package.json` is `0.1.0`: the initial prototype of the first two days of the project. It was
-  never tagged, and the work since then was never given a number.
-- The first release under this scheme is proposed to be **`0.2.0`**, with everything that is under
-  `[Unreleased]` in the changelog. It is for the maintainer to cut when ready.
+- `0.1.0` was the initial prototype of the first two days of the project. It was never tagged.
+- **`0.2.0`** is the first release under this scheme, with everything the changelog lists under it. The
+  version bump and the changelog are committed on `develop`. Merging `develop` into `main` and tagging
+  `v0.2.0` (steps 6 and 7 of section 5) is for the maintainer.
 - A guard test, `compiler/scripts/test-versioning.js`, keeps this document, the changelog and the package
   versions consistent: every package has a three-part version, and the newest release in the changelog
   is the version in `compiler/package.json`.

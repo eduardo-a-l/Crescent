@@ -9,8 +9,10 @@ and benchmark changes do not need a line.
 
 ## [Unreleased]
 
-Everything since the initial prototype below. It was reconstructed from the git history when the
-changelog was introduced, and is proposed as `0.2.0`.
+## [0.2.0] - 2026-11-04
+
+The first release under `docs/Crescent_Versioning.md`: everything since the initial prototype below. Its
+list was reconstructed from the git history when the changelog was introduced.
 
 ### Added
 

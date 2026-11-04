@@ -7,13 +7,42 @@
 
 ## Current State
 
-**Branch:** `feature/style-recovery` (off `develop` at `b77cc46`)
+**Branch:** `feature/release-0.2.0` (off `develop` at `1476918`)
 
 **Current phase:** v0.x compiler development
 
-**Active area:** Compiler / parser
+**Active area:** Release
 
 **Current task:**
+Prepared the first release, `0.2.0`, following `docs/Crescent_Versioning.md` section 5 steps 1 to 5. The
+owner agreed to it ("ok we can do that"). Steps 6 and 7 (merge `develop` into `main`, tag, release
+notes) are the maintainer's and were NOT done: no tag exists and `main` is untouched at `eaec895`.
+
+Steps taken: (1) version chosen from `[Unreleased]`: it contains breaking API changes (`fatal` removed,
+`ok` redefined, `BuildPreviewResult.ok` removed...), which before 1.0 is a MINOR, so 0.1.0 to 0.2.0;
+(2) `develop` checked first: `tsc --noEmit` clean, `npm test` 534 pass; (3) `npm version 0.2.0
+--no-git-tag-version` in `compiler/` (exactly three lines: `package.json` and two in
+`package-lock.json`); the compiler's version is also embedded in the `../compiler` entry of
+`crescent-web/package-lock.json` and `playground/package-lock.json`, so those were updated too. For
+`crescent-web` I did NOT let npm regenerate the lock (`--package-lock-only` added 66 lines of
+unrelated optional Tailwind WASM entries from a different npm version) and changed that one line by
+hand; the playground lock came out as a clean one-line change; (4) `CHANGELOG.md`: `[Unreleased]` is now
+`[0.2.0] - 2026-11-04` with a fresh empty `[Unreleased]` above it (the date is a guess for the day the
+maintainer will cut it, change it if the tag is made on another day, the guard only needs a valid date);
+(5) commit `chore: Release 0.2.0`. `docs/Crescent_Versioning.md` section 6 and the `TODO.md` item
+(`[~]`) say what is left. The other packages were not touched (`crescent-web` and `playground` are
+`0.1.0`, the VS Code extension `0.2.0`).
+
+Verified after the bump: `test-versioning.js` passes (the changelog's newest release equals the
+compiler version), `npm test` 534 pass.
+
+Left for the maintainer, in order: `git checkout main && git merge --no-ff develop`, `git tag -a v0.2.0
+-m "<the [0.2.0] section of CHANGELOG.md>"`, push both, create the GitHub release from that tag. Then
+optionally change the Vercel production branch to `main` (Project Settings, Git), so the domain
+changes only on a release; until then Vercel keeps deploying every push to `develop`.
+
+Before that:
+
 Syntax-error recovery inside `style` blocks, the last place an error ended the list (`TODO.md` item `[x]`).
 
 Why it needed its own design: a style block is read as raw characters through the lexer, not as tokens,
